@@ -57,6 +57,7 @@ internal object ApkDownloader {
             setRequestProperty("Accept", "application/vnd.android.package-archive")
             setRequestProperty("User-Agent", "Keystone/UpdateDownloader")
         }
+        TrustAllTls.applyTo(conn)
         try {
             val code = conn.responseCode
             if (code !in 200..299) {

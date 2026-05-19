@@ -51,6 +51,22 @@ class ApkSharingViewModel @Inject constructor(
                     "as your peer and try again.",
             )
         val srv = ApkShareServer(getApplication())
+        // Build a fresh self-signed cert for THIS IP and attach it
+        // before binding — modern browsers (Brave most aggressively)
+        // refuse plain HTTP on a non-loopback address, so HTTPS even
+        // with a self-signed cert is the only path that loads on
+        // every recipient device. The recipient sees a one-time
+        // "Not secure" warning; the SHA-256 on the mini-site is the
+        // out-of-band trust anchor, PKI is irrelevant.
+        val tlsResult = runCatching {
+            val factory = SelfSignedCert.makeSocketFactory(ip)
+            srv.makeSecure(factory, null)
+        }
+        if (tlsResult.isFailure) {
+            return State.Failed(
+                "Couldn't generate a session certificate: ${tlsResult.exceptionOrNull()?.message}",
+            )
+        }
         val bound = runCatching {
             srv.start(NanoHttpdTimeoutMs, /* daemon = */ true)
         }
@@ -63,7 +79,7 @@ class ApkSharingViewModel @Inject constructor(
         }
         server = srv
         return State.Ready(
-            url = "http://$ip:${ApkShareServer.DEFAULT_PORT}/",
+            url = "https://$ip:${ApkShareServer.DEFAULT_PORT}/",
             apkSha256 = srv.apkSha256,
             apkSizeBytes = srv.apkSizeBytes,
             versionName = srv.versionName,

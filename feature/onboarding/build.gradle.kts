@@ -52,4 +52,14 @@ dependencies {
     // Inviter's device. No third-party server, no app store, no
     // internet required (same WiFi only in Phase 1).
     implementation("org.nanohttpd:nanohttpd:2.3.1")
+
+    // BouncyCastle — used ONLY to build a fresh self-signed X.509
+    // certificate per share session so the local HTTPS endpoint
+    // satisfies modern browsers' "HTTPS-Only" modes (Brave on
+    // Android most aggressively). The certificate's job is to make
+    // the browser load the page; security is provided by the SHA-256
+    // hash the user verifies on-screen, not by PKI. The bcprov +
+    // bcpkix split keeps the X.509 builder pulls minimal.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.78.1")
 }

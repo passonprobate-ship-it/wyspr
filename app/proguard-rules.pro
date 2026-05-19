@@ -56,3 +56,16 @@
 # R8 can't see java.awt and refuses to compile without these rules.
 -dontwarn java.awt.**
 -dontwarn javax.swing.**
+
+# BouncyCastle — used by SelfSignedCert for the share-server TLS cert.
+# BC's X.509 builders use service-loader / reflection to discover
+# OID handlers, so renaming or stripping unused-looking classes
+# breaks cert generation at runtime. Keep the bcprov + bcpkix
+# surface but allow obfuscation of leaf method bodies.
+-keep class org.bouncycastle.jce.provider.BouncyCastleProvider { *; }
+-keep class org.bouncycastle.jcajce.provider.** { *; }
+-keep class org.bouncycastle.cert.** { *; }
+-keep class org.bouncycastle.operator.** { *; }
+-keep class org.bouncycastle.asn1.** { *; }
+-dontwarn org.bouncycastle.**
+-dontwarn javax.naming.**

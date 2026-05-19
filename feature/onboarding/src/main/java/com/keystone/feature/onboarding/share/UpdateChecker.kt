@@ -42,6 +42,10 @@ internal object UpdateChecker {
             setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", "Keystone/UpdateChecker")
         }
+        // Accept peer's self-signed TLS cert — see TrustAllTls
+        // KDoc for the integrity argument (the SHA-256 of the APK
+        // is the real trust anchor, not PKI).
+        TrustAllTls.applyTo(conn)
         try {
             val code = conn.responseCode
             if (code !in 200..299) {

@@ -91,6 +91,12 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/LICENSE*"
+            // BouncyCastle 1.78+ ships its multi-release JAR metadata
+            // under META-INF/versions/9/...; three BC jars collide on
+            // this path during resource merge. Excluding is safe — the
+            // OSGi manifest isn't loaded at runtime in our use case.
+            excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+            excludes += "/META-INF/versions/**/OSGI-INF/**"
         }
     }
 }
