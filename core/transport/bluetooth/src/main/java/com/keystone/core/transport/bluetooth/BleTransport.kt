@@ -45,6 +45,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * BLE GATT transport — discovery + connect + accept. PROTOCOLS.md §6.
@@ -255,17 +256,26 @@ class BleTransport(private val context: Context) : Transport {
                 if (responseNeeded) {
                     server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
                 }
-                val link = acceptedLinks[device.address] ?: run {
-                    // First write from a new device — open a link
+                // computeIfAbsent guarantees the (link, drainer-start,
+                // accepted.send) wiring happens exactly once per peer
+                // address, even under concurrent writes from the same
+                // device on different binder threads. The previous
+                // read-then-modify pattern could create two BleLinks
+                // for the same peer and leak the loser.
+                val link = acceptedLinks.computeIfAbsent(device.address) { _ ->
                     val endpoint = PeerEndpoint(Transport.Kind.BluetoothLe, device.address)
                     val (newLink, sink) = newBleLink(endpoint = endpoint, onClose = {
                         outboundSinks.remove(device.address)?.close()
                     })
-                    acceptedLinks[device.address] = newLink
                     outboundSinks[device.address] = sink
+                    // The drainer feeds raw BLE chunks through the
+                    // assembler in arrival order on a single coroutine
+                    // — see BleLink kdoc. Must be started BEFORE we
+                    // call ingestInbound below or the first chunk
+                    // queues with no consumer.
+                    newLink.startInboundDrainer(ioScope)
                     val charForNotify = characteristic
                     ioScope.launch {
-                        // Drain outbound sink and notify the client
                         for (frame in sink) {
                             val chunker = BleOutboundChunker(mtuPayload = DEFAULT_MTU_PAYLOAD)
                             for (chunk in chunker.chunk(frame)) {
@@ -287,7 +297,9 @@ class BleTransport(private val context: Context) : Transport {
                     ioScope.launch { runCatching { accepted.send(newLink) } }
                     newLink
                 }
-                ioScope.launch { link.ingestInbound(value) }
+                // ingestInbound is non-suspending — safe from the BLE
+                // binder thread without an extra dispatcher hop.
+                link.ingestInbound(value)
             }
 
             override fun onDescriptorWriteRequest(
@@ -310,9 +322,17 @@ class BleTransport(private val context: Context) : Transport {
         val server = manager.openGattServer(context, callback)
             ?: error("openGattServer returned null — BLE not supported")
         val service = BluetoothGattService(serviceUuid, BluetoothGattService.SERVICE_TYPE_PRIMARY)
+        // PROPERTY_WRITE_NO_RESPONSE is required because the client side
+        // uses WRITE_TYPE_NO_RESPONSE for its outbound chunks (see the
+        // client drainer further below). Android 13+ rejects a no-response
+        // write against a characteristic that only advertises
+        // write-with-response, with the symptom that every chunk after the
+        // first is silently dropped and the handshake stalls in
+        // ExchangingCertificates.
         val characteristic = BluetoothGattCharacteristic(
             characteristicUuid,
             BluetoothGattCharacteristic.PROPERTY_WRITE
+                or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE
                 or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
             BluetoothGattCharacteristic.PERMISSION_WRITE,
         )
@@ -338,27 +358,68 @@ class BleTransport(private val context: Context) : Transport {
     ): Link {
         val ioScope = session?.ioScope ?: error("transport not started")
         return suspendCancellableCoroutine { cont ->
-        var gatt: BluetoothGatt?
+        // Initialised to null because the BleLink.onClose lambda below
+        // captures `gatt` before `device.connectGatt(...)` returns.
+        var gatt: BluetoothGatt? = null
         val outboundSink = kotlinx.coroutines.channels.Channel<ByteArray>(
             capacity = 32,
             onBufferOverflow = BufferOverflow.SUSPEND,
         )
-        lateinit var link: BleLink
+        // Build the BleLink eagerly so onCharacteristicChanged (which
+        // can fire any time after the peer receives our CCCD write —
+        // including BEFORE our local onDescriptorWrite callback lands
+        // on Samsung devices that batch GATT events aggressively) has
+        // a non-null target. ingestInbound buffers raw chunks on the
+        // link itself; the drainer is started below in
+        // onDescriptorWrite, after which any pre-buffered chunks
+        // flow through.
+        val link = BleLink(
+            endpoint = endpoint,
+            outboundSink = outboundSink,
+            onClose = { runCatching { gatt?.disconnect(); gatt?.close() } },
+        )
+        // Tracks whether the continuation has already been resolved.
+        // We must resume exactly once across the disconnect-vs-success
+        // race; AtomicBoolean.compareAndSet is the gate.
+        val resolved = java.util.concurrent.atomic.AtomicBoolean(false)
         // Volatile-equivalent via AtomicInteger — @Volatile only applies to
         // class fields, not coroutine-captured locals.
         val clientMtu = java.util.concurrent.atomic.AtomicInteger(23)
 
+        fun resumeWith(action: () -> Unit) {
+            if (resolved.compareAndSet(false, true) && cont.isActive) action()
+        }
+
         val callback = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    g.requestMtu(REQUESTED_MTU)
+                    // requestMtu can synchronously return false on some
+                    // Samsung devices when invoked before encryption
+                    // settles. If that happens we skip MTU negotiation
+                    // and proceed at the BLE 4.0 floor of 23 bytes —
+                    // chunking still works, just at minimum throughput.
+                    val accepted = runCatching { g.requestMtu(REQUESTED_MTU) }.getOrDefault(false)
+                    if (!accepted) g.discoverServices()
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     g.close()
+                    // Disconnect before the link was ready: resume the
+                    // suspending connect() with an exception so the
+                    // caller surfaces TransportFailed instead of
+                    // hanging forever waiting on a callback that will
+                    // never arrive.
+                    resumeWith {
+                        cont.resumeWithException(
+                            IllegalStateException("peer disconnected before link ready (status=$status)")
+                        )
+                    }
                 }
             }
 
             override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
-                clientMtu.set(mtu)
+                if (status == BluetoothGatt.GATT_SUCCESS) clientMtu.set(mtu)
+                // Always advance — a failed MTU negotiation leaves us at
+                // the default 23 but service discovery and subsequent
+                // chunking still work.
                 g.discoverServices()
             }
 
@@ -370,18 +431,30 @@ class BleTransport(private val context: Context) : Transport {
             override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
                 val service = g.getService(serviceUuid)
                 if (service == null) {
-                    cont.cancel(IllegalStateException("service $serviceUuid not advertised by peer"))
+                    resumeWith {
+                        cont.resumeWithException(
+                            IllegalStateException("service $serviceUuid not advertised by peer")
+                        )
+                    }
                     return
                 }
                 val ch = service.getCharacteristic(characteristicUuid)
                 if (ch == null) {
-                    cont.cancel(IllegalStateException("char $characteristicUuid missing on peer"))
+                    resumeWith {
+                        cont.resumeWithException(
+                            IllegalStateException("char $characteristicUuid missing on peer")
+                        )
+                    }
                     return
                 }
                 g.setCharacteristicNotification(ch, true)
                 val cccd = ch.getDescriptor(CCCD_UUID)
                 if (cccd == null) {
-                    cont.cancel(IllegalStateException("CCCD missing on peer characteristic"))
+                    resumeWith {
+                        cont.resumeWithException(
+                            IllegalStateException("CCCD missing on peer characteristic")
+                        )
+                    }
                     return
                 }
                 pendingChar = ch
@@ -409,14 +482,16 @@ class BleTransport(private val context: Context) : Transport {
                 val ch = pendingChar ?: return
                 pendingChar = null
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    cont.cancel(IllegalStateException("CCCD write failed with status $status"))
+                    resumeWith {
+                        cont.resumeWithException(
+                            IllegalStateException("CCCD write failed with status $status")
+                        )
+                    }
                     return
                 }
-                link = BleLink(
-                    endpoint = endpoint,
-                    outboundSink = outboundSink,
-                    onClose = { runCatching { g.disconnect(); g.close() } },
-                )
+                // Now that the peer has acked subscription, drain any
+                // pre-buffered chunks through the assembler in order.
+                link.startInboundDrainer(ioScope)
                 ioScope.launch {
                     val chunker = BleOutboundChunker(
                         mtuPayload = (clientMtu.get() - 3).coerceAtLeast(MIN_MTU_PAYLOAD),
@@ -441,7 +516,7 @@ class BleTransport(private val context: Context) : Transport {
                         }
                     }
                 }
-                if (cont.isActive) cont.resume(link)
+                resumeWith { cont.resume(link) }
             }
 
             override fun onCharacteristicChanged(
@@ -449,7 +524,12 @@ class BleTransport(private val context: Context) : Transport {
                 ch: BluetoothGattCharacteristic,
                 value: ByteArray,
             ) {
-                ioScope.launch { link.ingestInbound(value) }
+                // ingestInbound is non-suspending and the link is
+                // pre-allocated above, so it's safe to call from the
+                // binder thread without a launch hop. Chunks queue on
+                // the link's rawChunks Channel until the drainer is
+                // started in onDescriptorWrite.
+                link.ingestInbound(value)
             }
 
             @Deprecated("kept for pre-T platforms that haven't upgraded to the value-overload")

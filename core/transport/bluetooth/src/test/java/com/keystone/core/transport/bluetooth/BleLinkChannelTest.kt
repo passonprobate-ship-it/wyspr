@@ -7,24 +7,28 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 
 /**
- * Regression test for the SharedFlow → Channel swap inside [BleLink].
+ * Regression test for the SharedFlow → Channel swap and the
+ * single-drainer reassembly model inside [BleLink].
  *
- * The v0.1 implementation used `MutableSharedFlow(replay = 0)`. That
- * flow silently dropped emissions issued before any consumer
- * subscribed, which broke the Noise XX handshake whenever the
- * peripheral's first frame landed before the application coroutine
- * had finished wiring its collector. The fix replaces the SharedFlow
- * with a 64-slot buffered Channel exposed via `consumeAsFlow()`.
+ * The earlier v0.1 implementation:
+ *   1. Used `MutableSharedFlow(replay = 0)` which silently dropped
+ *      emissions issued before the consumer subscribed.
+ *   2. Called `ingestInbound` as a suspending function from per-chunk
+ *      `ioScope.launch { ... }` blocks, allowing the assembler's
+ *      ArrayDeque to be mutated concurrently from multiple
+ *      Dispatchers.IO threads. On real hardware that surfaced as
+ *      spurious "frame too large" exceptions.
  *
- * These tests pin the contract: frames pushed via [BleLink.ingestInbound]
- * MUST survive until the consumer collects them, even if the consumer
- * subscribes after the fact. If anyone reverts to a replay=0 flow,
- * `framesArrivingBeforeSubscriber_areNotDropped` will fail.
+ * The current model uses a non-suspending [BleLink.ingestInbound] that
+ * enqueues raw chunks onto a Channel; a single drainer coroutine
+ * (started via [BleLink.startInboundDrainer]) feeds them through the
+ * assembler in arrival order. These tests pin both contracts.
  */
 class BleLinkChannelTest {
 
@@ -41,6 +45,7 @@ class BleLinkChannelTest {
     @Test
     fun framesArrivingBeforeSubscriber_areNotDropped() = runTest {
         val (link, _) = newBleLink(endpoint) { /* onClose */ }
+        link.startInboundDrainer(this)
 
         val frames = listOf(
             byteArrayOf(1, 2, 3),
@@ -59,16 +64,19 @@ class BleLinkChannelTest {
         for (i in frames.indices) {
             assertContentEquals(frames[i], collected[i], "frame index $i lost or reordered")
         }
+        link.close()
     }
 
     @Test
     fun framesArrivingAfterSubscriber_areAlsoDelivered() = runTest {
         val (link, _) = newBleLink(endpoint) { /* onClose */ }
+        link.startInboundDrainer(this)
 
         val collected = mutableListOf<ByteArray>()
         val collector = launch {
             link.incoming().take(2).collect { collected.add(it) }
         }
+        yield()
 
         link.ingestInbound(framed(byteArrayOf(0x10, 0x11)))
         link.ingestInbound(framed(byteArrayOf(0x20, 0x21, 0x22)))
@@ -77,11 +85,13 @@ class BleLinkChannelTest {
         assertEquals(2, collected.size)
         assertContentEquals(byteArrayOf(0x10, 0x11), collected[0])
         assertContentEquals(byteArrayOf(0x20, 0x21, 0x22), collected[1])
+        link.close()
     }
 
     @Test
     fun coalescedChunk_yieldsMultipleFrames() = runTest {
         val (link, _) = newBleLink(endpoint) { /* onClose */ }
+        link.startInboundDrainer(this)
 
         // BLE peripherals sometimes coalesce two notifications into a
         // single inbound chunk. Both frames must survive.
@@ -94,6 +104,7 @@ class BleLinkChannelTest {
         assertEquals(2, received.size)
         assertContentEquals(byteArrayOf(1, 1, 1), received[0])
         assertContentEquals(byteArrayOf(2, 2), received[1])
+        link.close()
     }
 
     @Test
@@ -113,14 +124,42 @@ class BleLinkChannelTest {
     @Test
     fun close_terminatesIncomingFlowCleanly() = runTest {
         val (link, _) = newBleLink(endpoint) { /* onClose */ }
+        link.startInboundDrainer(this)
 
         link.ingestInbound(framed(byteArrayOf(0x01)))
+        // Yield so the drainer transfers the chunk into `inbound`
+        // before close() runs; otherwise close() races the drainer
+        // and the test becomes order-dependent.
+        yield()
         link.close()
 
-        // Channel was closed AFTER the value was sent → consumeAsFlow
-        // delivers the buffered value, then completes. No exception.
         val tail = link.incoming().toList()
         assertEquals(1, tail.size)
         assertContentEquals(byteArrayOf(0x01), tail[0])
+    }
+
+    @Test
+    fun incomingFlowAllowsMultipleSequentialCollectors() = runTest {
+        val (link, _) = newBleLink(endpoint) { /* onClose */ }
+        link.startInboundDrainer(this)
+
+        // The Noise XX handshake collects incoming() once per frame
+        // (m1/m2/m3 + cert exchange). Earlier consumeAsFlow() threw
+        // IllegalStateException on the second collect.
+        link.ingestInbound(framed(byteArrayOf(0xA0.toByte())))
+        link.ingestInbound(framed(byteArrayOf(0xB0.toByte())))
+        link.ingestInbound(framed(byteArrayOf(0xC0.toByte())))
+
+        val first = link.incoming().take(1).toList()
+        val second = link.incoming().take(1).toList()
+        val third = link.incoming().take(1).toList()
+
+        assertEquals(1, first.size)
+        assertEquals(1, second.size)
+        assertEquals(1, third.size)
+        assertContentEquals(byteArrayOf(0xA0.toByte()), first[0])
+        assertContentEquals(byteArrayOf(0xB0.toByte()), second[0])
+        assertContentEquals(byteArrayOf(0xC0.toByte()), third[0])
+        link.close()
     }
 }

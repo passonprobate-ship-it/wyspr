@@ -2,11 +2,15 @@ package com.keystone.core.transport.bluetooth
 
 import com.keystone.core.transport.Link
 import com.keystone.core.transport.PeerEndpoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ChannelResult
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.consumeAsFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -25,6 +29,26 @@ import kotlinx.coroutines.sync.withLock
  * it into MTU-sized fragments at the byte-pump layer (see
  * [BleLinkAssembler]). The [incoming] flow emits one ByteArray per frame
  * — never partials.
+ *
+ * ## Threading
+ *
+ * [ingestInbound] is synchronous (non-suspending) and safe to call from
+ * the Android BLE binder thread. It enqueues the raw chunk onto a
+ * single-consumer Channel; a dedicated drainer coroutine (started via
+ * [startInboundDrainer]) feeds the chunks through the assembler in
+ * arrival order. This guarantees ordered, race-free reassembly even
+ * when BLE delivers two notifications back-to-back. Earlier versions
+ * launched one `ioScope.launch { ingestInbound(value) }` per chunk,
+ * which on a multi-threaded dispatcher allowed feed() to run
+ * concurrently and corrupt the assembler's deque.
+ *
+ * ## Incoming flow
+ *
+ * [incoming] returns `inbound.receiveAsFlow()` — multiple sequential
+ * collectors are allowed. The Noise XX handshake re-collects per frame
+ * (m1/m2/m3 + cert exchange), so a one-shot `consumeAsFlow()` would
+ * throw on the second collect. Pre-subscription emissions are
+ * preserved by the 64-slot Channel buffer.
  */
 internal class BleLink(
     override val endpoint: PeerEndpoint,
@@ -35,15 +59,21 @@ internal class BleLink(
     private val assembler = BleLinkAssembler()
 
     /**
-     * A buffered Channel — not a SharedFlow — because the handshake
-     * subscribes to [incoming] *after* the Link has been handed out,
-     * and frames may already have arrived. A SharedFlow with replay=0
-     * would silently drop those, breaking the Noise XX exchange. The
-     * Channel preserves all frames until consumption.
-     *
-     * Capacity 64 is enough to absorb a full handshake + a few sync
-     * frames; beyond that we SUSPEND the BLE callback thread, which
-     * applies natural backpressure on the radio.
+     * Raw BLE chunks as they arrive from the binder thread. Capacity is
+     * generous because the Noise XX exchange can briefly queue many
+     * MTU-sized chunks before the drainer wakes; `DROP_OLDEST` is the
+     * wrong default for a stream-oriented protocol, so the buffer is
+     * sized to never reach saturation in practice (typical handshake:
+     * ~30 chunks total).
+     */
+    private val rawChunks = Channel<ByteArray>(
+        capacity = 256,
+        onBufferOverflow = BufferOverflow.SUSPEND,
+    )
+
+    /**
+     * Reassembled length-prefixed frames. See class-level KDoc for the
+     * receiveAsFlow rationale.
      */
     private val inbound = Channel<ByteArray>(
         capacity = 64,
@@ -52,15 +82,54 @@ internal class BleLink(
 
     private val closeLock = Mutex()
     @Volatile private var closed = false
+    @Volatile private var drainerJob: Job? = null
 
     /**
-     * Take raw bytes received from the remote (one MTU-chunk at a time
-     * for BLE) and enqueue completed frames on [incoming].
+     * Enqueue a raw BLE chunk for reassembly. Safe to call from any
+     * thread including the Android BLE binder callback thread; never
+     * suspends, never throws — a closed link silently drops chunks.
      */
-    suspend fun ingestInbound(chunk: ByteArray) {
-        for (frame in assembler.feed(chunk)) {
-            inbound.send(frame)
+    fun ingestInbound(chunk: ByteArray) {
+        val result: ChannelResult<Unit> = rawChunks.trySend(chunk)
+        // trySend can only fail if the channel is full or closed; full
+        // would mean the drainer is wedged (handshake-layer bug) or
+        // the buffer is undersized. Closed means the link is closed.
+        // In neither case is there a useful recovery in the BLE
+        // callback context; we just drop.
+        result.getOrNull()
+    }
+
+    /**
+     * Start the single drainer coroutine that reads from [rawChunks]
+     * and feeds the assembler in arrival order. MUST be called once
+     * before any consumer collects [incoming]. Returns the Job so the
+     * caller can cancel it on transport-level teardown.
+     */
+    fun startInboundDrainer(scope: CoroutineScope): Job {
+        check(drainerJob == null) { "drainer already started" }
+        val job = scope.launch {
+            try {
+                for (chunk in rawChunks) {
+                    val frames = try {
+                        assembler.feed(chunk)
+                    } catch (e: IllegalArgumentException) {
+                        // Bad frame length from peer (oversized header).
+                        // Close inbound with the cause so the handshake
+                        // surfaces TransportFailed instead of hanging
+                        // on FRAME_TIMEOUT_MS.
+                        inbound.close(e)
+                        break
+                    }
+                    for (frame in frames) inbound.send(frame)
+                }
+            } finally {
+                // Drainer exiting (channel closed or cancelled) — close
+                // the downstream channel so any collector terminates.
+                inbound.close()
+            }
         }
+        drainerJob = job
+        return job
     }
 
     override suspend fun send(frame: ByteArray) {
@@ -76,13 +145,17 @@ internal class BleLink(
         outboundSink.send(framed)
     }
 
-    override fun incoming(): Flow<ByteArray> = inbound.consumeAsFlow()
+    override fun incoming(): Flow<ByteArray> = inbound.receiveAsFlow()
 
     override suspend fun close(): Unit = closeLock.withLock {
         if (closed) return
         closed = true
         outboundSink.close()
-        inbound.close()
+        rawChunks.close()
+        // The drainer will observe rawChunks.isClosedForReceive and
+        // close `inbound` in its finally block. If the drainer was
+        // never started (early teardown), close inbound directly.
+        if (drainerJob == null) inbound.close()
         onClose()
     }
 
@@ -93,8 +166,8 @@ internal class BleLink(
 
 /**
  * Reassembles incoming BLE chunks (which may split or coalesce frames)
- * back into length-prefixed frames. Single-threaded — the BLE callback
- * thread feeds it sequentially.
+ * back into length-prefixed frames. Single-threaded — called only from
+ * [BleLink]'s drainer coroutine.
  */
 internal class BleLinkAssembler {
     private val buffer = ArrayDeque<Byte>()

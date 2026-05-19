@@ -277,7 +277,7 @@ private class RealSession(
                         !cert.communityId.bytes.contentEquals(localQr.communityId.bytes)) {
                         return abort(HandshakeSession.AbortReason.SignatureInvalid)
                     }
-                    if (!cert.verify(sodium, clock())) {
+                    if (!cert.verify(sodium, clock(), CLOCK_SKEW_SECONDS)) {
                         return abort(HandshakeSession.AbortReason.SignatureInvalid)
                     }
                     sendFrame(noise.encrypt(byteArrayOf(ACK_OK)))

@@ -139,7 +139,30 @@ class OnboardingViewModel @Inject constructor(
     fun onPeerQrScanned(peerQr: HandshakeQr) {
         val s = state.value as? UiState.ScanPeerQr ?: return
         if (!peerQr.communityId.bytes.contentEquals(s.localQr.communityId.bytes)) {
-            // Peer belongs to a different community — silently treat as invalid.
+            // First-launch pairing: both devices auto-mint random
+            // communityIds in generateIdentity(). To converge, the
+            // Invitee adopts the Inviter's community and re-mints its
+            // local QR; the Inviter cannot adopt because doing so
+            // would orphan any pre-existing trust edges (founder
+            // semantics in SECURITY-MODEL.md §3.1).
+            //
+            // For the Inviter, surface an explicit Aborted result so
+            // the user knows their counterpart hasn't adopted yet —
+            // tapping Retry from the Result screen returns to
+            // DisplayQr and the Inviter can wait for the Invitee's
+            // re-minted QR.
+            when (_role.value) {
+                Role.Invitee -> adoptPeerCommunityAndAdvance(s, peerQr)
+                Role.Inviter, null -> {
+                    _state.value = UiState.Result(
+                        identity = s.identity, backing = s.backing,
+                        localQr = s.localQr, localQrBase32 = s.localQrBase32,
+                        outcome = HandshakeSession.Outcome.Aborted(
+                            HandshakeSession.AbortReason.TransportFailed,
+                        ),
+                    )
+                }
+            }
             return
         }
         val now = System.currentTimeMillis() / 1000
@@ -158,6 +181,45 @@ class OnboardingViewModel @Inject constructor(
             localQrBase32 = s.localQrBase32,
             peerQr = peerQr,
         )
+    }
+
+    /**
+     * Invitee side of pre-handshake community pairing. Switches the
+     * device's active community to the scanned Inviter's, re-mints
+     * the local QR (same identity, new ephemeral + nonce), and
+     * advances to fingerprint compare using the peer QR we just
+     * scanned. The peer QR's freshness is re-validated against the
+     * post-adoption clock — adoption can take ~50ms on slow devices.
+     */
+    private fun adoptPeerCommunityAndAdvance(
+        s: UiState.ScanPeerQr,
+        peerQr: HandshakeQr,
+    ) {
+        viewModelScope.launch {
+            val (newLocalQr, newBase32) = withContext(Dispatchers.IO) {
+                communityService.switchCommunity(peerQr.communityId)
+                val q = handshake.mintInviterQr(peerQr.communityId)
+                q to HandshakeQrCodec.toBase32(HandshakeQrCodec.encode(q))
+            }
+            val now = System.currentTimeMillis() / 1000
+            if (!peerQr.isFresh(now)) {
+                _state.value = UiState.Result(
+                    identity = s.identity, backing = s.backing,
+                    localQr = newLocalQr, localQrBase32 = newBase32,
+                    outcome = HandshakeSession.Outcome.Aborted(
+                        HandshakeSession.AbortReason.QrStale,
+                    ),
+                )
+                return@launch
+            }
+            _state.value = UiState.CompareFingerprints(
+                identity = s.identity,
+                backing = s.backing,
+                localQr = newLocalQr,
+                localQrBase32 = newBase32,
+                peerQr = peerQr,
+            )
+        }
     }
 
     /**

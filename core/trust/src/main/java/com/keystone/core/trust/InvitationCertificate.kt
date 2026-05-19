@@ -195,8 +195,13 @@ data class InvitationCertificate(
 fun InvitationCertificate.verify(
     sodium: LazySodiumAndroid,
     nowSeconds: Long,
+    clockSkewSeconds: Long = 0L,
 ): Boolean {
-    if (nowSeconds < issuedAt || nowSeconds >= expiresAt) return false
+    // Two-sided clock-skew tolerance: real devices drift by seconds
+    // and the cert issuer's clock can be ahead of or behind ours.
+    // Reject only when the gap exceeds the tolerance.
+    if (nowSeconds + clockSkewSeconds < issuedAt) return false
+    if (nowSeconds - clockSkewSeconds >= expiresAt) return false
     if (signature.size != Sign.BYTES) return false
     val signed = signedBytes()
     return sodium.cryptoSignVerifyDetached(signature, signed, signed.size, inviterPub.bytes)
