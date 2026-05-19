@@ -8,6 +8,7 @@ import com.keystone.core.database.KeystoneDatabase
 import com.keystone.core.identity.CommunityId
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.transport.Link
+import com.keystone.core.transport.MessagingNotifier
 import com.keystone.core.transport.PeerEndpoint
 import com.keystone.core.transport.TransportLifecycle
 import com.keystone.core.transport.bluetooth.BleTransport
@@ -62,6 +63,7 @@ class MessageSyncService @Inject constructor(
     private val bleTransport: BleTransport,
     private val store: MessageStore,
     private val transportLifecycle: TransportLifecycle,
+    private val notifier: MessagingNotifier,
 ) {
 
     private val lock = Mutex()
@@ -106,7 +108,7 @@ class MessageSyncService @Inject constructor(
             val link = outcome.link
             val role = outcome.role
             try {
-                val engineResult = openSessionAndSync(
+                val sessionResult = openSessionAndSync(
                     role = role,
                     link = link,
                     communityId = communityId,
@@ -118,10 +120,13 @@ class MessageSyncService @Inject constructor(
                     receivedMessages = 0,
                     errorReason = "Peer not recognised (channel-binding failed)",
                 )
+                if (sessionResult.engineResult.receivedCount > 0) {
+                    postInboundNotification(sessionResult.peerPub)
+                }
                 return Result(
                     attemptedPeers = 1,
-                    pushedMessages = engineResult.pushedCount,
-                    receivedMessages = engineResult.receivedCount,
+                    pushedMessages = sessionResult.engineResult.pushedCount,
+                    receivedMessages = sessionResult.engineResult.receivedCount,
                 )
             } finally {
                 runCatching { link.close() }
@@ -161,13 +166,18 @@ class MessageSyncService @Inject constructor(
         outcome
     }
 
+    private data class SessionResult(
+        val peerPub: PublicKey,
+        val engineResult: MessageSyncEngine.Result,
+    )
+
     private suspend fun openSessionAndSync(
         role: MessageSyncEngine.HandshakeRole,
         link: Link,
         communityId: CommunityId,
         ownPub: PublicKey,
         peerLookup: Map<List<Byte>, PublicKey>,
-    ): MessageSyncEngine.Result? {
+    ): SessionResult? {
         val noiseRole = when (role) {
             MessageSyncEngine.HandshakeRole.Initiator -> NoiseSession.Role.Initiator
             MessageSyncEngine.HandshakeRole.Responder -> NoiseSession.Role.Responder
@@ -206,9 +216,28 @@ class MessageSyncService @Inject constructor(
                 ownPub = ownPub,
                 store = store,
             )
-            return engine.run()
+            return SessionResult(peerPub = peerPub, engineResult = engine.run())
         } finally {
             noise.close()
+        }
+    }
+
+    /**
+     * Fire a notification announcing freshly-ingested inbound from
+     * [peerPub]. Queries the message store for the latest message
+     * to populate the preview. Best-effort — a DB hiccup here
+     * shouldn't fail the sync round.
+     */
+    private suspend fun postInboundNotification(peerPub: PublicKey) {
+        runCatching {
+            val recent = store.latestFromPeer(peerPub) ?: return@runCatching
+            val unread = store.unreadInboundFrom(peerPub)
+            notifier.notifyInbound(
+                peerPub = peerPub.bytes,
+                senderFingerprint = peerPub.fingerprint.toString(),
+                count = unread.coerceAtLeast(1),
+                preview = recent.body.take(NOTIFICATION_PREVIEW_CHARS),
+            )
         }
     }
 
@@ -243,6 +272,7 @@ class MessageSyncService @Inject constructor(
 
     companion object {
         const val DEFAULT_TIMEOUT_MS: Long = 30_000L
+        const val NOTIFICATION_PREVIEW_CHARS = 120
         private val PROLOGUE_PREFIX = "KEYSTONE/v1/sync".encodeToByteArray()
     }
 }

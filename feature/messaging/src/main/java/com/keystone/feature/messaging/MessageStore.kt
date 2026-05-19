@@ -83,6 +83,19 @@ class MessageStore @Inject constructor(
             .filter { it.toPub.contentEquals(peerPub.bytes) }
     }
 
+    /** Most-recent message in a thread — used to populate notification previews. */
+    suspend fun latestFromPeer(peerPub: PublicKey): MessageEntity? {
+        ensureOpen()
+        return database.messageDao.threadSnapshot(peerPub.bytes).lastOrNull()
+    }
+
+    /** Number of inbound messages from [peerPub] still in "received" state. */
+    suspend fun unreadInboundFrom(peerPub: PublicKey): Int {
+        ensureOpen()
+        return database.messageDao.threadSnapshot(peerPub.bytes)
+            .count { it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED }
+    }
+
     /** Sprint 2 — push a [MessageEntity] over a Noise link. */
     suspend fun markSent(id: ByteArray) {
         ensureOpen()
