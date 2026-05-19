@@ -45,14 +45,18 @@ class AndroidMessagingNotifier @Inject constructor(
     ) {
         if (!nm.areNotificationsEnabled()) return
         val title = if (count > 1) "$count new messages" else "New message"
+        // Deep-link payload: hex-encode the peer pubkey into the
+        // intent extras. MainActivity reads these on launch and
+        // hands them to the NavController so tapping the
+        // notification opens that peer's chat directly instead of
+        // dumping the user on the welcome screen.
         val openIntent = PendingIntent.getActivity(
             context,
-            // Each peer gets its own request code so the PendingIntent
-            // doesn't get mutated by the system when more than one
-            // notification is on-screen.
             notificationId(peerPub),
             Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                action = ACTION_OPEN_CHAT
+                putExtra(EXTRA_PEER_HEX, peerPub.toHex())
             },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
@@ -94,7 +98,13 @@ class AndroidMessagingNotifier @Inject constructor(
         return (peerPub.contentHashCode() and 0x7FFFFFFF) or 0x10000
     }
 
-    private companion object {
-        const val CHANNEL_ID = "messages"
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+    companion object {
+        private const val CHANNEL_ID = "messages"
+        /** Intent action MainActivity inspects to deep-link into a chat. */
+        const val ACTION_OPEN_CHAT = "com.keystone.app.OPEN_CHAT"
+        /** Hex-encoded peer pubkey extra carried on [ACTION_OPEN_CHAT]. */
+        const val EXTRA_PEER_HEX = "peer_pub_hex"
     }
 }

@@ -178,8 +178,9 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                         Text(
                             when (msg.status) {
                                 "pending" -> "queued"
-                                "sent" -> "sent"
-                                "delivered" -> "delivered"
+                                "sent" -> "sent ✓"
+                                "delivered" -> "delivered ✓✓"
+                                "read" -> "read ✓✓"
                                 else -> msg.status
                             },
                             style = MaterialTheme.typography.labelSmall,

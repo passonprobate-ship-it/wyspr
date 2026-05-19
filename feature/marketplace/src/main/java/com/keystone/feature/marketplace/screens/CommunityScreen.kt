@@ -68,6 +68,7 @@ private fun TrustLevelBadge(level: TrustLevel) {
 @Composable
 fun CommunityScreen(
     onBack: () -> Unit,
+    onOpenGraph: () -> Unit = {},
     viewModel: CommunityViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(Unit) { viewModel.load() }
@@ -86,6 +87,11 @@ fun CommunityScreen(
             CommunityViewModel.UiState.NoCommunity -> EmptyPanel()
             is CommunityViewModel.UiState.Ready -> ReadyPanel(s)
         }
+
+        OutlinedButton(
+            onClick = onOpenGraph,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("View trust graph") }
 
         OutlinedButton(
             onClick = onBack,

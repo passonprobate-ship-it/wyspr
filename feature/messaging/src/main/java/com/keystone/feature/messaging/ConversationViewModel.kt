@@ -58,6 +58,10 @@ class ConversationViewModel @Inject constructor(
             withContext(Dispatchers.IO) {
                 if (!database.isOpen) database.open()
                 ownPub = keystore.loadOrCreateIdentityKey().publicKey
+                // Flip every fresh inbound from this peer to
+                // "viewed" so the next sync round picks them up
+                // as read-receipts to push back.
+                messageStore.markInboundViewed(peer)
             }
             messageStore.threadFlow(peer).collectLatest { messages ->
                 _state.value = UiState.Ready(
@@ -65,6 +69,13 @@ class ConversationViewModel @Inject constructor(
                     peer = peer,
                     messages = messages,
                 )
+                // Any newly-arrived "received" messages get flipped
+                // to "viewed" while the chat is open, so the read
+                // receipt fires on the next sync without the user
+                // re-entering the screen.
+                withContext(Dispatchers.IO) {
+                    messageStore.markInboundViewed(peer)
+                }
             }
         }
     }

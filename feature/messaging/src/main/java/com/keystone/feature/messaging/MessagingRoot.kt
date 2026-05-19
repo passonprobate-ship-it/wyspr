@@ -23,8 +23,23 @@ import com.keystone.feature.messaging.screens.ConversationScreen
 @Composable
 fun MessagingRoot(
     onBack: () -> Unit = {},
+    /**
+     * Set by the app shell when the user tapped a message
+     * notification — we deep-link straight into that chat instead
+     * of stopping at the conversation list.
+     */
+    initialChatPeerHex: String? = null,
 ) {
     val nav = rememberNavController()
+
+    androidx.compose.runtime.LaunchedEffect(initialChatPeerHex) {
+        if (initialChatPeerHex != null) {
+            nav.navigate("messages_thread/$initialChatPeerHex") {
+                popUpTo(MessagingRoutes.List) { inclusive = false }
+                launchSingleTop = true
+            }
+        }
+    }
 
     NavHost(navController = nav, startDestination = MessagingRoutes.List) {
         composable(MessagingRoutes.List) {

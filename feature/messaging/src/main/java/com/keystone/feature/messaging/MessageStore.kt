@@ -96,6 +96,65 @@ class MessageStore @Inject constructor(
             .count { it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED }
     }
 
+    /**
+     * Inbound messages from [peerPub] the user has now viewed but
+     * for which we haven't yet sent a read receipt to the sender.
+     * Sprint 4 read-receipt path picks these up at sync time.
+     */
+    suspend fun pendingReadAckFor(peerPub: PublicKey): List<MessageEntity> {
+        ensureOpen()
+        return database.messageDao.threadSnapshot(peerPub.bytes)
+            .filter {
+                it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED_VIEWED
+            }
+    }
+
+    /**
+     * Flip every inbound from [peerPub] currently in "received" to
+     * "received_viewed". Called from the ConversationViewModel when
+     * the user opens the chat — they've now seen these messages.
+     */
+    suspend fun markInboundViewed(peerPub: PublicKey) {
+        ensureOpen()
+        val unread = database.messageDao.threadSnapshot(peerPub.bytes)
+            .filter { it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED }
+        for (msg in unread) {
+            database.messageDao.updateStatus(msg.id, STATUS_RECEIVED_VIEWED)
+        }
+    }
+
+    /**
+     * Mark the read receipt for [ids] as having been delivered to
+     * the sender (transitioning to the final inbound terminal state).
+     */
+    suspend fun markReadAcked(ids: List<ByteArray>) {
+        ensureOpen()
+        for (id in ids) {
+            database.messageDao.updateStatus(id, STATUS_RECEIVED_ACKED)
+        }
+    }
+
+    /**
+     * The peer told us they've read the outbound messages with
+     * these ids — flip OUR records from "sent" to "read". Idempotent.
+     */
+    suspend fun applyPeerReadReceipts(ids: List<ByteArray>): List<ByteArray> {
+        ensureOpen()
+        val applied = ArrayList<ByteArray>(ids.size)
+        for (id in ids) {
+            val existing = database.messageDao.byId(id) ?: continue
+            // Only accept transitions from sent/delivered → read.
+            // Refusing pending/received protects against a misbehaving
+            // peer trying to flip statuses on messages we haven't even
+            // sent yet, or our own inbound.
+            if (existing.status == STATUS_SENT || existing.status == STATUS_DELIVERED) {
+                database.messageDao.updateStatus(id, STATUS_READ)
+                applied.add(id)
+            }
+        }
+        return applied
+    }
+
     /** Sprint 2 — push a [MessageEntity] over a Noise link. */
     suspend fun markSent(id: ByteArray) {
         ensureOpen()
@@ -139,9 +198,14 @@ class MessageStore @Inject constructor(
     }
 
     companion object {
+        // Outbound terminal sequence: pending → sent → (delivered) → read
         const val STATUS_PENDING = "pending"
         const val STATUS_SENT = "sent"
         const val STATUS_DELIVERED = "delivered"
+        const val STATUS_READ = "read"
+        // Inbound terminal sequence: received → received_viewed → received_acked
         const val STATUS_RECEIVED = "received"
+        const val STATUS_RECEIVED_VIEWED = "received_viewed"
+        const val STATUS_RECEIVED_ACKED = "received_acked"
     }
 }

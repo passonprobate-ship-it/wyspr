@@ -36,6 +36,13 @@ internal sealed interface MessageSyncFrame {
 
     data class Push(val envelopes: List<MessageEnvelope>) : MessageSyncFrame
     data class Ack(val ids: List<ByteArray>) : MessageSyncFrame
+    /**
+     * "I have read the messages with these ids." Receiver looks up
+     * each id in its OUTBOUND table and flips status to "read".
+     * Sent after Push/Ack in the same sync round; acknowledged via
+     * the same [Ack] frame the Push uses.
+     */
+    data class Read(val ids: List<ByteArray>) : MessageSyncFrame
     data object End : MessageSyncFrame
 
     fun wireBytes(): ByteArray = when (this) {
@@ -51,6 +58,12 @@ internal sealed interface MessageSyncFrame {
             arrayHeader(ids.size)
             for (id in ids) bytes(id)
         }
+        is Read -> Cbor.encode {
+            arrayHeader(2)
+            uint(TAG_READ.toLong())
+            arrayHeader(ids.size)
+            for (id in ids) bytes(id)
+        }
         is End -> Cbor.encode {
             arrayHeader(1)
             uint(TAG_END.toLong())
@@ -61,6 +74,7 @@ internal sealed interface MessageSyncFrame {
         const val TAG_PUSH = 0
         const val TAG_ACK = 1
         const val TAG_END = 2
+        const val TAG_READ = 3
 
         /**
          * Inverse of [wireBytes]. Hard-fails on any structural
@@ -98,6 +112,20 @@ internal sealed interface MessageSyncFrame {
                         ids.add(id)
                     }
                     Ack(ids)
+                }
+                TAG_READ -> {
+                    require(outerLen == 2) { "Read frame missing payload" }
+                    val count = arrayHeader()
+                    require(count in 0..MAX_BATCH) { "Read count $count out of range" }
+                    val ids = ArrayList<ByteArray>(count)
+                    repeat(count) {
+                        val id = bytes()
+                        require(id.size == MessageEnvelope.ID_LENGTH) {
+                            "read id must be ${MessageEnvelope.ID_LENGTH} bytes"
+                        }
+                        ids.add(id)
+                    }
+                    Read(ids)
                 }
                 TAG_END -> {
                     require(outerLen == 1) { "End frame must have no payload" }

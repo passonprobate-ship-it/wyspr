@@ -49,17 +49,51 @@ internal class MessageSyncEngine(
             HandshakeRole.Initiator -> {
                 pushed += pushPending()
                 received += awaitPushAndAck()
+                exchangeReadReceipts()
                 sendFrame(MessageSyncFrame.End)
                 awaitEndOrNothing()
             }
             HandshakeRole.Responder -> {
                 received += awaitPushAndAck()
                 pushed += pushPending()
+                exchangeReadReceipts()
                 awaitEndOrNothing()
                 sendFrame(MessageSyncFrame.End)
             }
         }
         return Result(pushedCount = pushed, receivedCount = received)
+    }
+
+    /**
+     * After the Push/Ack round both sides exchange read receipts:
+     * each side sends [MessageSyncFrame.Read] listing the ids of
+     * inbound messages from the peer that the local user has now
+     * viewed. The peer's response uses [MessageSyncFrame.Ack] to
+     * confirm receipt; we then mark our outbound rows for those
+     * ids as `read`, and tell the store our own inbound viewed
+     * receipts have been delivered.
+     */
+    private suspend fun exchangeReadReceipts() {
+        val pendingReads = store.pendingReadAckFor(peerPub)
+        sendFrame(MessageSyncFrame.Read(pendingReads.map { it.id }))
+        // Wait for peer's Ack confirming receipt of our Read frame.
+        val ackFrame = receiveFrame() ?: return
+        val ack = (ackFrame as? MessageSyncFrame.Ack)
+            ?: error("expected Ack of Read, got ${ackFrame::class.simpleName}")
+        val ackedIdSet = ack.ids.map { it.toList() }.toSet()
+        val confirmedReadAcks = pendingReads
+            .filter { it.id.toList() in ackedIdSet }
+            .map { it.id }
+        if (confirmedReadAcks.isNotEmpty()) {
+            store.markReadAcked(confirmedReadAcks)
+        }
+
+        // Receive peer's Read frame — the messages they've now read.
+        val peerReadFrame = receiveFrame() ?: return
+        val peerRead = (peerReadFrame as? MessageSyncFrame.Read)
+            ?: error("expected Read, got ${peerReadFrame::class.simpleName}")
+        val accepted = store.applyPeerReadReceipts(peerRead.ids)
+        sendFrame(MessageSyncFrame.Ack(accepted))
     }
 
     private suspend fun pushPending(): Int {

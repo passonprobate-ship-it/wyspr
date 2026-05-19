@@ -12,6 +12,7 @@ import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.launch
 // biometric prompt parameter is threaded from the outside (MainActivity)
 import com.keystone.feature.marketplace.screens.AuditScreen
+import com.keystone.feature.marketplace.screens.CommunityGraphScreen
 import com.keystone.feature.marketplace.screens.CommunityScreen
 import com.keystone.feature.marketplace.screens.HistoryScreen
 import com.keystone.feature.marketplace.screens.HomeScreen
@@ -51,7 +52,13 @@ fun MarketplaceRoot(
             )
         }
         composable(WalletRoutes.Community) {
-            CommunityScreen(onBack = { nav.popBackStack() })
+            CommunityScreen(
+                onBack = { nav.popBackStack() },
+                onOpenGraph = { nav.navigate(WalletRoutes.CommunityGraph) },
+            )
+        }
+        composable(WalletRoutes.CommunityGraph) {
+            CommunityGraphScreen(onBack = { nav.popBackStack() })
         }
         composable(WalletRoutes.Send) {
             SendScreen(
@@ -115,4 +122,5 @@ private object WalletRoutes {
     const val Audit = "wallet_audit"
     const val Settings = "wallet_settings"
     const val Community = "wallet_community"
+    const val CommunityGraph = "wallet_community_graph"
 }

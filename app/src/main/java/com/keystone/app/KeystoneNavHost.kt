@@ -1,6 +1,7 @@
 package com.keystone.app
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
@@ -23,9 +24,31 @@ import com.keystone.feature.onboarding.screens.DiscoveryScreen
  * no "skip onboarding" path.
  */
 @Composable
-fun KeystoneNavHost(unlocker: BiometricUnlocker) {
+fun KeystoneNavHost(
+    unlocker: BiometricUnlocker,
+    pendingDeepLink: MainActivity.DeepLink? = null,
+    onDeepLinkConsumed: () -> Unit = {},
+) {
     val navController = rememberNavController()
     val activity = LocalContext.current as? FragmentActivity
+
+    // Honour deep-links posted by the messaging notifier. The
+    // pending value re-fires whenever MainActivity emits — both at
+    // cold-start (the launching intent) and onNewIntent. After
+    // navigating we tell the activity the link was consumed so a
+    // rotation doesn't re-trigger.
+    var initialChatPeerHex: String? = null
+    if (pendingDeepLink is MainActivity.DeepLink.OpenChat) {
+        initialChatPeerHex = pendingDeepLink.peerHex
+    }
+    LaunchedEffect(pendingDeepLink) {
+        if (pendingDeepLink is MainActivity.DeepLink.OpenChat) {
+            navController.navigate(Routes.Messaging) {
+                launchSingleTop = true
+            }
+            onDeepLinkConsumed()
+        }
+    }
     // The same suspending prompt is used by every screen that needs it;
     // capture once so the lambda identity is stable across recompositions.
     val biometricPrompt: suspend () -> Boolean = remember(activity, unlocker) {
@@ -74,7 +97,10 @@ fun KeystoneNavHost(unlocker: BiometricUnlocker) {
             )
         }
         composable(Routes.Messaging) {
-            MessagingRoot(onBack = { navController.popBackStack() })
+            MessagingRoot(
+                onBack = { navController.popBackStack() },
+                initialChatPeerHex = initialChatPeerHex,
+            )
         }
         composable(Routes.Coordination) {
             // TODO: feature:coordination entry composable
