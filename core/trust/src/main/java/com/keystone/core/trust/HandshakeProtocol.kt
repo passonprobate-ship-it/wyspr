@@ -145,5 +145,12 @@ interface HandshakeSession {
         CertificateExpired,
         UserCancelled,
         TransportFailed,
+        /**
+         * Inviter side: local device is not authorized to issue trust
+         * certificates in the active community. SECURITY-MODEL.md §3.4
+         * — only Roots and Full members may issue. The TrustGraph
+         * consulted at handshake start decides.
+         */
+        NotAuthorized,
     }
 }

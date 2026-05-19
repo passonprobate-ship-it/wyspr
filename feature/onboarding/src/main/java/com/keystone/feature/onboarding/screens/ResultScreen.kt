@@ -147,6 +147,14 @@ private fun AbortCard(
                 "both devices are within a few feet and Bluetooth is on.",
             true,
         )
+        HandshakeSession.AbortReason.NotAuthorized -> Triple(
+            "Not authorized to invite",
+            "Only the community founder, or a member who has been promoted " +
+                "to Full trust by ≥ 2 independent paths, can issue " +
+                "invitations. This device has neither status in the " +
+                "active community.",
+            false,
+        )
     }
 
     Surface(

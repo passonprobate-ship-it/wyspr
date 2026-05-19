@@ -14,6 +14,7 @@ import com.keystone.core.database.KeystoneDatabaseImpl
 import com.keystone.core.currency.WalletService
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.core.trust.HandshakeProtocolImpl
+import com.keystone.core.trust.TrustGraphService
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -73,6 +74,13 @@ object CryptoModule {
     fun provideCommunityService(database: KeystoneDatabase): CommunityService =
         CommunityService(database = database)
 
+    @Provides
+    @Singleton
+    fun provideTrustGraphService(
+        database: KeystoneDatabase,
+        keystore: KeystoreManager,
+    ): TrustGraphService = TrustGraphService(database = database, keystore = keystore)
+
     // Provided as the concrete impl (not the HandshakeProtocol interface)
     // for the v0.1 slice — the onboarding flow needs mintWithSecret which
     // lives on the impl. Switch to the interface once Noise XX is wired
@@ -83,10 +91,12 @@ object CryptoModule {
         keystore: KeystoreManager,
         sodium: LazySodiumAndroid,
         database: KeystoneDatabase,
+        trustGraphService: TrustGraphService,
     ): HandshakeProtocolImpl = HandshakeProtocolImpl(
         keystore = keystore,
         sodium = sodium,
         database = database,
+        trustGraphService = trustGraphService,
     )
 
     @Provides

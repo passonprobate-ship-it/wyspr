@@ -37,6 +37,15 @@ class HandshakeProtocolImpl(
     private val keystore: KeystoreManager,
     private val sodium: LazySodiumAndroid,
     private val database: KeystoneDatabase,
+    /**
+     * Consulted at the top of [HandshakeSession.run] on the Inviter
+     * side to decide whether this device may issue a fresh
+     * [InvitationCertificate]. Optional — when null (e.g. a unit
+     * test that doesn't care about the authorization gate), the
+     * check is skipped and the previous "anyone can issue" behaviour
+     * stands. Production wiring via Hilt always passes a real one.
+     */
+    private val trustGraphService: TrustGraphService? = null,
     private val clock: () -> Long = { System.currentTimeMillis() / 1000 },
     private val random: SecureRandom = SecureRandom(),
 ) : HandshakeProtocol {
@@ -111,6 +120,7 @@ class HandshakeProtocolImpl(
             keystore = keystore,
             sodium = sodium,
             database = database,
+            trustGraphService = trustGraphService,
             clock = clock,
             random = random,
         )
@@ -150,6 +160,7 @@ private class RealSession(
     private val keystore: KeystoreManager,
     private val sodium: LazySodiumAndroid,
     private val database: KeystoneDatabase,
+    private val trustGraphService: TrustGraphService?,
     private val clock: () -> Long,
     private val random: SecureRandom,
 ) : HandshakeSession {
@@ -161,6 +172,20 @@ private class RealSession(
 
     override suspend fun run(): HandshakeSession.Outcome {
         if (cancelled) return abort(HandshakeSession.AbortReason.UserCancelled)
+
+        // Inviter-side authorization gate. Consult the local trust
+        // graph before doing any I/O — if this device is not allowed
+        // to mint a fresh InvitationCertificate, fail fast with
+        // NotAuthorized so the user sees a clear error instead of a
+        // protocol-level abort downstream. The Invitee side has no
+        // analogous gate because it only verifies & ingests certs;
+        // it does not produce them.
+        if (role == HandshakeProtocol.Role.Inviter && trustGraphService != null) {
+            val localPub = PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
+            if (!trustGraphService.canIssueInvitations(localPub)) {
+                return abort(HandshakeSession.AbortReason.NotAuthorized)
+            }
+        }
 
         val inviterQr: HandshakeQr
         val inviteeQr: HandshakeQr
