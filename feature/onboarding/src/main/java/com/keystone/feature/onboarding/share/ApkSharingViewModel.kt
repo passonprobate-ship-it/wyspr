@@ -3,6 +3,7 @@ package com.keystone.feature.onboarding.share
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.keystone.core.transport.TransportLifecycle
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -31,6 +32,7 @@ import kotlinx.coroutines.withContext
 @HiltViewModel
 class ApkSharingViewModel @Inject constructor(
     application: Application,
+    private val transportLifecycle: TransportLifecycle,
 ) : AndroidViewModel(application) {
 
     private val _state = MutableStateFlow<State>(State.Starting)
@@ -52,7 +54,16 @@ class ApkSharingViewModel @Inject constructor(
         viewModelScope.launch {
             lifecycleLock.withLock {
                 if (server != null) return@withLock
+                // Acquire the foreground service BEFORE binding the
+                // listening socket — Android 14+ requires the service
+                // be in foreground state before any non-loopback bind.
+                transportLifecycle.acquireForSharing()
                 val outcome = withContext(Dispatchers.IO) { startServerBlocking() }
+                if (outcome !is State.Ready) {
+                    // Couldn't actually start — release the FGS hold
+                    // so we don't leak a foreground notification.
+                    transportLifecycle.release()
+                }
                 _state.value = outcome
             }
         }
@@ -114,6 +125,7 @@ class ApkSharingViewModel @Inject constructor(
                 val srv = server ?: return@withLock
                 server = null
                 withContext(Dispatchers.IO) { runCatching { srv.stop() } }
+                transportLifecycle.release()
                 _state.value = State.Starting
             }
         }

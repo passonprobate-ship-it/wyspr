@@ -9,6 +9,7 @@ import com.keystone.core.identity.CommunityId
 import com.keystone.core.identity.Identity
 import com.keystone.core.identity.IdentityIssuer
 import com.keystone.core.transport.Link
+import com.keystone.core.transport.TransportLifecycle
 import com.keystone.core.transport.bluetooth.BleTransport
 import com.keystone.core.trust.HandshakeProtocol
 import com.keystone.core.trust.HandshakeProtocolImpl
@@ -49,6 +50,7 @@ class OnboardingViewModel @Inject constructor(
     private val handshake: HandshakeProtocolImpl,
     private val communityService: CommunityService,
     private val bleTransport: BleTransport,
+    private val transportLifecycle: TransportLifecycle,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState>(UiState.Welcome)
@@ -291,39 +293,48 @@ class OnboardingViewModel @Inject constructor(
         }
 
         activeJob = viewModelScope.launch(Dispatchers.IO) {
-            val link: Link = try {
-                openLinkFor(localQr.communityId, peerQr, protocolRole)
-            } catch (t: Throwable) {
-                emitResult(
-                    identity, backing, localQr, localQrBase32,
-                    HandshakeSession.Outcome.Aborted(HandshakeSession.AbortReason.TransportFailed),
-                )
-                return@launch
-            }
+            // Promote the transport stack to a foreground service for
+            // the duration of this handshake — otherwise Android 14's
+            // background limits will tear down the GATT server within
+            // ~30s if the user backgrounds the app mid-pairing.
+            transportLifecycle.acquireForHandshake()
+            try {
+                val link: Link = try {
+                    openLinkFor(localQr.communityId, peerQr, protocolRole)
+                } catch (t: Throwable) {
+                    emitResult(
+                        identity, backing, localQr, localQrBase32,
+                        HandshakeSession.Outcome.Aborted(HandshakeSession.AbortReason.TransportFailed),
+                    )
+                    return@launch
+                }
 
-            val session = handshake.open(protocolRole, localQr, peerQr, link)
-            activeSession = session
+                val session = handshake.open(protocolRole, localQr, peerQr, link)
+                activeSession = session
 
-            // Pipe session state -> UI
-            val pipe = launch {
-                session.state.collect { s ->
-                    val current = _state.value
-                    if (current is UiState.RunHandshake) {
-                        _state.value = current.copy(sessionState = s)
+                // Pipe session state -> UI
+                val pipe = launch {
+                    session.state.collect { s ->
+                        val current = _state.value
+                        if (current is UiState.RunHandshake) {
+                            _state.value = current.copy(sessionState = s)
+                        }
                     }
                 }
-            }
 
-            val outcome = try {
-                session.run()
+                val outcome = try {
+                    session.run()
+                } finally {
+                    pipe.cancel()
+                    runCatching { link.close() }
+                }
+
+                emitResult(identity, backing, localQr, localQrBase32, outcome)
+                activeSession = null
+                activeJob = null
             } finally {
-                pipe.cancel()
-                runCatching { link.close() }
+                transportLifecycle.release()
             }
-
-            emitResult(identity, backing, localQr, localQrBase32, outcome)
-            activeSession = null
-            activeJob = null
         }
     }
 

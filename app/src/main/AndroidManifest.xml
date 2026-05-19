@@ -112,5 +112,16 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Keeps the BLE GATT server / WiFi P2P / HTTPS share server
+             alive while the user is in a flow that needs the radio.
+             Type "connectedDevice" matches the manifest permission
+             declared above and is mandatory on Android 14+; combined
+             with the existing BLUETOOTH_CONNECT runtime grant, the
+             system permits this service type. -->
+        <service
+            android:name=".transport.TransportForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
     </application>
 </manifest>
