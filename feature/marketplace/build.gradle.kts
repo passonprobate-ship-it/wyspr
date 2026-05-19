@@ -26,6 +26,7 @@ dependencies {
     implementation(project(":core:sync"))
     implementation(project(":core:database"))
     implementation(project(":core:currency"))
+    implementation(project(":core:transport:api"))
 
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")

@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.keystone.core.transport.TorBackend
 import com.keystone.core.trust.TrustLevel
 import com.keystone.core.ui.components.BadgeStatus
 import com.keystone.core.ui.components.TrustBadge
@@ -73,6 +75,7 @@ fun CommunityScreen(
 ) {
     LaunchedEffect(Unit) { viewModel.load() }
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val torState by viewModel.torState.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -81,6 +84,8 @@ fun CommunityScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text("My community", style = MaterialTheme.typography.headlineMedium)
+
+        TorStatusRow(torState)
 
         when (val s = state) {
             CommunityViewModel.UiState.Loading -> LoadingPanel()
@@ -97,6 +102,41 @@ fun CommunityScreen(
             onClick = onBack,
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Back") }
+    }
+}
+
+@Composable
+private fun TorStatusRow(state: TorBackend.State) {
+    val (label, statusColor) = when (state) {
+        TorBackend.State.Idle -> "Tor: idle" to MaterialTheme.colorScheme.outline
+        is TorBackend.State.Bootstrapping ->
+            "Tor: bootstrapping ${state.percent}%" to MaterialTheme.colorScheme.tertiary
+        TorBackend.State.Ready -> "Tor: ready — reachable anywhere" to MaterialTheme.colorScheme.primary
+        is TorBackend.State.Failed -> "Tor: ${state.message}" to MaterialTheme.colorScheme.error
+        TorBackend.State.Unavailable -> "Tor: not bundled yet (v0.6.1)" to MaterialTheme.colorScheme.outline
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        androidx.compose.foundation.layout.Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            // Status dot.
+            Surface(
+                color = statusColor,
+                shape = androidx.compose.foundation.shape.CircleShape,
+                modifier = Modifier.size(8.dp),
+            ) {}
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

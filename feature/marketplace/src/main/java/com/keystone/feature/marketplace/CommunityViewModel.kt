@@ -6,6 +6,7 @@ import com.keystone.core.crypto.KeystoreManager
 import com.keystone.core.database.KeystoneDatabase
 import com.keystone.core.identity.Fingerprint
 import com.keystone.core.identity.PublicKey
+import com.keystone.core.transport.TorBackend
 import com.keystone.core.trust.TrustGraph
 import com.keystone.core.trust.TrustGraphService
 import com.keystone.core.trust.TrustLevel
@@ -32,10 +33,14 @@ class CommunityViewModel @Inject constructor(
     private val keystore: KeystoreManager,
     private val database: KeystoneDatabase,
     private val trustGraphService: TrustGraphService,
+    private val torBackend: TorBackend,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState>(UiState.Loading)
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /** Live state of the embedded Tor daemon, surfaced to the UI. */
+    val torState: StateFlow<TorBackend.State> = torBackend.state
 
     /** Idempotent — called from a LaunchedEffect when the screen mounts. */
     fun load() {
