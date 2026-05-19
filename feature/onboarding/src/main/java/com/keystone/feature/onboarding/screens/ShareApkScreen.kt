@@ -1,12 +1,17 @@
 package com.keystone.feature.onboarding.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,9 +27,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.keystone.core.ui.QrRenderer
@@ -145,12 +156,20 @@ private fun ReadyPanel(state: ApkSharingViewModel.State.Ready) {
         }
     }
 
-    Text(
-        state.url,
-        style = MaterialTheme.typography.labelLarge,
-    )
+    // Manual fallback: not every Android camera highlights URLs in
+    // the viewfinder (Samsung Galaxy A-series, One UI Core, anything
+    // running Android Go). Show the URL big, monospace, tap to copy
+    // — the inviter can paste it into the recipient's browser bar
+    // directly, or send via Quick Share / SMS / anything.
+    UrlCopyRow(url = state.url)
 
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            "Or have them open this URL in any browser",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             "Keystone ${state.versionName} • $sizeMb MB",
             style = MaterialTheme.typography.labelMedium,
@@ -166,5 +185,42 @@ private fun ReadyPanel(state: ApkSharingViewModel.State.Ready) {
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
+    }
+}
+
+@Composable
+private fun UrlCopyRow(url: String) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                clipboard.setText(AnnotatedString(url))
+                Toast.makeText(context, "URL copied", Toast.LENGTH_SHORT).show()
+            },
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    url,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    "Tap to copy",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
