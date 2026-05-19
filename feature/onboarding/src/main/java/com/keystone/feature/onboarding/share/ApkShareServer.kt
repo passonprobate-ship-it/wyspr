@@ -50,8 +50,18 @@ import java.security.MessageDigest
  */
 internal class ApkShareServer(
     private val context: Context,
+    /**
+     * Bind the listening socket to one specific interface — the LAN
+     * IP discovered by [LocalIp]. The default NanoHTTPD single-arg
+     * constructor binds 0.0.0.0, which exposes the server on every
+     * up interface (Tailscale 100.x, cellular tether, USB tether,
+     * mobile hotspot, corporate VPN). With single-interface bind,
+     * only peers on the chosen LAN can connect, matching the
+     * README's "same WiFi only" promise.
+     */
+    bindHost: String,
     port: Int = DEFAULT_PORT,
-) : NanoHTTPD(port) {
+) : NanoHTTPD(bindHost, port) {
 
     val apkSha256: String by lazy { computeApkSha256() }
     val apkSizeBytes: Long by lazy { apkFile().length() }

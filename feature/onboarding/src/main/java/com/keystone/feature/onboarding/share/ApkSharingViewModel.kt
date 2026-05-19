@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -34,13 +36,25 @@ class ApkSharingViewModel @Inject constructor(
     private val _state = MutableStateFlow<State>(State.Starting)
     val state: StateFlow<State> = _state.asStateFlow()
 
-    private var server: ApkShareServer? = null
+    /**
+     * Serialises [start] and [stop]. The check `server != null` and
+     * the assignment that publishes a freshly-started server are
+     * separated by an IO suspension; without the mutex, two rapid
+     * `start()` calls (e.g. config change + LaunchedEffect both
+     * firing) could both pass the null check and spin up two
+     * NanoHTTPD instances, leaking the first.
+     */
+    private val lifecycleLock = Mutex()
+
+    @Volatile private var server: ApkShareServer? = null
 
     fun start() {
-        if (server != null) return
         viewModelScope.launch {
-            val outcome = withContext(Dispatchers.IO) { startServerBlocking() }
-            _state.value = outcome
+            lifecycleLock.withLock {
+                if (server != null) return@withLock
+                val outcome = withContext(Dispatchers.IO) { startServerBlocking() }
+                _state.value = outcome
+            }
         }
     }
 
@@ -50,7 +64,10 @@ class ApkSharingViewModel @Inject constructor(
                 "Couldn't find a WiFi address. Connect your phone to the same WiFi " +
                     "as your peer and try again.",
             )
-        val srv = ApkShareServer(getApplication())
+        // Bind explicitly to the chosen LAN IP so the listening
+        // socket isn't exposed on Tailscale, USB tether, or any other
+        // up interface — see KDoc on ApkShareServer.bindHost.
+        val srv = ApkShareServer(context = getApplication(), bindHost = ip)
         // Build a fresh self-signed cert for THIS IP and attach it
         // before binding — modern browsers (Brave most aggressively)
         // refuse plain HTTP on a non-loopback address, so HTTPS even
@@ -87,12 +104,19 @@ class ApkSharingViewModel @Inject constructor(
     }
 
     fun stop() {
-        val srv = server ?: return
-        server = null
-        // NanoHTTPD's stop() is fast (joins worker threads with a
-        // short timeout). Safe to call on the main thread.
-        runCatching { srv.stop() }
-        _state.value = State.Starting
+        // NanoHTTPD's stop() joins worker threads with up to a
+        // socket-read-timeout budget per worker — under a few
+        // hundred ms on a quiet share session but easily 1-2s if
+        // the recipient is mid-download. That's well over the 16ms
+        // frame budget; run it on IO.
+        viewModelScope.launch {
+            lifecycleLock.withLock {
+                val srv = server ?: return@withLock
+                server = null
+                withContext(Dispatchers.IO) { runCatching { srv.stop() } }
+                _state.value = State.Starting
+            }
+        }
     }
 
     override fun onCleared() {
@@ -112,9 +136,13 @@ class ApkSharingViewModel @Inject constructor(
     }
 
     private companion object {
-        // Tighter than NanoHTTPD's 5000ms default — the share session
-        // is interactive and a 1s socket-read budget is plenty for the
-        // ~50MB APK transfer over a same-LAN link.
-        const val NanoHttpdTimeoutMs = 1_000
+        /**
+         * Per-socket-read timeout (NanoHTTPD's
+         * SOCKET_READ_TIMEOUT). The connection is interactive but
+         * an APK transfer over a slow link can stall well over a
+         * second between reads; matching NanoHTTPD's own 5s default
+         * is safer than the aggressive 1s we had before.
+         */
+        const val NanoHttpdTimeoutMs = 5_000
     }
 }

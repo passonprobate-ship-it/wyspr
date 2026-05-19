@@ -41,7 +41,24 @@
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="32" />
 
-    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <!--
+        Override the bluetooth_le and wifi.direct requirements declared
+        by the core:transport:bluetooth and core:transport:wifidirect
+        library manifests (which both set required="true"). Without the
+        tools:replace, manifest merger picks the more restrictive value
+        and the merged manifest gates installation behind both hardware
+        features. We want Keystone to be installable on any Android 8+
+        device — BLE is the primary transport but isn't a hard
+        prerequisite (a future build could add a Tor-only fallback).
+    -->
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="false"
+        tools:replace="android:required" />
+    <uses-feature
+        android:name="android.hardware.wifi.direct"
+        android:required="false"
+        tools:replace="android:required" />
 
     <!-- Wake locks — never long-lived; bounded to active sync sessions. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />

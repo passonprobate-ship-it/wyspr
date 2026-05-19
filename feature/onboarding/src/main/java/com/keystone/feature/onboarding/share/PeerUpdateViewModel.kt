@@ -2,6 +2,10 @@ package com.keystone.feature.onboarding.share
 
 import android.app.Application
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -22,9 +26,10 @@ import kotlinx.coroutines.withContext
  *   2. [check] fetches `/version.json`. Compares versionCode against
  *      this device's own. Surfaces Older / Same / Newer.
  *   3. If Newer, the user taps Install. [install] downloads the
- *      APK to private cache with SHA-256 verification, then fires
- *      a VIEW intent so the system PackageInstaller can run its
- *      signature check and prompt the user.
+ *      APK to private cache with SHA-256 verification, then hands
+ *      it to the system PackageInstaller via an explicit-package
+ *      VIEW intent (the explicit-package constraint defeats any
+ *      malicious third-party app that registers for the APK MIME).
  *
  * The receiver never auto-installs — Android's installer requires
  * an explicit user tap. The "auto" in Keystone's peer-update story
@@ -71,6 +76,18 @@ class PeerUpdateViewModel @Inject constructor(
     fun install() {
         val found = _state.value as? State.Found ?: return
         if (found.comparison != State.Comparison.Newer) return
+
+        // Before downloading anything, confirm the OS will actually
+        // let us hand the APK to the installer. On Android 8+ the
+        // user has to flip "Install unknown apps" for Keystone — if
+        // they haven't, the system installer silently no-ops and the
+        // user is stuck with a "Installer launched" message and
+        // nothing happens. Surface a settings-redirect state instead.
+        if (!canRequestInstalls()) {
+            _state.value = State.NeedsInstallPermission(found)
+            return
+        }
+
         cancelActive()
         _state.value = State.Downloading(found.peer, bytesRead = 0, total = found.peer.apkSizeBytes)
         activeJob = viewModelScope.launch {
@@ -85,30 +102,56 @@ class PeerUpdateViewModel @Inject constructor(
                     },
                 )
             }
-            result.fold(
-                onSuccess = { file ->
-                    val context = getApplication<Application>()
-                    val authority = "${context.packageName}.fileprovider"
-                    val uri = FileProvider.getUriForFile(context, authority, file)
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        setDataAndType(uri, "application/vnd.android.package-archive")
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    runCatching { context.startActivity(intent) }
-                        .onFailure {
-                            _state.value = State.Failed(
-                                "Downloaded successfully but couldn't open the " +
-                                    "installer: ${it.message}",
-                            )
-                            return@onFailure
-                        }
-                    _state.value = State.Installing(found.peer)
-                },
-                onFailure = { t ->
-                    _state.value = State.Failed(t.message ?: "Download failed.")
-                },
-            )
+            val file = result.getOrElse { t ->
+                _state.value = State.Failed(t.message ?: "Download failed.")
+                return@launch
+            }
+            // Build the installer intent and constrain it to a
+            // package that holds a system signature — anything else
+            // claiming the package-archive MIME (potentially malicious
+            // apps the user installed earlier) is rejected before
+            // startActivity. The FileProvider URI grant rides along
+            // only to the resolved package.
+            val context = getApplication<Application>()
+            val authority = "${context.packageName}.fileprovider"
+            val uri = FileProvider.getUriForFile(context, authority, file)
+            val systemInstaller = resolveSystemPackageInstaller(uri)
+            if (systemInstaller == null) {
+                _state.value = State.Failed(
+                    "No system installer found on this device. Open the APK from your " +
+                        "Downloads folder to install manually.",
+                )
+                return@launch
+            }
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, MIME_APK)
+                setPackage(systemInstaller)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val launched = runCatching { context.startActivity(intent) }
+            if (launched.isFailure) {
+                _state.value = State.Failed(
+                    "Downloaded successfully but couldn't open the installer: " +
+                        "${launched.exceptionOrNull()?.message}",
+                )
+            } else {
+                _state.value = State.Installing(found.peer)
+            }
+        }
+    }
+
+    /**
+     * Called from the UI when the user taps "Open Settings" on the
+     * NeedsInstallPermission panel. Returns an Intent the screen
+     * should fire — `startActivityForResult` not required since the
+     * user will return on their own and re-tap Install.
+     */
+    fun installPermissionSettingsIntent(): Intent {
+        val pkg = getApplication<Application>().packageName
+        return Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+            data = Uri.parse("package:$pkg")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
     }
 
@@ -128,7 +171,8 @@ class PeerUpdateViewModel @Inject constructor(
         val withScheme = when {
             trimmed.startsWith("http://", ignoreCase = true) -> trimmed
             trimmed.startsWith("https://", ignoreCase = true) -> trimmed
-            else -> "http://$trimmed"
+            // Default to https — the share server now speaks TLS.
+            else -> "https://$trimmed"
         }
         // Strip a trailing `/version.json` or `/keystone.apk` so the
         // user can paste either the QR URL or the link they grabbed
@@ -138,7 +182,7 @@ class PeerUpdateViewModel @Inject constructor(
             .removeSuffix("/version.json")
             .removeSuffix("/keystone.apk")
             .removeSuffix("/")
-        return stripped.takeIf { it.length > "http://".length }
+        return stripped.takeIf { it.length > "https://".length }
     }
 
     @Suppress("DEPRECATION")
@@ -147,6 +191,44 @@ class PeerUpdateViewModel @Inject constructor(
         return runCatching {
             app.packageManager.getPackageInfo(app.packageName, 0).versionCode
         }.getOrDefault(0)
+    }
+
+    private fun canRequestInstalls(): Boolean {
+        val app = getApplication<Application>()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching { app.packageManager.canRequestPackageInstalls() }.getOrDefault(false)
+        } else true
+    }
+
+    /**
+     * Find the package name of a system-signed package installer
+     * that can handle our content URI + MIME. Returns null if none
+     * available (custom ROM stripped it, no resolver, etc.).
+     *
+     * The system-signature check defeats the MIME-intercept attack
+     * where a malicious user-installed app registers for the
+     * package-archive MIME and tries to read the FileProvider URI.
+     */
+    @Suppress("DEPRECATION", "QueryPermissionsNeeded")
+    private fun resolveSystemPackageInstaller(uri: Uri): String? {
+        val app = getApplication<Application>()
+        val pm = app.packageManager
+        val probe = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, MIME_APK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val resolvers = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            pm.queryIntentActivities(probe, PackageManager.ResolveInfoFlags.of(0L))
+        } else {
+            pm.queryIntentActivities(probe, 0)
+        }
+        return resolvers.firstOrNull { ri ->
+            val appInfo = ri.activityInfo?.applicationInfo ?: return@firstOrNull false
+            val isSystem = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+            val isUpdatedSystem =
+                (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+            isSystem || isUpdatedSystem
+        }?.activityInfo?.packageName
     }
 
     sealed interface State {
@@ -164,8 +246,14 @@ class PeerUpdateViewModel @Inject constructor(
             val total: Long,
         ) : State
         data class Installing(val peer: PeerVersion) : State
+        /** Surfaced when the user hasn't granted "Install unknown apps". */
+        data class NeedsInstallPermission(val resumeFrom: Found) : State
         data class Failed(val message: String) : State
 
         enum class Comparison { Newer, Same, Older }
+    }
+
+    private companion object {
+        const val MIME_APK = "application/vnd.android.package-archive"
     }
 }

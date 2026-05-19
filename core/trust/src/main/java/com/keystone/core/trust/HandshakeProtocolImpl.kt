@@ -269,7 +269,13 @@ private class RealSession(
                     if (cert.issuedAt > clock() + CLOCK_SKEW_SECONDS) {
                         return abort(HandshakeSession.AbortReason.CertificateExpired)
                     }
-                    if (cert.expiresAt <= clock()) {
+                    // Symmetric clock-skew tolerance: the cert is
+                    // considered expired only once we are MORE than
+                    // CLOCK_SKEW_SECONDS past its expiresAt. Without
+                    // this, an Invitee whose clock is a few seconds
+                    // ahead of the Inviter would reject a freshly-
+                    // issued cert that verify() still accepts.
+                    if (cert.expiresAt + CLOCK_SKEW_SECONDS <= clock()) {
                         return abort(HandshakeSession.AbortReason.CertificateExpired)
                     }
                     if (!cert.inviterPub.bytes.contentEquals(peerPub.bytes) ||

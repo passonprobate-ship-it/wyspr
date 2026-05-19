@@ -97,6 +97,15 @@ fun UpdateFromPeerScreen(
             )
             is PeerUpdateViewModel.State.Downloading -> DownloadingPanel(s)
             is PeerUpdateViewModel.State.Installing -> InstallingPanel(s)
+            is PeerUpdateViewModel.State.NeedsInstallPermission -> {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                NeedsInstallPanel(
+                    onOpenSettings = {
+                        runCatching { context.startActivity(viewModel.installPermissionSettingsIntent()) }
+                    },
+                    onRetry = viewModel::install,
+                )
+            }
             is PeerUpdateViewModel.State.Failed -> FailedPanel(
                 message = s.message,
                 onRetry = { viewModel.reset() },
@@ -215,6 +224,42 @@ private fun InstallingPanel(state: PeerUpdateViewModel.State.Installing) {
             )
         }
     }
+}
+
+@Composable
+private fun NeedsInstallPanel(
+    onOpenSettings: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "Allow Keystone to install updates",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                "Android needs your permission before any app — including " +
+                    "Keystone — can install another app. Open the system " +
+                    "Settings panel, toggle \"Allow from this source\" for " +
+                    "Keystone, return here, and tap Try again.",
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+    Button(
+        onClick = onOpenSettings,
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("Open settings") }
+    OutlinedButton(
+        onClick = onRetry,
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text("Try again") }
 }
 
 @Composable
