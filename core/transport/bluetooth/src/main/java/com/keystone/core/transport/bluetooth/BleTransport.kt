@@ -21,6 +21,7 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
+import android.util.Log
 import com.keystone.core.identity.CommunityId
 import com.keystone.core.transport.Link
 import com.keystone.core.transport.PeerEndpoint
@@ -100,7 +101,10 @@ class BleTransport(private val context: Context) : Transport {
 
     @SuppressLint("MissingPermission")
     override suspend fun start(communityId: CommunityId): Unit = lock.withLock {
-        if (session != null) return@withLock
+        if (session != null) {
+            Log.d(TAG, "start: already running for community ${communityId.bytes.take(4)}…")
+            return@withLock
+        }
         val adapter = bluetoothManager?.adapter ?: error("BLE not available on this device")
         check(adapter.isEnabled) { "Bluetooth is off; please enable it" }
         check(BlePermissions.allGranted(context)) {
@@ -108,6 +112,7 @@ class BleTransport(private val context: Context) : Transport {
         }
 
         val serviceParcelUuid = ParcelUuid(ServiceUuid.forCommunity(communityId))
+        Log.d(TAG, "start: communityId=${communityId.bytes.take(4).joinToString("") { "%02x".format(it) }}… serviceUuid=${serviceParcelUuid.uuid}")
         val serviceUuid = serviceParcelUuid.uuid
         val charUuid = ServiceUuid.characteristicForCommunity(communityId)
 
@@ -135,15 +140,23 @@ class BleTransport(private val context: Context) : Transport {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val device = result.device ?: return
                 val address = device.address ?: return
+                Log.d(TAG, "scan: discovered peer $address")
                 discovered.tryEmit(PeerEndpoint(Transport.Kind.BluetoothLe, address))
             }
             override fun onBatchScanResults(results: MutableList<ScanResult>) {
                 results.forEach { onScanResult(ScanSettings.CALLBACK_TYPE_ALL_MATCHES, it) }
             }
-            override fun onScanFailed(errorCode: Int) { /* telemetry hook */ }
+            override fun onScanFailed(errorCode: Int) {
+                Log.w(TAG, "scan: onScanFailed code=$errorCode")
+            }
         }
         val advertiseCallback = object : AdvertiseCallback() {
-            override fun onStartFailure(errorCode: Int) { /* telemetry hook */ }
+            override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+                Log.d(TAG, "advertise: onStartSuccess settings=$settingsInEffect")
+            }
+            override fun onStartFailure(errorCode: Int) {
+                Log.w(TAG, "advertise: onStartFailure code=$errorCode")
+            }
         }
 
         val advertiseSettings = AdvertiseSettings.Builder()
@@ -172,6 +185,7 @@ class BleTransport(private val context: Context) : Transport {
 
         advertiser.startAdvertising(advertiseSettings, advertiseData, advertiseCallback)
         scanner.startScan(listOf(scanFilter), scanSettings, scanCallback)
+        Log.d(TAG, "start: advertising + scanning started")
 
         session = Session(
             community = communityId,
@@ -545,6 +559,7 @@ class BleTransport(private val context: Context) : Transport {
     }
 
     companion object {
+        private const val TAG = "BleTransport"
         private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private const val REQUESTED_MTU = 247
         // 3-byte ATT header off the negotiated MTU; default of 20 is the

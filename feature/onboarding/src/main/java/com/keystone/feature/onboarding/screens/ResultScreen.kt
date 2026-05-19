@@ -142,9 +142,12 @@ private fun AbortCard(
             true,
         )
         HandshakeSession.AbortReason.TransportFailed -> Triple(
-            "Connection failed",
-            "Bluetooth dropped before the handshake completed. Make sure " +
-                "both devices are within a few feet and Bluetooth is on.",
+            "Couldn't reach the other device",
+            "Check that one of you tapped \"Start a new community\" and the " +
+                "other tapped \"Join with a QR code\" — both sides picking the " +
+                "same role will leave the handshake waiting forever. Also make " +
+                "sure both devices are within a few feet, Bluetooth is on, and " +
+                "you've granted the Nearby Devices permission.",
             true,
         )
         HandshakeSession.AbortReason.NotAuthorized -> Triple(

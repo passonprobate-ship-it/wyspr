@@ -1,5 +1,6 @@
 package com.keystone.feature.onboarding
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.keystone.core.crypto.KeystoreManager
@@ -23,20 +24,23 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import javax.inject.Inject
 
 /**
  * Drives the onboarding state machine end-to-end:
  *
- *     Welcome → RolePicker → KeyGeneration → DisplayQr →
- *     ScanPeerQr → CompareFingerprints → RunHandshake → Result
+ *     RolePicker → KeyGeneration → Pair → CompareFingerprints →
+ *     RunHandshake → Result
  *
- * Each transition is one-way; aborting from any step rewinds to
- * DisplayQr where the user can retry with a fresh QR or restart from
- * RolePicker.
+ * The previous DisplayQr / ScanPeerQr split was folded into a single
+ * Pair state — both sides now see their own QR and a live scanner on
+ * the same screen, so neither has to hand the phone over to advance.
+ *
+ * Each transition is one-way; aborting from any step rewinds to Pair
+ * where the user can retry with a fresh QR or restart from RolePicker.
  *
  * The handshake itself runs in a dedicated coroutine so the UI keeps
  * collecting [HandshakeSession.state] updates throughout. Cancelling
@@ -53,7 +57,7 @@ class OnboardingViewModel @Inject constructor(
     private val transportLifecycle: TransportLifecycle,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow<UiState>(UiState.Welcome)
+    private val _state = MutableStateFlow<UiState>(UiState.RolePicker)
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private val _role = MutableStateFlow<Role?>(null)
@@ -62,8 +66,6 @@ class OnboardingViewModel @Inject constructor(
     private var activeSession: HandshakeSession? = null
     private var activeJob: Job? = null
 
-    fun continueFromWelcome() { _state.value = UiState.RolePicker }
-
     fun pickRole(role: Role) {
         _role.value = role
         _state.value = UiState.KeyGeneration(KeyGenStatus.Pending)
@@ -71,14 +73,12 @@ class OnboardingViewModel @Inject constructor(
 
     fun back() {
         _state.value = when (val s = state.value) {
-            UiState.RolePicker -> UiState.Welcome
+            UiState.RolePicker -> UiState.RolePicker
             is UiState.KeyGeneration -> UiState.RolePicker
-            is UiState.DisplayQr -> UiState.RolePicker
-            is UiState.ScanPeerQr -> UiState.DisplayQr(s.identity, s.backing, s.localQr, s.localQrBase32)
-            is UiState.CompareFingerprints -> UiState.ScanPeerQr(s.identity, s.backing, s.localQr, s.localQrBase32)
-            is UiState.RunHandshake -> { cancelHandshake(); UiState.DisplayQr(s.identity, s.backing, s.localQr, s.localQrBase32) }
-            is UiState.Result -> UiState.DisplayQr(s.identity, s.backing, s.localQr, s.localQrBase32)
-            UiState.Welcome -> UiState.Welcome
+            is UiState.Pair -> UiState.RolePicker
+            is UiState.CompareFingerprints -> UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32)
+            is UiState.RunHandshake -> { cancelHandshake(); UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32) }
+            is UiState.Result -> UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32)
         }
     }
 
@@ -105,7 +105,7 @@ class OnboardingViewModel @Inject constructor(
                     val base32 = HandshakeQrCodec.toBase32(HandshakeQrCodec.encode(qr))
                     Triple(identity, backing, QrPayload(qr, base32))
                 }
-                _state.value = UiState.DisplayQr(
+                _state.value = UiState.Pair(
                     identity = identity,
                     backing = backing,
                     qr = payload.qr,
@@ -118,7 +118,7 @@ class OnboardingViewModel @Inject constructor(
     }
 
     fun refreshQr() {
-        val s = state.value as? UiState.DisplayQr ?: return
+        val s = state.value as? UiState.Pair ?: return
         viewModelScope.launch {
             val payload = withContext(Dispatchers.IO) {
                 val qr = handshake.mintInviterQr(s.qr.communityId)
@@ -128,19 +128,9 @@ class OnboardingViewModel @Inject constructor(
         }
     }
 
-    fun startScanning() {
-        val s = state.value as? UiState.DisplayQr ?: return
-        _state.value = UiState.ScanPeerQr(
-            identity = s.identity,
-            backing = s.backing,
-            localQr = s.qr,
-            localQrBase32 = s.base32,
-        )
-    }
-
     fun onPeerQrScanned(peerQr: HandshakeQr) {
-        val s = state.value as? UiState.ScanPeerQr ?: return
-        if (!peerQr.communityId.bytes.contentEquals(s.localQr.communityId.bytes)) {
+        val s = state.value as? UiState.Pair ?: return
+        if (!peerQr.communityId.bytes.contentEquals(s.qr.communityId.bytes)) {
             // First-launch pairing: both devices auto-mint random
             // communityIds in generateIdentity(). To converge, the
             // Invitee adopts the Inviter's community and re-mints its
@@ -150,15 +140,14 @@ class OnboardingViewModel @Inject constructor(
             //
             // For the Inviter, surface an explicit Aborted result so
             // the user knows their counterpart hasn't adopted yet —
-            // tapping Retry from the Result screen returns to
-            // DisplayQr and the Inviter can wait for the Invitee's
-            // re-minted QR.
+            // tapping Retry from the Result screen returns to Pair
+            // and the Inviter can wait for the Invitee's re-minted QR.
             when (_role.value) {
                 Role.Invitee -> adoptPeerCommunityAndAdvance(s, peerQr)
                 Role.Inviter, null -> {
                     _state.value = UiState.Result(
                         identity = s.identity, backing = s.backing,
-                        localQr = s.localQr, localQrBase32 = s.localQrBase32,
+                        localQr = s.qr, localQrBase32 = s.base32,
                         outcome = HandshakeSession.Outcome.Aborted(
                             HandshakeSession.AbortReason.TransportFailed,
                         ),
@@ -171,7 +160,7 @@ class OnboardingViewModel @Inject constructor(
         if (!peerQr.isFresh(now)) {
             _state.value = UiState.Result(
                 identity = s.identity, backing = s.backing,
-                localQr = s.localQr, localQrBase32 = s.localQrBase32,
+                localQr = s.qr, localQrBase32 = s.base32,
                 outcome = HandshakeSession.Outcome.Aborted(HandshakeSession.AbortReason.QrStale),
             )
             return
@@ -179,8 +168,8 @@ class OnboardingViewModel @Inject constructor(
         _state.value = UiState.CompareFingerprints(
             identity = s.identity,
             backing = s.backing,
-            localQr = s.localQr,
-            localQrBase32 = s.localQrBase32,
+            localQr = s.qr,
+            localQrBase32 = s.base32,
             peerQr = peerQr,
         )
     }
@@ -194,7 +183,7 @@ class OnboardingViewModel @Inject constructor(
      * post-adoption clock — adoption can take ~50ms on slow devices.
      */
     private fun adoptPeerCommunityAndAdvance(
-        s: UiState.ScanPeerQr,
+        s: UiState.Pair,
         peerQr: HandshakeQr,
     ) {
         viewModelScope.launch {
@@ -266,9 +255,9 @@ class OnboardingViewModel @Inject constructor(
         activeSession = null
     }
 
-    fun retryFromDisplayQr() {
+    fun retryFromPair() {
         val s = state.value as? UiState.Result ?: return
-        _state.value = UiState.DisplayQr(s.identity, s.backing, s.localQr, s.localQrBase32)
+        _state.value = UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32)
     }
 
     private fun startHandshake(
@@ -302,6 +291,7 @@ class OnboardingViewModel @Inject constructor(
                 val link: Link = try {
                     openLinkFor(localQr.communityId, peerQr, protocolRole)
                 } catch (t: Throwable) {
+                    Log.w(TAG, "openLinkFor failed (${t::class.simpleName}: ${t.message})")
                     emitResult(
                         identity, backing, localQr, localQrBase32,
                         HandshakeSession.Outcome.Aborted(HandshakeSession.AbortReason.TransportFailed),
@@ -345,6 +335,11 @@ class OnboardingViewModel @Inject constructor(
      * check inside HandshakeProtocolImpl rejects any peer whose static
      * key doesn't match the scanned QR — so an attacker can't slip in
      * by being the first to connect.
+     *
+     * Wrapped in a [LINK_TIMEOUT_MS] timeout so that the most common
+     * failure mode — both devices having picked the same role, so
+     * neither side is dialing — surfaces as a [TransportFailed] result
+     * instead of an indefinitely frozen "establishing trust" screen.
      */
     @Suppress("UNUSED_PARAMETER")
     private suspend fun openLinkFor(
@@ -352,18 +347,26 @@ class OnboardingViewModel @Inject constructor(
         peerQr: HandshakeQr,
         role: HandshakeProtocol.Role,
     ): Link {
+        Log.d(TAG, "openLinkFor: role=$role community=${communityId.bytes.take(4).joinToString("") { "%02x".format(it) }}…")
         // peerQr is captured here so future versions can do a pre-noise
         // filter (e.g. compute the expected service UUID, or pin the
         // peer address against the QR's identityPub via a fingerprint
         // index). v0.1 trusts Noise's channel-binding check downstream.
         bleTransport.start(communityId)
-        return when (role) {
-            HandshakeProtocol.Role.Inviter -> {
-                val endpoint = bleTransport.discovered().first()
-                bleTransport.connect(endpoint)
-            }
-            HandshakeProtocol.Role.Invitee -> {
-                bleTransport.acceptedLinks().first()
+        return withTimeout(LINK_TIMEOUT_MS) {
+            when (role) {
+                HandshakeProtocol.Role.Inviter -> {
+                    val endpoint = bleTransport.discovered().first()
+                    Log.d(TAG, "openLinkFor: discovered peer ${endpoint.opaqueAddress}, dialing")
+                    bleTransport.connect(endpoint).also {
+                        Log.d(TAG, "openLinkFor: dialed link established")
+                    }
+                }
+                HandshakeProtocol.Role.Invitee -> {
+                    bleTransport.acceptedLinks().first().also {
+                        Log.d(TAG, "openLinkFor: accepted inbound link")
+                    }
+                }
             }
         }
     }
@@ -391,21 +394,22 @@ class OnboardingViewModel @Inject constructor(
     enum class Role { Inviter, Invitee }
 
     sealed interface UiState {
-        data object Welcome : UiState
         data object RolePicker : UiState
         data class KeyGeneration(val status: KeyGenStatus) : UiState
-        data class DisplayQr(
+
+        /**
+         * Combined "show + scan" state. Both sides see their own QR
+         * and a live camera; either party scanning the other's QR
+         * advances the flow to [CompareFingerprints]. Replaces the
+         * previous DisplayQr → ScanPeerQr two-step.
+         */
+        data class Pair(
             val identity: Identity,
             val backing: KeystoreManager.Backing,
             val qr: HandshakeQr,
             val base32: String,
         ) : UiState
-        data class ScanPeerQr(
-            val identity: Identity,
-            val backing: KeystoreManager.Backing,
-            val localQr: HandshakeQr,
-            val localQrBase32: String,
-        ) : UiState
+
         data class CompareFingerprints(
             val identity: Identity,
             val backing: KeystoreManager.Backing,
@@ -437,4 +441,21 @@ class OnboardingViewModel @Inject constructor(
     }
 
     private data class QrPayload(val qr: HandshakeQr, val base32: String)
+
+    private companion object {
+        private const val TAG = "OnboardingVM"
+
+        /**
+         * How long to wait for the BLE link to materialise before
+         * giving up. 30s comfortably covers the slowest observed
+         * advertise-then-discover round trip on Samsung mid-range
+         * devices (~5–8s typical), while still surfacing a frozen
+         * pairing attempt to the user quickly enough that they can
+         * retry. The most common cause of a timeout in practice is
+         * both devices having picked the same role on the role
+         * picker — the [TransportFailed] copy on the result screen
+         * names that explicitly.
+         */
+        private const val LINK_TIMEOUT_MS = 30_000L
+    }
 }

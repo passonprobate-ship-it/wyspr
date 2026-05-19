@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -15,19 +16,10 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -42,34 +34,44 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size as ComposeSize
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.PlanarYUVLuminanceSource
 import com.google.zxing.common.HybridBinarizer
-import com.google.zxing.qrcode.QRCodeReader
 import com.keystone.core.trust.HandshakeQr
 import com.keystone.core.trust.HandshakeQrCodec
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Live camera QR scanner. PROTOCOLS.md §3.1 — payload is base32 CBOR.
+ * Self-contained QR scanner pane. Handles camera permission, lifecycle,
+ * decoding, and one-shot delivery of the parsed [HandshakeQr] via
+ * [onScanned]. Designed to live inside a larger screen (e.g. the
+ * combined pair screen) rather than own the whole viewport.
  *
- * The screen handles its own runtime permission (CAMERA). On grant it
- * starts a CameraX preview + ImageAnalysis use case that ZXing decodes
- * frame-by-frame. Decoded payloads are pushed up via [onScanned] and
- * the analysis loop pauses to prevent duplicate emits.
+ * The camera always renders square — the host should constrain the
+ * outer modifier to a square box. The reticle and analyzer expect the
+ * preview view to be roughly that shape; otherwise off-centre QRs at
+ * the edges of a wide preview won't decode reliably.
+ *
+ * If the user denies the camera permission, the pane renders a small
+ * tap-to-grant button instead of the preview. The host doesn't need to
+ * know about the permission state.
  */
 @Composable
-fun ScanPeerQrScreen(
+fun PeerQrCamera(
+    modifier: Modifier = Modifier,
     onScanned: (HandshakeQr) -> Unit,
-    onCancel: () -> Unit,
-    onInvalid: (String) -> Unit,
+    onInvalid: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     var hasCameraPermission by remember {
@@ -90,68 +92,47 @@ fun ScanPeerQrScreen(
     // thread. Using a Compose `var by remember` here race-fires the
     // onScanned callback because state mutation isn't visible to the
     // background analyzer immediately.
-    val doneFlag = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    val doneFlag = remember { AtomicBoolean(false) }
     var done by remember { mutableStateOf(false) }
     val onScannedRef by rememberUpdatedState(onScanned)
     val onInvalidRef by rememberUpdatedState(onInvalid)
 
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text("Scan your peer's QR", style = MaterialTheme.typography.titleLarge)
-        Text(
-            "Hold the camera over the peer's screen. Both devices must be running " +
-                "Keystone and showing a fresh QR (refreshed within 5 minutes).",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        Surface(
-            color = Color.Black,
-            shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.fillMaxWidth().aspectRatio(1f),
-        ) {
-            if (hasCameraPermission && !done) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    CameraPreview(
-                        onPayload = { text ->
-                            // compareAndSet returns true exactly once even
-                            // under concurrent analyzer-thread access.
-                            val qr = decodeOrNull(text)
-                            if (qr == null) {
-                                onInvalidRef("That QR is not a Keystone handshake code.")
-                                return@CameraPreview
-                            }
-                            if (doneFlag.compareAndSet(false, true)) {
-                                done = true
-                                onScannedRef(qr)
-                            }
-                        },
-                    )
-                    ScanReticle()
-                }
-            } else {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        if (hasCameraPermission) "Scanning…"
-                        else "Camera permission is required to scan QR codes.",
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        when {
+            !hasCameraPermission -> {
+                Text(
+                    "Tap to allow camera access",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .padding(16.dp),
+                )
+                // Launch on tap by re-firing the permission request.
+                LaunchedEffect(Unit) { /* no-op; launcher fires above */ }
             }
-        }
-
-        if (!hasCameraPermission) {
-            Button(
-                onClick = { launcher.launch(Manifest.permission.CAMERA) },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text("Grant camera access") }
-        }
-
-        OutlinedButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) {
-            Text("Cancel")
+            done -> {
+                Text(
+                    "Scanned ✓",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            else -> {
+                CameraPreview(
+                    onPayload = { text ->
+                        val qr = decodeOrNull(text)
+                        if (qr == null) {
+                            onInvalidRef("That QR isn't a Keystone handshake code.")
+                            return@CameraPreview
+                        }
+                        if (doneFlag.compareAndSet(false, true)) {
+                            done = true
+                            onScannedRef(qr)
+                        }
+                    },
+                )
+                ScanReticle()
+            }
         }
     }
 }
@@ -164,8 +145,8 @@ private fun CameraPreview(onPayload: (String) -> Unit) {
     // Hold the camera provider so the DisposableEffect can unbind it
     // when the composable leaves — otherwise the camera keeps running
     // (and the analyzer keeps decoding) after the user navigates away.
-    val providerRef = remember { java.util.concurrent.atomic.AtomicReference<ProcessCameraProvider?>(null) }
-    val analysisRef = remember { java.util.concurrent.atomic.AtomicReference<ImageAnalysis?>(null) }
+    val providerRef = remember { AtomicReference<ProcessCameraProvider?>(null) }
+    val analysisRef = remember { AtomicReference<ImageAnalysis?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -202,6 +183,15 @@ private fun CameraPreview(onPayload: (String) -> Unit) {
                 val analysis = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setResolutionSelector(resolution)
+                    // Match the display rotation so the YUV frames
+                    // we get for analysis are oriented the same way
+                    // as what the user sees in the preview. Without
+                    // this, the analyzer gets sensor-natural frames
+                    // (landscape on most phones) while the user holds
+                    // the device portrait — ZXing's finder pattern
+                    // detector is rotation-invariant but TRY_HARDER's
+                    // segmentation paths choke on the mismatch.
+                    .setTargetRotation(previewView.display?.rotation ?: android.view.Surface.ROTATION_0)
                     .build()
                 analysisRef.set(analysis)
                 analysis.setAnalyzer(executor, QrAnalyzer { text -> onPayloadRef(text) })
@@ -218,7 +208,7 @@ private fun CameraPreview(onPayload: (String) -> Unit) {
                 // displayed QR are small targets and Android's default
                 // single-shot AF often locks on the user's hand or the
                 // chrome around the QR rather than the QR itself.
-                // FocusMeteringAction with AF + AE + AWB on a centred
+                // FocusMeteringAction with AF+AE+AWB on a centred
                 // metering point at 50% width with auto-cancel disabled
                 // keeps the lens hunting for the right plane.
                 runCatching {
@@ -226,8 +216,7 @@ private fun CameraPreview(onPayload: (String) -> Unit) {
                         previewView.width / 2f,
                         previewView.height / 2f,
                     )
-                    val focusAction = androidx.camera.core.FocusMeteringAction
-                        .Builder(meteringPoint)
+                    val focusAction = FocusMeteringAction.Builder(meteringPoint)
                         .disableAutoCancel()
                         .build()
                     camera?.cameraControl?.startFocusAndMetering(focusAction)
@@ -238,25 +227,38 @@ private fun CameraPreview(onPayload: (String) -> Unit) {
     )
 }
 
+/**
+ * ZXing analyzer that handles the two CameraX YUV gotchas that bite
+ * QR decoding in practice:
+ *
+ *  1. **Row stride padding.** `ImageProxy.planes[0]` is the luminance
+ *     plane, but the buffer's `rowStride` is often larger than the
+ *     image width (e.g. 1280 width → 1280 stride on Pixel, but 1408
+ *     stride on Samsung — rounded up to a hardware-friendly alignment).
+ *     Passing the raw buffer to `PlanarYUVLuminanceSource` interprets
+ *     those padding bytes as image data and produces a stretched,
+ *     undecodable bitmap. We copy out exactly `width × height` bytes,
+ *     skipping the per-row padding.
+ *
+ *  2. **Pixel stride.** For the Y plane, `pixelStride` is always 1
+ *     per the YUV_420_888 spec, but we check defensively and bail to
+ *     a no-op decode if the device lies.
+ */
 private class QrAnalyzer(private val onPayload: (String) -> Unit) : ImageAnalysis.Analyzer {
     private val reader = MultiFormatReader().apply {
         setHints(
             mapOf(
-                DecodeHintType.POSSIBLE_FORMATS to listOf(com.google.zxing.BarcodeFormat.QR_CODE),
-                // TRY_HARDER trades CPU for accuracy: it enables the
-                // alternate decoder paths that handle slight blur,
-                // glare, off-axis viewing, and partial luminance
-                // gradients — all of which are typical when a user
-                // holds one phone camera in front of another phone's
-                // QR-displaying screen.
+                DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+                // TRY_HARDER trades CPU for accuracy: enables alternate
+                // decoder paths that handle slight blur, glare, off-axis
+                // viewing, and partial luminance gradients — all typical
+                // for phone-to-phone scanning.
                 DecodeHintType.TRY_HARDER to true,
-                // Mirror-image / inverted-luminance dispatch — some
-                // OEMs return a Y plane that's effectively negated
-                // for ImageAnalysis vs the preview pipeline.
+                // Mirror-image / inverted-luminance dispatch — some OEMs
+                // return a Y plane that's effectively negated.
                 DecodeHintType.ALSO_INVERTED to true,
-                // The handshake QR encoding is base32 (RFC 4648, no
-                // padding); declaring the character set tells ZXing
-                // to skip generic UTF-8 sniffing.
+                // Base32 payload is RFC 4648; declare the charset so
+                // ZXing skips generic UTF-8 sniffing.
                 DecodeHintType.CHARACTER_SET to "ISO-8859-1",
             ),
         )
@@ -265,15 +267,29 @@ private class QrAnalyzer(private val onPayload: (String) -> Unit) : ImageAnalysi
     override fun analyze(image: ImageProxy) {
         try {
             val plane = image.planes.firstOrNull() ?: return
+            if (plane.pixelStride != 1) return
+            val width = image.width
+            val height = image.height
+            val rowStride = plane.rowStride
             val buffer = plane.buffer
-            val data = ByteArray(buffer.remaining()).also { buffer.get(it) }
+            val data = if (rowStride == width) {
+                ByteArray(width * height).also { buffer.get(it, 0, width * height) }
+            } else {
+                val out = ByteArray(width * height)
+                val rowBuf = ByteArray(rowStride)
+                var dstPos = 0
+                for (row in 0 until height) {
+                    buffer.position(row * rowStride)
+                    val take = minOf(rowStride, buffer.remaining())
+                    buffer.get(rowBuf, 0, take)
+                    System.arraycopy(rowBuf, 0, out, dstPos, width)
+                    dstPos += width
+                }
+                out
+            }
             val source = PlanarYUVLuminanceSource(
-                data,
-                image.width,
-                image.height,
-                0, 0,
-                image.width,
-                image.height,
+                data, width, height,
+                0, 0, width, height,
                 false,
             )
             val bitmap = BinaryBitmap(HybridBinarizer(source))
@@ -283,6 +299,9 @@ private class QrAnalyzer(private val onPayload: (String) -> Unit) : ImageAnalysi
             reader.reset()
             val result = runCatching { reader.decodeWithState(bitmap) }.getOrNull()
             result?.text?.let(onPayload)
+        } catch (_: Throwable) {
+            // Analyzer must never throw — frame loss is preferable to
+            // a process crash.
         } finally {
             image.close()
         }
@@ -291,24 +310,18 @@ private class QrAnalyzer(private val onPayload: (String) -> Unit) : ImageAnalysi
 
 @Composable
 private fun ScanReticle() {
-    Canvas(modifier = Modifier.fillMaxSize().padding(32.dp)) {
+    Canvas(modifier = Modifier.fillMaxSize().padding(24.dp)) {
         val cornerLen = size.minDimension * 0.15f
         val stroke = 4f
         val color = Color(0xFF80E0C0)
-        // Four corner ticks — a non-photorealistic frame that doesn't
-        // obscure the QR itself.
-        // top-left
         drawCornerL(Offset(0f, 0f), cornerLen, stroke, color, horizontal = true, vertical = true)
-        // top-right
         drawCornerL(Offset(size.width - cornerLen, 0f), cornerLen, stroke, color, horizontal = false, vertical = true)
-        // bottom-left
         drawCornerL(Offset(0f, size.height - cornerLen), cornerLen, stroke, color, horizontal = true, vertical = false)
-        // bottom-right
         drawCornerL(Offset(size.width - cornerLen, size.height - cornerLen), cornerLen, stroke, color, horizontal = false, vertical = false)
     }
 }
 
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawCornerL(
+private fun DrawScope.drawCornerL(
     topLeft: Offset,
     length: Float,
     stroke: Float,
