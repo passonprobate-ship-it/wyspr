@@ -98,6 +98,15 @@ android {
             excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
             excludes += "/META-INF/versions/**/OSGI-INF/**"
         }
+        // kmp-tor's `-exec` Android dependency requires Tor binaries
+        // to be extracted to ApplicationInfo.nativeLibraryDir on
+        // install — the runtime fork()s them as a real process. The
+        // legacy packaging flag tells AGP to put them on disk
+        // uncompressed instead of inside the APK's compressed lib
+        // section.
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -154,4 +163,33 @@ dependencies {
     implementation("androidx.fragment:fragment-ktx:1.6.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // kmp-tor — embedded Tor daemon on Android. Two artifacts: the
+    // runtime (Kotlin/coroutines wrapper around tor's control
+    // protocol) and the architecture-bundled binary itself. The
+    // `-exec` resource extracts a real tor executable to
+    // ApplicationInfo.nativeLibraryDir at install time and fork()s
+    // it as a subprocess — the runtime talks to it via the local
+    // control port. The `-noexec` companion is a thin shim that
+    // exposes the same primitives without spawning a process; both
+    // must be present for the runtime to pick the right path on
+    // each device.
+    //
+    // Pinned to 2.0.0 + resource 408.13.2 because Keystone runs on
+    // Kotlin 1.9.22 (tied to Compose Compiler 1.5.10). Every kmp-tor
+    // release after 2.0.x is built against Kotlin 2.1+ and pulls in
+    // a kotlin-stdlib whose binary metadata version (2.x) the 1.9
+    // compiler cannot read. 2.0.0 was built with 1.9.24, so its
+    // class metadata is binary-compatible with our compiler.
+    // Re-evaluate the moment Keystone upgrades past Kotlin 2.0.
+    implementation("io.matthewnelson.kmp-tor:runtime:2.0.0")
+    implementation("io.matthewnelson.kmp-tor:resource-exec-tor:408.13.2")
+    implementation("io.matthewnelson.kmp-tor:resource-noexec-tor:408.13.2")
+
+    // BouncyCastle — the HSv3 key derivation needs Ed25519
+    // scalarMultBase and SHA3-256, neither of which is in the
+    // platform JCE on minSdk 26. :feature:onboarding pulls bcprov
+    // transitively, but as `implementation`, so its classes are
+    // not visible to :app at compile time — declare it explicitly.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
 }

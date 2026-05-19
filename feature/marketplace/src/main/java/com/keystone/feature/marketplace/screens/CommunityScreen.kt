@@ -76,6 +76,7 @@ fun CommunityScreen(
     LaunchedEffect(Unit) { viewModel.load() }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val torState by viewModel.torState.collectAsStateWithLifecycle()
+    val onionAddress by viewModel.onionAddress.collectAsStateWithLifecycle()
 
     Column(
         modifier = Modifier
@@ -85,7 +86,7 @@ fun CommunityScreen(
     ) {
         Text("My community", style = MaterialTheme.typography.headlineMedium)
 
-        TorStatusRow(torState)
+        TorStatusRow(torState, onionAddress)
 
         when (val s = state) {
             CommunityViewModel.UiState.Loading -> LoadingPanel()
@@ -106,36 +107,53 @@ fun CommunityScreen(
 }
 
 @Composable
-private fun TorStatusRow(state: TorBackend.State) {
+private fun TorStatusRow(state: TorBackend.State, onionAddress: String?) {
     val (label, statusColor) = when (state) {
-        TorBackend.State.Idle -> "Tor: idle" to MaterialTheme.colorScheme.outline
+        TorBackend.State.Idle -> "Tor: starting…" to MaterialTheme.colorScheme.outline
         is TorBackend.State.Bootstrapping ->
             "Tor: bootstrapping ${state.percent}%" to MaterialTheme.colorScheme.tertiary
         TorBackend.State.Ready -> "Tor: ready — reachable anywhere" to MaterialTheme.colorScheme.primary
         is TorBackend.State.Failed -> "Tor: ${state.message}" to MaterialTheme.colorScheme.error
-        TorBackend.State.Unavailable -> "Tor: not bundled yet (v0.6.1)" to MaterialTheme.colorScheme.outline
+        TorBackend.State.Unavailable -> "Tor: unavailable on this build" to MaterialTheme.colorScheme.outline
     }
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(10.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        androidx.compose.foundation.layout.Row(
+        Column(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            // Status dot.
-            Surface(
-                color = statusColor,
-                shape = androidx.compose.foundation.shape.CircleShape,
-                modifier = Modifier.size(8.dp),
-            ) {}
-            Text(
-                label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Surface(
+                    color = statusColor,
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                    modifier = Modifier.size(8.dp),
+                ) {}
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // The .onion is derived deterministically from the keystore,
+            // so it's known well before Tor has finished bootstrapping —
+            // showing it during Bootstrapping is intentional. We elide
+            // the middle so the address fits one line on phone widths.
+            val onion = onionAddress
+            if (onion != null) {
+                val display = onion.take(10) + "…" + onion.takeLast(6) + ".onion"
+                Text(
+                    display,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }

@@ -15,9 +15,11 @@ import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.LaunchedEffect
 import com.keystone.app.biometric.BiometricGate
 import com.keystone.app.biometric.BiometricUnlocker
 import com.keystone.app.transport.AndroidMessagingNotifier
+import com.keystone.core.transport.TorBackend
 import com.keystone.core.ui.KeystoneTheme
 import com.keystone.core.ui.settings.BiometricSettings
 import dagger.hilt.android.AndroidEntryPoint
@@ -36,6 +38,7 @@ class MainActivity : FragmentActivity() {
 
     @Inject lateinit var biometricSettings: BiometricSettings
     @Inject lateinit var biometricUnlocker: BiometricUnlocker
+    @Inject lateinit var torBackend: TorBackend
 
     // Notification permission request landed in API 33 (Tiramisu). The
     // transport foreground service can run without it — Android just
@@ -78,6 +81,19 @@ class MainActivity : FragmentActivity() {
                     val gateEnabled by biometricSettings.gateEnabled.collectAsStateWithLifecycle()
                     val pendingDeepLink by deepLink.collectAsStateWithLifecycle()
                     BiometricGate(enabled = gateEnabled) {
+                        // Tor bootstrap is also kicked off in
+                        // KeystoneApplication.onCreate, but a
+                        // biometric-bound install will bail there
+                        // (the keystore wrapping key isn't unlocked
+                        // until the user has authenticated). This
+                        // retry runs inside the unlocked branch of
+                        // the gate, so by the time the coroutine
+                        // suspends on keystore access the cipher
+                        // window is already open. start() is
+                        // idempotent.
+                        LaunchedEffect(Unit) {
+                            runCatching { torBackend.start() }
+                        }
                         KeystoneNavHost(
                             unlocker = biometricUnlocker,
                             pendingDeepLink = pendingDeepLink,

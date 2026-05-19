@@ -42,6 +42,14 @@ class CommunityViewModel @Inject constructor(
     /** Live state of the embedded Tor daemon, surfaced to the UI. */
     val torState: StateFlow<TorBackend.State> = torBackend.state
 
+    /**
+     * Published .onion address. Populated as soon as the keystore-derived
+     * HS key is written to disk (typically before Tor finishes
+     * bootstrapping), so the UI can show "ready when Tor circuits come
+     * up" without waiting on the network.
+     */
+    val onionAddress: StateFlow<String?> = torBackend.onionAddress
+
     /** Idempotent — called from a LaunchedEffect when the screen mounts. */
     fun load() {
         viewModelScope.launch {
