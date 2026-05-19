@@ -205,7 +205,7 @@ private fun CameraPreview(onPayload: (String) -> Unit) {
                     .build()
                 analysisRef.set(analysis)
                 analysis.setAnalyzer(executor, QrAnalyzer { text -> onPayloadRef(text) })
-                runCatching {
+                val camera = runCatching {
                     provider.unbindAll()
                     provider.bindToLifecycle(
                         lifecycleOwner,
@@ -213,6 +213,24 @@ private fun CameraPreview(onPayload: (String) -> Unit) {
                         preview,
                         analysis,
                     )
+                }.getOrNull()
+                // Drive continuous autofocus — phone screens with a
+                // displayed QR are small targets and Android's default
+                // single-shot AF often locks on the user's hand or the
+                // chrome around the QR rather than the QR itself.
+                // FocusMeteringAction with AF + AE + AWB on a centred
+                // metering point at 50% width with auto-cancel disabled
+                // keeps the lens hunting for the right plane.
+                runCatching {
+                    val meteringPoint = previewView.meteringPointFactory.createPoint(
+                        previewView.width / 2f,
+                        previewView.height / 2f,
+                    )
+                    val focusAction = androidx.camera.core.FocusMeteringAction
+                        .Builder(meteringPoint)
+                        .disableAutoCancel()
+                        .build()
+                    camera?.cameraControl?.startFocusAndMetering(focusAction)
                 }
             }, ContextCompat.getMainExecutor(ctx))
             previewView
@@ -222,7 +240,26 @@ private fun CameraPreview(onPayload: (String) -> Unit) {
 
 private class QrAnalyzer(private val onPayload: (String) -> Unit) : ImageAnalysis.Analyzer {
     private val reader = MultiFormatReader().apply {
-        setHints(mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(com.google.zxing.BarcodeFormat.QR_CODE)))
+        setHints(
+            mapOf(
+                DecodeHintType.POSSIBLE_FORMATS to listOf(com.google.zxing.BarcodeFormat.QR_CODE),
+                // TRY_HARDER trades CPU for accuracy: it enables the
+                // alternate decoder paths that handle slight blur,
+                // glare, off-axis viewing, and partial luminance
+                // gradients — all of which are typical when a user
+                // holds one phone camera in front of another phone's
+                // QR-displaying screen.
+                DecodeHintType.TRY_HARDER to true,
+                // Mirror-image / inverted-luminance dispatch — some
+                // OEMs return a Y plane that's effectively negated
+                // for ImageAnalysis vs the preview pipeline.
+                DecodeHintType.ALSO_INVERTED to true,
+                // The handshake QR encoding is base32 (RFC 4648, no
+                // padding); declaring the character set tells ZXing
+                // to skip generic UTF-8 sniffing.
+                DecodeHintType.CHARACTER_SET to "ISO-8859-1",
+            ),
+        )
     }
 
     override fun analyze(image: ImageProxy) {
@@ -240,8 +277,11 @@ private class QrAnalyzer(private val onPayload: (String) -> Unit) : ImageAnalysi
                 false,
             )
             val bitmap = BinaryBitmap(HybridBinarizer(source))
+            // Reset reader state on every frame: decodeWithState can
+            // accumulate partial-decode hints across frames that
+            // confuse the next attempt under varying lighting.
+            reader.reset()
             val result = runCatching { reader.decodeWithState(bitmap) }.getOrNull()
-                ?: run { reader.reset(); null }
             result?.text?.let(onPayload)
         } finally {
             image.close()
