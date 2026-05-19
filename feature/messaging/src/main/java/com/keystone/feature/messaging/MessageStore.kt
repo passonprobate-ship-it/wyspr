@@ -72,6 +72,17 @@ class MessageStore @Inject constructor(
         return entity
     }
 
+    /**
+     * Pending outbound messages from the local identity addressed to
+     * a specific [peerPub]. Used by the sync engine to build a Push
+     * frame on session establishment.
+     */
+    suspend fun pendingOutboundFor(ownPub: PublicKey, peerPub: PublicKey): List<MessageEntity> {
+        ensureOpen()
+        return database.messageDao.pendingOutboundFrom(ownPub.bytes)
+            .filter { it.toPub.contentEquals(peerPub.bytes) }
+    }
+
     /** Sprint 2 — push a [MessageEntity] over a Noise link. */
     suspend fun markSent(id: ByteArray) {
         ensureOpen()

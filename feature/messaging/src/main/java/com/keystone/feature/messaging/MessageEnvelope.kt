@@ -42,6 +42,22 @@ data class MessageEnvelope(
 
     fun signedBytes(): ByteArray = encodeSignedFields(id, fromPub, toPub, createdAt, body)
 
+    /**
+     * Full wire form including the signature. Mirrors [signedBytes]
+     * but with one extra `bytes(signature)` element — 6-element array
+     * total. Sprint 2 sync uses this when pushing envelopes to a peer
+     * over the Noise transport.
+     */
+    fun wireBytes(): ByteArray = Cbor.encode {
+        arrayHeader(6)
+        bytes(id)
+        bytes(fromPub.bytes)
+        bytes(toPub.bytes)
+        uint(createdAt)
+        bytes(body.encodeToByteArray())
+        bytes(signature)
+    }
+
     // verify() lives in core:trust where lazysodium is already on
     // the classpath. Sprint 2 will add an extension function in the
     // sync layer:
@@ -50,6 +66,27 @@ data class MessageEnvelope(
     // since no inbound path exists yet.
 
     companion object {
+
+        /** Inverse of [wireBytes]. Throws on any malformed input. */
+        fun fromWire(bytes: ByteArray): MessageEnvelope = Cbor.decode(bytes) {
+            val n = arrayHeader()
+            require(n == 6) { "MessageEnvelope must have 6 fields, got $n" }
+            val id = bytes()
+            val fromPub = PublicKey(bytes())
+            val toPub = PublicKey(bytes())
+            val createdAt = uint()
+            val body = bytes().decodeToString()
+            val signature = bytes()
+            MessageEnvelope(
+                id = id,
+                fromPub = fromPub,
+                toPub = toPub,
+                createdAt = createdAt,
+                body = body,
+                signature = signature,
+            )
+        }
+
         const val ID_LENGTH = 16
         const val SIG_LENGTH = 64
         const val MAX_BODY_BYTES = 16_384

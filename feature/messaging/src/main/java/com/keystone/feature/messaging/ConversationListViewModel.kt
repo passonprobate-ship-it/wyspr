@@ -9,6 +9,7 @@ import com.keystone.core.identity.Fingerprint
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.trust.TrustGraph
 import com.keystone.core.trust.TrustGraphService
+import com.keystone.feature.messaging.sync.MessageSyncService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -36,10 +37,44 @@ class ConversationListViewModel @Inject constructor(
     private val database: KeystoneDatabase,
     private val trustGraphService: TrustGraphService,
     private val messageStore: MessageStore,
+    private val syncService: MessageSyncService,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState>(UiState.Loading)
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /**
+     * Sync banner: tri-state announcement at the top of the list
+     * surfacing the current/last attempt. Null when nothing has
+     * happened yet (or after the user dismisses).
+     */
+    private val _sync = MutableStateFlow<SyncBanner?>(null)
+    val sync: StateFlow<SyncBanner?> = _sync.asStateFlow()
+
+    fun syncNow() {
+        viewModelScope.launch {
+            _sync.value = SyncBanner.Running
+            val result = runCatching { syncService.runOnce() }
+            _sync.value = result.fold(
+                onSuccess = { r ->
+                    if (r.errorReason != null) SyncBanner.Failed(r.errorReason)
+                    else SyncBanner.Done(
+                        pushed = r.pushedMessages,
+                        received = r.receivedMessages,
+                    )
+                },
+                onFailure = { t -> SyncBanner.Failed(t.message ?: "Sync failed") },
+            )
+        }
+    }
+
+    fun dismissSyncBanner() { _sync.value = null }
+
+    sealed interface SyncBanner {
+        data object Running : SyncBanner
+        data class Done(val pushed: Int, val received: Int) : SyncBanner
+        data class Failed(val message: String) : SyncBanner
+    }
 
     fun start() {
         viewModelScope.launch {

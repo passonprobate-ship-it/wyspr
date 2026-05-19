@@ -24,6 +24,14 @@ dependencies {
     implementation(project(":core:identity"))
     implementation(project(":core:trust"))
     implementation(project(":core:database"))
+    implementation(project(":core:transport:api"))
+    implementation(project(":core:transport:bluetooth"))
+
+    // libsodium for Ed25519 → X25519 conversion in the channel-
+    // binding step of the sync handshake. The same primitive
+    // core:trust uses for InvitationCertificate verification.
+    implementation("com.goterl:lazysodium-android:5.1.0@aar")
+    implementation("net.java.dev.jna:jna:5.13.0@aar")
 
     implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
