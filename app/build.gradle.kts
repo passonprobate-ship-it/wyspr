@@ -1,8 +1,28 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.dagger.hilt.android")
     id("com.google.devtools.ksp")
+}
+
+// Read signing material from gradle properties first (CI / -P flags),
+// then fall back to local.properties (developer machines). The
+// local.properties path is gitignored — no secrets ever land in git.
+//
+// gradle.properties holds empty *placeholders* for the signing keys
+// so the schema is documented in-repo. Blank values must NOT win
+// over a real value supplied via local.properties or -P, so the
+// lookup explicitly treats blanks as absent.
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+fun signingProp(key: String): String? {
+    val fromProject = (project.findProperty(key) as? String)?.takeIf { it.isNotBlank() }
+    if (fromProject != null) return fromProject
+    return localProps.getProperty(key)?.takeIf { it.isNotBlank() }
 }
 
 android {
@@ -19,13 +39,15 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file(
-                project.findProperty("KEYSTONE_STORE_FILE") as? String
-                    ?: "keystore/keystone-release.jks"
-            )
-            storePassword = project.findProperty("KEYSTONE_STORE_PASSWORD") as? String ?: ""
-            keyAlias = project.findProperty("KEYSTONE_KEY_ALIAS") as? String ?: ""
-            keyPassword = project.findProperty("KEYSTONE_KEY_PASSWORD") as? String ?: ""
+            // Resolve relative to the project root so `keystore/...` works
+            // regardless of which gradle subproject the task was invoked
+            // from. Absolute paths from properties are honoured as-is.
+            val storePath = signingProp("KEYSTONE_STORE_FILE")
+                ?: "keystore/keystone-release.jks"
+            storeFile = rootProject.file(storePath)
+            storePassword = signingProp("KEYSTONE_STORE_PASSWORD") ?: ""
+            keyAlias = signingProp("KEYSTONE_KEY_ALIAS") ?: ""
+            keyPassword = signingProp("KEYSTONE_KEY_PASSWORD") ?: ""
         }
     }
 

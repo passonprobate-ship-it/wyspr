@@ -1,7 +1,7 @@
 package com.keystone.core.transport
 
+import com.keystone.core.crypto.Blake2s
 import com.keystone.core.identity.CommunityId
-import java.security.MessageDigest
 import java.util.UUID
 
 /**
@@ -10,9 +10,9 @@ import java.util.UUID
  * PROTOCOLS.md §6:
  *     service_uuid = UUID(BLAKE2s(community_id || "KEYSTONE-SVC"))
  *
- * Note: stdlib has no BLAKE2s; libsodium provides it. We use SHA-256 as
- * a placeholder here — must be replaced with BLAKE2s before any release
- * build to match the spec exactly.
+ * The first 16 bytes of BLAKE2s-256 become the 128-bit UUID. Big-endian
+ * across `high` (offset 0..7) and `low` (8..15) matches `UUID(long, long)`
+ * semantics so the same hash collation works on every endian.
  */
 object ServiceUuid {
 
@@ -25,9 +25,7 @@ object ServiceUuid {
     fun characteristicForCommunity(id: CommunityId): UUID = derive(id, DOMAIN_CHARACTERISTIC)
 
     private fun derive(id: CommunityId, domain: String): UUID {
-        // TODO: switch to BLAKE2s via libsodium when crypto module wires it
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(id.bytes + domain.encodeToByteArray())
+        val digest = Blake2s.digest(id.bytes, domain)
         val high = bytesToLong(digest, 0)
         val low = bytesToLong(digest, 8)
         return UUID(high, low)

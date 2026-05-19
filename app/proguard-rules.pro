@@ -51,3 +51,8 @@
 
 # ZXing's reader stack — reflection on hint types.
 -keep class com.google.zxing.** { *; }
+
+# JNA ships AWT shims for desktop JVMs that never load on Android.
+# R8 can't see java.awt and refuses to compile without these rules.
+-dontwarn java.awt.**
+-dontwarn javax.swing.**

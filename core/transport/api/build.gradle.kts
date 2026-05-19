@@ -16,5 +16,8 @@ android {
 
 dependencies {
     api(project(":core:identity"))
+    // BLAKE2s for ServiceUuid (PROTOCOLS.md §6). Pulls in noise-java
+    // transitively, which is already on the app classpath via core:crypto.
+    implementation(project(":core:crypto"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
 }
