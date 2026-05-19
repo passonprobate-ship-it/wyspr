@@ -40,6 +40,23 @@ interface TorBackend {
      */
     val onionAddress: StateFlow<String?>
 
+    /**
+     * Loopback port Tor's SOCKS5 proxy is listening on. The transport
+     * dialer SOCKS5-CONNECTs through this port to reach peer .onion
+     * addresses. Null until Tor has finished bootstrapping (kmp-tor's
+     * runtime emits the listener address via `RuntimeEvent.LISTENERS`
+     * around the same time the daemon flips to Ready).
+     */
+    val socksPort: StateFlow<Int?>
+
+    /**
+     * Loopback port the embedded hidden service forwards `.onion:port`
+     * traffic to. Constant for the lifetime of this build — the
+     * `TorHiddenServiceTransport` binds its listener here, and remote
+     * peers SOCKS-dial `our.onion:hsTargetPort` to reach us.
+     */
+    val hsTargetPort: Int
+
     /** Start the daemon. Idempotent — repeated calls are no-ops. */
     suspend fun start()
 
@@ -76,7 +93,20 @@ interface TorBackend {
         override val state: StateFlow<State> = _state
         private val _onion = MutableStateFlow<String?>(null)
         override val onionAddress: StateFlow<String?> = _onion
+        private val _socksPort = MutableStateFlow<Int?>(null)
+        override val socksPort: StateFlow<Int?> = _socksPort
+        override val hsTargetPort: Int = DEFAULT_HS_TARGET_PORT
         override suspend fun start() = Unit
         override suspend fun stop() = Unit
+    }
+
+    companion object {
+        /**
+         * Loopback port the HiddenService maps onion traffic to. Picked
+         * to avoid the usual suspects (8080/8443/9050) and to match the
+         * placeholder port [com.keystone.app.transport.EmbeddedTorBackend]
+         * configures on the kmp-tor `HiddenServiceDir` builder.
+         */
+        const val DEFAULT_HS_TARGET_PORT = 9091
     }
 }

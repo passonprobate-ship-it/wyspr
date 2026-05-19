@@ -9,6 +9,7 @@ import io.matthewnelson.kmp.tor.runtime.Action
 import io.matthewnelson.kmp.tor.runtime.Action.Companion.startDaemonAsync
 import io.matthewnelson.kmp.tor.runtime.Action.Companion.stopDaemonAsync
 import io.matthewnelson.kmp.tor.runtime.RuntimeEvent
+import io.matthewnelson.kmp.tor.runtime.TorListeners
 import io.matthewnelson.kmp.tor.runtime.TorRuntime
 import io.matthewnelson.kmp.tor.runtime.TorState
 import io.matthewnelson.kmp.tor.runtime.core.OnEvent
@@ -61,6 +62,11 @@ class EmbeddedTorBackend(
     private val _onion = MutableStateFlow<String?>(null)
     override val onionAddress: StateFlow<String?> = _onion
 
+    private val _socksPort = MutableStateFlow<Int?>(null)
+    override val socksPort: StateFlow<Int?> = _socksPort
+
+    override val hsTargetPort: Int = TorBackend.DEFAULT_HS_TARGET_PORT
+
     private val startMutex = Mutex()
 
     @Volatile
@@ -106,6 +112,7 @@ class EmbeddedTorBackend(
         }
         _state.value = TorBackend.State.Idle
         _onion.value = null
+        _socksPort.value = null
     }
 
     private fun buildRuntime(): TorRuntime {
@@ -136,22 +143,38 @@ class EmbeddedTorBackend(
                 Log.w(TAG, "Tor runtime error", err)
                 _state.value = TorBackend.State.Failed(err.message ?: err::class.simpleName ?: "error")
             }
+            // SOCKS port lands here once the control connection reports
+            // its bound listeners. Empty set means the proxy isn't up
+            // yet (still bootstrapping, or stopped).
+            observerStatic(RuntimeEvent.LISTENERS, OnEvent.Executor.Immediate) { listeners ->
+                applyListeners(listeners)
+            }
 
             config { _ ->
                 // Let tor pick the SOCKS port — 9050 may clash with another
-                // app on the device. Sprint 4 reads the chosen port via
-                // RuntimeEvent.LISTENERS to wire up the transport client.
+                // app on the device. We read the chosen port via
+                // RuntimeEvent.LISTENERS above.
                 TorOption.__SocksPort.configure { auto() }
 
-                // Publish the keystore-pinned HSv3 service. Placeholder
-                // target port (9091) lines up with what Sprint 4 will
-                // bind the in-app listener to.
+                // Publish the keystore-pinned HSv3 service. The target
+                // port matches [TorBackend.DEFAULT_HS_TARGET_PORT] so
+                // [com.keystone.app.transport.TorHiddenServiceTransport]
+                // can bind its listener on the same port without
+                // hardcoding the value in two places.
                 TorOption.HiddenServiceDir.tryConfigure {
                     directory(hsDir)
                     version(3)
-                    port(virtual = 9091.toPort()) { target(port = 9091.toPort()) }
+                    port(virtual = hsTargetPort.toPort()) { target(port = hsTargetPort.toPort()) }
                 }
             }
+        }
+    }
+
+    private fun applyListeners(listeners: TorListeners) {
+        val newPort = listeners.socks.firstOrNull()?.port?.value
+        if (_socksPort.value != newPort) {
+            Log.d(TAG, "Tor SOCKS port now ${newPort ?: "<none>"}")
+            _socksPort.value = newPort
         }
     }
 
