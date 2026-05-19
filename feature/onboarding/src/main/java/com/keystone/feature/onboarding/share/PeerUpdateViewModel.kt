@@ -10,6 +10,9 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.net.Inet4Address
+import java.net.InetAddress
+import java.net.URI
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,6 +56,21 @@ class PeerUpdateViewModel @Inject constructor(
         }
         _state.value = State.Checking(url)
         activeJob = viewModelScope.launch {
+            // Resolve and gate the host BEFORE fetching anything —
+            // DNS lookup is blocking so it has to live on IO. The
+            // gate rejects loopback / link-local / multicast and
+            // anything outside the RFC1918 + CGNAT private ranges
+            // a paired peer's share server is realistically reachable
+            // on, so the receiver can't be socially-engineered into
+            // probing a host on the open internet via a pasted URL.
+            val hostOk = withContext(Dispatchers.IO) { isHostAllowed(url) }
+            if (!hostOk) {
+                _state.value = State.Failed(
+                    "That URL points outside your local network. Keystone " +
+                        "only fetches from peers on the same WiFi.",
+                )
+                return@launch
+            }
             val peer = withContext(Dispatchers.IO) { UpdateChecker.fetchVersion(url) }
                 .getOrElse { t ->
                     _state.value = State.Failed(t.message ?: "Couldn't reach the peer.")
@@ -163,6 +181,42 @@ class PeerUpdateViewModel @Inject constructor(
     private fun cancelActive() {
         activeJob?.cancel()
         activeJob = null
+    }
+
+    /**
+     * SSRF gate: resolve [url]'s host to an IP and require it be a
+     * private-range address that a peer's local-network share
+     * server could plausibly hold. Loopback, link-local, multicast,
+     * any-cast, and public IPv4/IPv6 are all rejected. IPv6 is
+     * deliberately rejected because the share server binds an
+     * IPv4 address discovered by [LocalIp].
+     */
+    private fun isHostAllowed(url: String): Boolean {
+        val host = runCatching { URI(url).host }.getOrNull() ?: return false
+        val addrs = runCatching { InetAddress.getAllByName(host) }.getOrNull() ?: return false
+        if (addrs.isEmpty()) return false
+        return addrs.all { addr ->
+            if (addr !is Inet4Address) return@all false
+            if (addr.isLoopbackAddress) return@all false
+            if (addr.isLinkLocalAddress) return@all false
+            if (addr.isMulticastAddress) return@all false
+            if (addr.isAnyLocalAddress) return@all false
+            val bytes = addr.address
+            val b0 = bytes[0].toInt() and 0xFF
+            val b1 = bytes[1].toInt() and 0xFF
+            when {
+                // 10.0.0.0/8
+                b0 == 10 -> true
+                // 172.16.0.0/12
+                b0 == 172 && b1 in 16..31 -> true
+                // 192.168.0.0/16
+                b0 == 192 && b1 == 168 -> true
+                // 100.64.0.0/10 — CGNAT / Tailscale. Permit so users
+                // on a paired Tailscale network can update from a peer.
+                b0 == 100 && b1 in 64..127 -> true
+                else -> false
+            }
+        }
     }
 
     private fun normaliseUrl(raw: String): String? {
