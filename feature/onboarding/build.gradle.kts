@@ -44,4 +44,12 @@ dependencies {
     implementation("androidx.camera:camera-view:1.3.1")
     // ZXing for QR decoding — same lib core:ui uses for rendering.
     implementation("com.google.zxing:core:3.5.2")
+
+    // NanoHTTPD — single-file embeddable HTTP server. Powers the
+    // peer-to-peer APK delivery mini-site: the Inviter hosts a tiny
+    // page on the local network, the Invitee's stock camera scanner
+    // opens its URL, agrees, and downloads the APK directly from the
+    // Inviter's device. No third-party server, no app store, no
+    // internet required (same WiFi only in Phase 1).
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
 }

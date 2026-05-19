@@ -3,6 +3,10 @@ package com.keystone.feature.onboarding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.keystone.feature.onboarding.screens.CompareFingerprintsScreen
@@ -12,6 +16,7 @@ import com.keystone.feature.onboarding.screens.ResultScreen
 import com.keystone.feature.onboarding.screens.RolePickerScreen
 import com.keystone.feature.onboarding.screens.RunHandshakeScreen
 import com.keystone.feature.onboarding.screens.ScanPeerQrScreen
+import com.keystone.feature.onboarding.screens.ShareApkScreen
 import com.keystone.feature.onboarding.screens.WelcomeScreen
 
 /**
@@ -41,6 +46,17 @@ fun OnboardingRoot(
     // composable. Keeping the param so app-shell callers don't break.
     val state by viewModel.state.collectAsStateWithLifecycle()
 
+    // Local-only flag for the peer-to-peer APK share side-trip. It
+    // never enters the OnboardingViewModel's state machine because
+    // the share flow is orthogonal to the handshake — taking the
+    // detour does not advance or rewind the main flow.
+    var showShareApp by rememberSaveable { mutableStateOf(false) }
+
+    if (showShareApp && state is OnboardingViewModel.UiState.DisplayQr) {
+        ShareApkScreen(onDone = { showShareApp = false })
+        return
+    }
+
     when (val s = state) {
         OnboardingViewModel.UiState.Welcome ->
             WelcomeScreen(onContinue = viewModel::continueFromWelcome)
@@ -68,6 +84,7 @@ fun OnboardingRoot(
                 onRefresh = viewModel::refreshQr,
                 onContinueToWallet = onContinueToWallet,
                 onFindPeers = viewModel::startScanning,
+                onShareApp = { showShareApp = true },
             )
 
         is OnboardingViewModel.UiState.ScanPeerQr ->

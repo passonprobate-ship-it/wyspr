@@ -33,6 +33,7 @@ fun DisplayQrScreen(
     onRefresh: () -> Unit,
     onContinueToWallet: () -> Unit,
     onFindPeers: () -> Unit,
+    onShareApp: () -> Unit = {},
 ) {
     val qrBitmap = remember(qrBase32) { QrRenderer.render(qrBase32, sizePx = 768) }
     Column(
@@ -100,6 +101,11 @@ fun DisplayQrScreen(
             onClick = onFindPeers,
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Find nearby peers (BLE)") }
+
+        OutlinedButton(
+            onClick = onShareApp,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Share Keystone with someone new") }
 
         androidx.compose.material3.Button(
             onClick = onContinueToWallet,
