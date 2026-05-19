@@ -12,6 +12,7 @@ import com.keystone.core.database.CommunityService
 import com.keystone.core.database.KeystoneDatabase
 import com.keystone.core.database.KeystoneDatabaseImpl
 import com.keystone.core.currency.WalletService
+import com.keystone.core.transport.TorBackend
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.core.trust.HandshakeProtocolImpl
 import com.keystone.core.trust.TrustGraphService
@@ -92,11 +93,17 @@ object CryptoModule {
         sodium: LazySodiumAndroid,
         database: KeystoneDatabase,
         trustGraphService: TrustGraphService,
+        torBackend: TorBackend,
     ): HandshakeProtocolImpl = HandshakeProtocolImpl(
         keystore = keystore,
         sodium = sodium,
         database = database,
         trustGraphService = trustGraphService,
+        // Read the latest published .onion each time we mint a QR.
+        // A nullable read is correct — Tor may still be bootstrapping
+        // on the first few QRs after a fresh install, and the QR
+        // shape allows null.
+        localOnion = { torBackend.onionAddress.value },
     )
 
     @Provides

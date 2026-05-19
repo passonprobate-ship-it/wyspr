@@ -25,6 +25,9 @@ import com.keystone.core.database.entities.TrustEdgeEntity
  *   v2 — adds account, currency_envelope (Gem currency, CURRENCY.md §8)
  *   v3 — adds community_membership (one row per community joined)
  *   v4 — adds message (peer-to-peer encrypted messages)
+ *   v5 — adds trust_edge.peerOnion (TEXT, nullable) — captures the
+ *        peer's HSv3 .onion at handshake time so Sprint 4's
+ *        TorHiddenServiceTransport can dial them later.
  *
  * For now [KeystoneDatabaseImpl] is built with
  * fallbackToDestructiveMigration() — pre-release, no users on v1 yet.
@@ -39,7 +42,7 @@ import com.keystone.core.database.entities.TrustEdgeEntity
         CommunityMembershipEntity::class,
         MessageEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {

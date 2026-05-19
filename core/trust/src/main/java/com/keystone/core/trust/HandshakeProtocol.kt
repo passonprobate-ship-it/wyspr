@@ -55,6 +55,17 @@ interface HandshakeProtocol {
 /**
  * PROTOCOLS.md §3.1 — CBOR over base32, max 5 minutes old.
  *
+ * Wire-format versions:
+ *  - v1 (legacy): 6 fields — `[ver, community, identity, ephemeral, nonce, mintedAt]`
+ *  - v2 (current): 7 fields — adds `onion: bstr|null` after `mintedAt`
+ *
+ * The onion field carries the peer's HSv3 hidden-service address
+ * (56-char ASCII, no `.onion` suffix). Persisting it at handshake
+ * time means the trust edge knows how to reach the peer over Tor
+ * later (Sprint 4's TorHiddenServiceTransport reads it). Devices
+ * that haven't bootstrapped Tor yet mint with `onionAddress = null`;
+ * the peer learns the address on the next QR refresh.
+ *
  * NOTE on equality: this is intentionally NOT a `data class` because the
  * `ByteArray` fields (and ByteArray-backed value-class fields like
  * `CommunityId` / `PublicKey`) would inherit reference-equality from
@@ -68,11 +79,22 @@ class HandshakeQr(
     val ephemeralPub: ByteArray,
     val nonce: ByteArray,
     val mintedAt: Long,
+    /**
+     * Sender's HSv3 hidden-service address — 56 lowercase base32 chars,
+     * no `.onion` suffix. Null when Tor isn't ready on the sender's
+     * device yet, in which case the peer falls back to BLE.
+     */
+    val onionAddress: String? = null,
 ) {
     init {
-        require(version == VERSION) { "unsupported QR version: $version" }
+        require(version in MIN_VERSION..VERSION) { "unsupported QR version: $version" }
         require(ephemeralPub.size == EPHEMERAL_LENGTH)
         require(nonce.size == NONCE_LENGTH)
+        if (onionAddress != null) {
+            require(onionAddress.length == ONION_ADDRESS_LENGTH) {
+                "onion address must be $ONION_ADDRESS_LENGTH chars, got ${onionAddress.length}"
+            }
+        }
     }
 
     val fingerprint: Fingerprint get() = identityPub.fingerprint
@@ -88,7 +110,8 @@ class HandshakeQr(
             communityId.bytes.contentEquals(other.communityId.bytes) &&
             identityPub.bytes.contentEquals(other.identityPub.bytes) &&
             ephemeralPub.contentEquals(other.ephemeralPub) &&
-            nonce.contentEquals(other.nonce)
+            nonce.contentEquals(other.nonce) &&
+            onionAddress == other.onionAddress
     }
 
     override fun hashCode(): Int {
@@ -98,14 +121,21 @@ class HandshakeQr(
         r = 31 * r + identityPub.bytes.contentHashCode()
         r = 31 * r + ephemeralPub.contentHashCode()
         r = 31 * r + nonce.contentHashCode()
+        r = 31 * r + (onionAddress?.hashCode() ?: 0)
         return r
     }
 
     companion object {
-        const val VERSION = 1
+        /** Highest wire version this build can emit + decode. */
+        const val VERSION = 2
+
+        /** Oldest wire version this build can still decode. */
+        const val MIN_VERSION = 1
+
         const val EPHEMERAL_LENGTH = 32
         const val NONCE_LENGTH = 16
         const val MAX_AGE_SECONDS = 5L * 60
+        const val ONION_ADDRESS_LENGTH = 56
     }
 }
 

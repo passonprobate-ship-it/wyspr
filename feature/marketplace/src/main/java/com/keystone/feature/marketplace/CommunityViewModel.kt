@@ -87,6 +87,7 @@ class CommunityViewModel @Inject constructor(
                         fingerprint = other.fingerprint,
                         trustLevel = level,
                         pairedAt = edge.establishedAt,
+                        peerOnion = edge.peerOnion,
                     ),
                 )
             }
@@ -109,6 +110,13 @@ class CommunityViewModel @Inject constructor(
         val fingerprint: Fingerprint,
         val trustLevel: TrustLevel,
         val pairedAt: Long,
+        /**
+         * Peer's HSv3 .onion captured at pairing time (Sprint 3+).
+         * Null for peers paired before address-exchange, or for
+         * peers who hadn't bootstrapped Tor yet when they minted
+         * the QR we scanned.
+         */
+        val peerOnion: String? = null,
     )
 
     sealed interface UiState {

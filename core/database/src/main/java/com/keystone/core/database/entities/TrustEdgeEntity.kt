@@ -12,6 +12,9 @@ import androidx.room.PrimaryKey
  *   - `fromPub` / `toPub` — 32-byte Ed25519 public keys
  *   - `certBlob` — full signed InvitationCertificate (CBOR wire form)
  *   - `certSigner` — 32-byte Ed25519 public key of the cert signer
+ *   - `peerOnion` — the not-self endpoint's HSv3 .onion (56 chars,
+ *     nullable). Captured from the peer's HandshakeQr at pairing
+ *     time; used by Sprint 4's TorHiddenServiceTransport.
  */
 @Entity(
     tableName = "trust_edge",
@@ -24,6 +27,7 @@ data class TrustEdgeEntity(
     @ColumnInfo(name = "establishedAt") val establishedAt: Long,
     @ColumnInfo(name = "certBlob") val certBlob: ByteArray,
     @ColumnInfo(name = "certSigner") val certSigner: ByteArray,
+    @ColumnInfo(name = "peerOnion") val peerOnion: String? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -33,7 +37,8 @@ data class TrustEdgeEntity(
             vouchLevel == other.vouchLevel &&
             establishedAt == other.establishedAt &&
             certBlob.contentEquals(other.certBlob) &&
-            certSigner.contentEquals(other.certSigner)
+            certSigner.contentEquals(other.certSigner) &&
+            peerOnion == other.peerOnion
     }
 
     override fun hashCode(): Int {
@@ -43,6 +48,7 @@ data class TrustEdgeEntity(
         result = 31 * result + establishedAt.hashCode()
         result = 31 * result + certBlob.contentHashCode()
         result = 31 * result + certSigner.contentHashCode()
+        result = 31 * result + (peerOnion?.hashCode() ?: 0)
         return result
     }
 }

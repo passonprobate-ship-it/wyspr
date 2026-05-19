@@ -46,6 +46,14 @@ class HandshakeProtocolImpl(
      * stands. Production wiring via Hilt always passes a real one.
      */
     private val trustGraphService: TrustGraphService? = null,
+    /**
+     * Sampled at QR-mint time to populate [HandshakeQr.onionAddress].
+     * Returns null while Tor is bootstrapping; the resulting QR
+     * advertises BLE-only and the peer falls back accordingly.
+     * Tests pass `{ null }`; production wiring reads
+     * `TorBackend.onionAddress.value` via Hilt.
+     */
+    private val localOnion: () -> String? = { null },
     private val clock: () -> Long = { System.currentTimeMillis() / 1000 },
     private val random: SecureRandom = SecureRandom(),
 ) : HandshakeProtocol {
@@ -82,6 +90,10 @@ class HandshakeProtocolImpl(
             "libsodium cryptoBoxKeypair failed"
         }
         val nonce = ByteArray(HandshakeQr.NONCE_LENGTH).also { random.nextBytes(it) }
+        // Onion may legitimately be null (Tor still bootstrapping, or
+        // not built in some flavour). When non-null, [HandshakeQr]'s
+        // init block enforces the canonical 56-char length.
+        val onion = localOnion()
         val qr = HandshakeQr(
             version = HandshakeQr.VERSION,
             communityId = communityId,
@@ -89,6 +101,7 @@ class HandshakeProtocolImpl(
             ephemeralPub = ephemeralPub,
             nonce = nonce,
             mintedAt = clock(),
+            onionAddress = onion,
         )
         return MintedQr(qr = qr, ephemeralSecret = ephemeralSec)
     }
@@ -283,6 +296,7 @@ private class RealSession(
                         establishedAt = cert.issuedAt,
                         certBlob = cert.wireBytes(),
                         certSigner = localPub,
+                        peerOnion = peerQr.onionAddress,
                     )
                 }
                 HandshakeProtocol.Role.Invitee -> {
@@ -319,6 +333,7 @@ private class RealSession(
                         establishedAt = cert.issuedAt,
                         certBlob = cert.wireBytes(),
                         certSigner = peerPub,
+                        peerOnion = peerQr.onionAddress,
                     )
                 }
             }
@@ -357,6 +372,7 @@ private class RealSession(
                 establishedAt = edge.establishedAt,
                 certBlob = edge.certBlob,
                 certSigner = edge.certSigner.bytes,
+                peerOnion = edge.peerOnion,
             )
         )
     }

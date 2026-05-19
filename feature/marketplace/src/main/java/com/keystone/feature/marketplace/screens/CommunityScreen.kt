@@ -341,6 +341,19 @@ private fun PeerRow(peer: CommunityViewModel.PeerEntry) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // Peer's HSv3 onion (Sprint 3+) — proves we have a way
+                // to reach this peer over Tor when BLE isn't available.
+                // Elide the middle so the 56-char address fits one line.
+                val onion = peer.peerOnion
+                if (onion != null) {
+                    val short = onion.take(8) + "…" + onion.takeLast(6) + ".onion"
+                    Text(
+                        "via Tor: $short",
+                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

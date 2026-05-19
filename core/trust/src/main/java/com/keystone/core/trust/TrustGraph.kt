@@ -46,6 +46,18 @@ data class TrustEdge(
     val establishedAt: Long,
     val certBlob: ByteArray,
     val certSigner: PublicKey,
+    /**
+     * Peer's HSv3 hidden-service address, captured at handshake time
+     * from their [HandshakeQr.onionAddress]. The "peer" here is the
+     * not-self endpoint of this edge — Sprint 4's
+     * `TorHiddenServiceTransport` reads this field to know where to
+     * dial when BLE is unavailable.
+     *
+     * Null when the peer hadn't bootstrapped Tor at pairing time. A
+     * future "address rotation" envelope (PROTOCOLS.md §3.5, deferred
+     * to v0.6.4) will let peers update this without re-pairing.
+     */
+    val peerOnion: String? = null,
 )
 
 data class TrustGraphSnapshot(

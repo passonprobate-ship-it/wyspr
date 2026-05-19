@@ -7,14 +7,22 @@ import com.keystone.core.identity.PublicKey
 /**
  * Canonical wire format for [HandshakeQr]. PROTOCOLS.md §3.1.
  *
- * Encoded as a deterministic CBOR array of six fields, in this order:
+ * Wire version 2 (current — Sprint 3 onwards): deterministic CBOR array
+ * of seven fields, in this order:
  *
- *     [ ver: u8,
+ *     [ ver: u8 (= 2),
  *       community: bstr(32),
  *       identity: bstr(32),
  *       ephemeral: bstr(32),
  *       nonce: bstr(16),
- *       mintedAt: u64 ]
+ *       mintedAt: u64,
+ *       onion: bstr(56) | null ]
+ *
+ * Wire version 1 (legacy, decode-only): six fields without the trailing
+ * `onion`. Encoding always emits v2 — the QR is a fresh artifact every
+ * 5 minutes, so there are no v1 emitters to keep working. v1 decode is
+ * kept for the short window where two installs at different patch
+ * levels might still pair before everyone has updated.
  *
  * The QR carries the CBOR bytes wrapped in RFC 4648 base32 (no padding)
  * so the resulting payload is alphanumeric — friendlier to the QR
@@ -27,29 +35,49 @@ import com.keystone.core.identity.PublicKey
  */
 object HandshakeQrCodec {
 
-    private const val FIELD_COUNT = 6
+    private const val FIELD_COUNT_V1 = 6
+    private const val FIELD_COUNT_V2 = 7
 
     fun encode(qr: HandshakeQr): ByteArray = Cbor.encode {
-        arrayHeader(FIELD_COUNT)
-        uint(qr.version.toLong())
+        arrayHeader(FIELD_COUNT_V2)
+        uint(HandshakeQr.VERSION.toLong())
         bytes(qr.communityId.bytes)
         bytes(qr.identityPub.bytes)
         bytes(qr.ephemeralPub)
         bytes(qr.nonce)
         uint(qr.mintedAt)
+        val onion = qr.onionAddress
+        if (onion == null) nullValue() else bytes(onion.toByteArray(Charsets.US_ASCII))
     }
 
     fun decode(blob: ByteArray): HandshakeQr = Cbor.decode(blob) {
         val n = arrayHeader()
-        require(n == FIELD_COUNT) {
-            "HandshakeQr must have $FIELD_COUNT fields, got $n"
+        require(n == FIELD_COUNT_V1 || n == FIELD_COUNT_V2) {
+            "HandshakeQr must have $FIELD_COUNT_V1 or $FIELD_COUNT_V2 fields, got $n"
         }
         val version = uint().toIntChecked()
+        require(version in HandshakeQr.MIN_VERSION..HandshakeQr.VERSION) {
+            "unsupported QR version $version (this build understands " +
+                "${HandshakeQr.MIN_VERSION}..${HandshakeQr.VERSION})"
+        }
+        // Defence in depth: a v1 array masquerading as version=2 (or
+        // vice versa) would otherwise read past the end / leave bytes
+        // unconsumed. Pinning the field-count expectation to the
+        // declared version catches truncated or padded payloads early.
+        val expectedFields = if (version == 1) FIELD_COUNT_V1 else FIELD_COUNT_V2
+        require(n == expectedFields) {
+            "v$version QR must have $expectedFields fields, got $n"
+        }
         val community = bytes()
         val identity = bytes()
         val ephemeral = bytes()
         val nonce = bytes()
         val mintedAt = uint()
+        val onion: String? = if (version >= 2) {
+            bytesOrNull()?.toString(Charsets.US_ASCII)
+        } else {
+            null
+        }
         HandshakeQr(
             version = version,
             communityId = CommunityId(community),
@@ -57,6 +85,7 @@ object HandshakeQrCodec {
             ephemeralPub = ephemeral,
             nonce = nonce,
             mintedAt = mintedAt,
+            onionAddress = onion,
         )
     }
 
