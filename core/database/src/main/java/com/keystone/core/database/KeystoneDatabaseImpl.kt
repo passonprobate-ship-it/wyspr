@@ -37,6 +37,7 @@ class KeystoneDatabaseImpl(
     override val accountDao get() = requireOpen().accountDao()
     override val currencyEnvelopeDao get() = requireOpen().currencyEnvelopeDao()
     override val communityMembershipDao get() = requireOpen().communityMembershipDao()
+    override val messageDao get() = requireOpen().messageDao()
 
     override suspend fun open() = openLock.withLock {
         withContext(Dispatchers.IO) {

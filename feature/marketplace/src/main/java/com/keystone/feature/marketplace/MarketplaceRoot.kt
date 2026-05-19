@@ -29,6 +29,7 @@ fun MarketplaceRoot(
     viewModel: WalletViewModel = hiltViewModel(),
     biometricPrompt: suspend () -> Boolean = { true },
     onIdentityReset: () -> Unit = {},
+    onOpenMessaging: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val sendResult by viewModel.sendResult.collectAsStateWithLifecycle()
@@ -45,6 +46,7 @@ fun MarketplaceRoot(
                 onAudit = { nav.navigate(WalletRoutes.Audit) },
                 onSettings = { nav.navigate(WalletRoutes.Settings) },
                 onCommunity = { nav.navigate(WalletRoutes.Community) },
+                onMessages = onOpenMessaging,
                 onMintDebug = { amount -> viewModel.mintDebugGenesis(amount, biometricPrompt) },
             )
         }

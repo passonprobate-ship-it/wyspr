@@ -33,6 +33,7 @@ fun HomeScreen(
     onAudit: () -> Unit,
     onSettings: () -> Unit,
     onCommunity: () -> Unit = {},
+    onMessages: () -> Unit = {},
     onMintDebug: (Long) -> Unit,
 ) {
     Column(
@@ -92,6 +93,11 @@ fun HomeScreen(
                 modifier = Modifier.weight(1f),
             ) { Text("Audit") }
         }
+
+        OutlinedButton(
+            onClick = onMessages,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Messages") }
 
         OutlinedButton(
             onClick = onCommunity,

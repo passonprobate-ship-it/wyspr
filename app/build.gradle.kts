@@ -119,6 +119,7 @@ dependencies {
     implementation(project(":feature:marketplace"))
     implementation(project(":feature:coordination"))
     implementation(project(":feature:directory"))
+    implementation(project(":feature:messaging"))
 
     // ──── Compose / UI ──────────────────────────────────────────────────
     val composeBom = platform("androidx.compose:compose-bom:2024.02.00")

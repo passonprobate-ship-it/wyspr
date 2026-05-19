@@ -10,6 +10,7 @@ import androidx.navigation.compose.rememberNavController
 import com.keystone.app.biometric.BiometricUnlocker
 import com.keystone.app.permissions.rememberBlePermissionGate
 import com.keystone.feature.marketplace.MarketplaceRoot
+import com.keystone.feature.messaging.MessagingRoot
 import com.keystone.feature.onboarding.OnboardingRoot
 import com.keystone.feature.onboarding.screens.DiscoveryScreen
 
@@ -69,7 +70,11 @@ fun KeystoneNavHost(unlocker: BiometricUnlocker) {
                         popUpTo(0) { inclusive = true }
                     }
                 },
+                onOpenMessaging = { navController.navigate(Routes.Messaging) },
             )
+        }
+        composable(Routes.Messaging) {
+            MessagingRoot(onBack = { navController.popBackStack() })
         }
         composable(Routes.Coordination) {
             // TODO: feature:coordination entry composable
@@ -87,4 +92,5 @@ object Routes {
     const val Marketplace = "marketplace"
     const val Coordination = "coordination"
     const val Directory = "directory"
+    const val Messaging = "messaging"
 }
