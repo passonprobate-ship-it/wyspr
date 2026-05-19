@@ -46,6 +46,12 @@
     <!-- Wake locks — never long-lived; bounded to active sync sessions. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Lets the app hand a downloaded peer-update APK to the system
+         PackageInstaller. The user still has to tap "Install" in the
+         system dialog; Android refuses any APK whose signer differs
+         from the currently-installed app's signer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:name=".KeystoneApplication"
         android:label="Keystone"
@@ -72,6 +78,20 @@
 
         <!-- FLAG_SECURE applied per-window in MainActivity — prevents
              screenshots and surfacing in recents. -->
+
+        <!-- FileProvider lets us mint content:// URIs for the
+             downloaded peer-update APK so the system PackageInstaller
+             can read it. Authority is "{applicationId}.fileprovider"
+             and matches the lookup in PeerUpdateViewModel. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 </manifest>

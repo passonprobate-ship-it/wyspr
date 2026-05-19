@@ -18,6 +18,10 @@ import java.security.MessageDigest
  *
  * ## Routes
  *   GET /                 → mini-site (HTML, inline CSS, no JS)
+ *   GET /version.json     → machine-readable metadata used by the in-app
+ *                           "Update from a peer" flow on the receiving
+ *                           device. Returns `{versionCode, versionName,
+ *                           apkSha256, apkSizeBytes}`.
  *   GET /keystone.apk     → APK bytes (Content-Disposition: attachment)
  *   GET /robots.txt       → `User-agent: *  Disallow: /` (out of caution
  *                           in case the device is briefly on a public
@@ -56,6 +60,7 @@ internal class ApkShareServer(
 
     override fun serve(session: IHTTPSession): Response = when (session.uri.trimEnd('/')) {
         "", "/index.html" -> indexResponse()
+        "/version.json" -> versionJsonResponse()
         "/keystone.apk" -> apkResponse()
         "/robots.txt" -> newFixedLengthResponse(
             Response.Status.OK,
@@ -63,6 +68,39 @@ internal class ApkShareServer(
             "User-agent: *\nDisallow: /\n",
         )
         else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "404")
+    }
+
+    /**
+     * Hand-rolled JSON — no parser dep, no escaping subtleties. Every
+     * value is a hex string, a quoted string, or a positive integer,
+     * so we control the entire output and don't need a library.
+     */
+    private fun versionJsonResponse(): Response {
+        val json = buildString {
+            append('{')
+            append("\"versionCode\":").append(versionCode).append(',')
+            append("\"versionName\":\"").append(jsonEscape(versionName)).append("\",")
+            append("\"apkSha256\":\"").append(apkSha256).append("\",")
+            append("\"apkSizeBytes\":").append(apkSizeBytes)
+            append('}')
+        }
+        return newFixedLengthResponse(
+            Response.Status.OK,
+            "application/json; charset=utf-8",
+            json,
+        ).apply { addHeader("Cache-Control", "no-store") }
+    }
+
+    private fun jsonEscape(s: String): String = buildString(s.length) {
+        for (c in s) when {
+            c == '"' -> append("\\\"")
+            c == '\\' -> append("\\\\")
+            c == '\n' -> append("\\n")
+            c == '\r' -> append("\\r")
+            c == '\t' -> append("\\t")
+            c.code < 0x20 -> append("\\u%04x".format(c.code))
+            else -> append(c)
+        }
     }
 
     private fun indexResponse(): Response {

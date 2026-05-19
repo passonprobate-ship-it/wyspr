@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!--
+        Exposes the peer-update download path so FileProvider can mint
+        content:// URIs the system PackageInstaller can read. Only the
+        peer-updates subdirectory is exposed — nothing else under
+        cacheDir/ is grant-able.
+    -->
+    <cache-path
+        name="peer-updates"
+        path="peer-updates/" />
+</paths>

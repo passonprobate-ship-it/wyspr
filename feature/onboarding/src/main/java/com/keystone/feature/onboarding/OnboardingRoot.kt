@@ -17,6 +17,7 @@ import com.keystone.feature.onboarding.screens.RolePickerScreen
 import com.keystone.feature.onboarding.screens.RunHandshakeScreen
 import com.keystone.feature.onboarding.screens.ScanPeerQrScreen
 import com.keystone.feature.onboarding.screens.ShareApkScreen
+import com.keystone.feature.onboarding.screens.UpdateFromPeerScreen
 import com.keystone.feature.onboarding.screens.WelcomeScreen
 
 /**
@@ -46,14 +47,18 @@ fun OnboardingRoot(
     // composable. Keeping the param so app-shell callers don't break.
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    // Local-only flag for the peer-to-peer APK share side-trip. It
-    // never enters the OnboardingViewModel's state machine because
-    // the share flow is orthogonal to the handshake — taking the
-    // detour does not advance or rewind the main flow.
+    // Local-only flags for the peer-to-peer side-trips (APK share +
+    // peer update). They never enter the OnboardingViewModel's state
+    // machine because both flows are orthogonal to the handshake.
     var showShareApp by rememberSaveable { mutableStateOf(false) }
+    var showUpdateFromPeer by rememberSaveable { mutableStateOf(false) }
 
     if (showShareApp && state is OnboardingViewModel.UiState.DisplayQr) {
         ShareApkScreen(onDone = { showShareApp = false })
+        return
+    }
+    if (showUpdateFromPeer && state is OnboardingViewModel.UiState.DisplayQr) {
+        UpdateFromPeerScreen(onDone = { showUpdateFromPeer = false })
         return
     }
 
@@ -85,6 +90,7 @@ fun OnboardingRoot(
                 onContinueToWallet = onContinueToWallet,
                 onFindPeers = viewModel::startScanning,
                 onShareApp = { showShareApp = true },
+                onUpdateFromPeer = { showUpdateFromPeer = true },
             )
 
         is OnboardingViewModel.UiState.ScanPeerQr ->
