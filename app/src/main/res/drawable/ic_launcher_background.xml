@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive-icon background. Solid Keystone surface tone — the same
+    deep charcoal-green the app uses for its dark theme, so the icon
+    visually matches the chrome of the app once it opens.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/ic_launcher_bg" />
+</shape>

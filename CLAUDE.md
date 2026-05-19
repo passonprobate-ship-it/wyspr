@@ -153,20 +153,63 @@ real BLE GATT and persists the trust edge in the encrypted DB.
   singleton: keystore, sodium, database, community service,
   handshake protocol, BLE transport, wallet, biometric settings.
 
+## What's Shipped Since v0.1 (post-2026-05-18)
+
+- **BLAKE2s for `ServiceUuid`** — replaced the SHA-256 placeholder.
+  RFC 7693 vectors tested. Backed by noise-java's `Blake2sMessageDigest`,
+  already on the classpath.
+- **`TrustGraphImpl`** — K-independent-paths quorum implementation
+  with 21 tests. Vertex- and edge-disjoint path counting, revocation
+  ingestion, root identity. **Not yet wired into HandshakeProtocolImpl
+  authorization** — handshake still writes trust edges unconditionally;
+  the next sprint gates `canIssueInvitations()` against the graph.
+- **Release pipeline scaffolded** — `app/build.gradle.kts` has
+  `signingConfigs`, R8 minification + resource shrinking, JNA AWT
+  dontwarn rules, BouncyCastle keep rules. Local release builds
+  succeed at ~27 MB signed; F-Droid manifest + CI still pending.
+- **Peer-to-peer APK delivery** (`feature:onboarding/share/`) — a
+  user opens "Share Keystone with someone new" and the device hosts
+  a per-session HTTPS server with a self-signed cert. Recipient
+  scans the QR (or types the URL after tapping the "tap to copy"
+  affordance), reviews a mini-site, and downloads the APK directly
+  over the local network. No app store, no central server.
+- **Layer-1 peer-update** — receiver-side "Update from a peer" pulls
+  a peer's `/version.json`, compares, and downloads the APK via the
+  same share server. SHA-256-verified streaming download, system
+  PackageInstaller hand-off constrained to system-signed packages,
+  `canRequestPackageInstalls()` consent path surfaced as a dedicated
+  UI state.
+- **8 critical BLE bug fixes** — `BleLink.consumeAsFlow → receiveAsFlow`,
+  single-drainer reassembly under a dedicated coroutine, eager
+  client-side `BleLink` allocation, MTU fallback when negotiation
+  fails, characteristic `PROPERTY_WRITE_NO_RESPONSE`,
+  disconnect-before-resume on `openGattClient`, `computeIfAbsent`
+  link creation, clock-skew tolerance on cert verify.
+- **App icon** — keystone-arch adaptive icon (foreground + background
+  + monochrome themed variant), tinted to match the dark theme.
+
 ## What's NOT Built Yet (see NEXT-STEPS.md for the full sprint plan)
 
-- **Two-device hardware proof.** The build is green; nothing has
-  yet been verified on physical hardware.
+- **Two-device hardware proof.** First real-device test in progress
+  as of 2026-05-19; awaiting confirmation that the Noise XX +
+  cert exchange round-trips successfully on Samsung S23+ + S23+
+  (or S23+ + A02s).
+- **TrustGraphImpl Hilt wiring + handshake authorization** — the
+  K-paths quorum class exists with tests but is not yet consulted
+  before persisting a trust edge.
+- **Revocation propagation** between peers via sync.
+- **Foreground service** for the BLE + share-server transport stack —
+  manifest reserves `FOREGROUND_SERVICE` permissions but no Service
+  subclass exists yet, so Android can kill the radio mid-handshake
+  if the user backgrounds the app.
+- **Layer-2 / Layer-3 peer-update**: automatic discovery via the BLE
+  trust channel (L2) and K-quorum verification (L3) — both deferred
+  until the v0.2 sprint after the hardware-proof.
 - **Vault** feature (encrypted personal-record store).
 - **Marketplace over BLE** — wallet exists but doesn't yet sync
   over a real Link.
-- **TrustGraph** quorum (K-independent-paths to upgrade
-  Provisional → Full).
-- **Revocation propagation** between peers via sync.
 - **WiFi Direct `connect()`** — discovery only today.
-- **BLAKE2s for `ServiceUuid`** — currently uses SHA-256 as a
-  placeholder.
-- Release build wiring, signing, F-Droid manifest, CI.
+- F-Droid manifest, CI.
 - Coordination, Directory features.
 - Tor hidden-service transport.
 

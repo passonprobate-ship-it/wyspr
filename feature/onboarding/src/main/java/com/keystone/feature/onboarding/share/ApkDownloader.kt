@@ -67,38 +67,47 @@ internal object ApkDownloader {
 
             val md = MessageDigest.getInstance("SHA-256")
             var bytesRead = 0L
-            dest.outputStream().use { out ->
-                conn.inputStream.use { input ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n == -1) break
-                        md.update(buf, 0, n)
-                        out.write(buf, 0, n)
-                        bytesRead += n
-                        // Refuse to keep going past the announced size
-                        // — a peer that claimed 50MB and tries to push
-                        // 200 is either misbehaving or hostile.
-                        if (bytesRead > expectedSizeBytes + SIZE_TOLERANCE_BYTES) {
-                            throw IOException(
-                                "peer overran announced size " +
-                                    "($bytesRead > $expectedSizeBytes)",
-                            )
+            var ok = false
+            try {
+                dest.outputStream().use { out ->
+                    conn.inputStream.use { input ->
+                        val buf = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n == -1) break
+                            // Size cap checked BEFORE writing the chunk
+                            // so a hostile peer can't sneak attacker
+                            // bytes into the tail of an oversized blob.
+                            if (bytesRead + n > expectedSizeBytes + SIZE_TOLERANCE_BYTES) {
+                                throw IOException(
+                                    "peer overran announced size " +
+                                        "(${bytesRead + n} > $expectedSizeBytes)",
+                                )
+                            }
+                            md.update(buf, 0, n)
+                            out.write(buf, 0, n)
+                            bytesRead += n
+                            onProgress(bytesRead, total)
                         }
-                        onProgress(bytesRead, total)
                     }
                 }
-            }
 
-            val actual = md.digest().joinToString("") { "%02x".format(it) }
-            if (actual != expectedSha256) {
-                dest.delete()
-                throw IOException(
-                    "downloaded APK SHA-256 doesn't match announced " +
-                        "(got $actual, expected $expectedSha256)",
-                )
+                val actual = md.digest().joinToString("") { "%02x".format(it) }
+                if (actual != expectedSha256) {
+                    throw IOException(
+                        "downloaded APK SHA-256 doesn't match announced " +
+                            "(got $actual, expected $expectedSha256)",
+                    )
+                }
+                ok = true
+                dest
+            } finally {
+                // Any failure path — checked exception, cancellation,
+                // hash mismatch, size overrun — leaves no partial file
+                // on disk that could later be picked up by an installer
+                // or referenced via the FileProvider.
+                if (!ok) runCatching { dest.delete() }
             }
-            dest
         } finally {
             conn.disconnect()
         }

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Adaptive-icon foreground. A stylised Roman arch with the keystone
+    (the wedge-shaped stone at the apex) picked out in a lighter
+    mint tint — the literal architectural element the app is named
+    after. The arch reads as a doorway, the keystone as the critical
+    piece that makes the doorway stand up.
+
+    Layout sits inside the inner 66dp safe zone of the 108dp adaptive
+    canvas. Stroke endpoints are within radius 33 of (54,54) so the
+    icon is fully visible under every mask shape (circle, squircle,
+    rounded square, teardrop).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Arch silhouette: stroked. Two vertical pillars rising into
+         a semicircular top, drawn as a continuous path. -->
+    <path
+        android:pathData="M 32,84 L 32,54 C 32,32 32,32 54,32 C 76,32 76,32 76,54 L 76,84"
+        android:strokeColor="@color/ic_launcher_accent"
+        android:strokeWidth="9"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+
+    <!-- Keystone wedge at the apex of the arch. Wider at top,
+         narrower at bottom — the trapezoid shape of an actual
+         keystone in masonry. Filled so it reads as the "anchor"
+         of the structure even at 32×32 launcher sizes. -->
+    <path
+        android:pathData="M 45.5,30.5 L 62.5,30.5 L 59.5,46.5 L 48.5,46.5 Z"
+        android:fillColor="@color/ic_launcher_keystone"
+        android:strokeColor="@color/ic_launcher_bg"
+        android:strokeWidth="2"
+        android:strokeLineJoin="round" />
+</vector>

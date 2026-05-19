@@ -47,18 +47,20 @@ fun OnboardingRoot(
     // composable. Keeping the param so app-shell callers don't break.
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    // Local-only flags for the peer-to-peer side-trips (APK share +
-    // peer update). They never enter the OnboardingViewModel's state
-    // machine because both flows are orthogonal to the handshake.
-    var showShareApp by rememberSaveable { mutableStateOf(false) }
-    var showUpdateFromPeer by rememberSaveable { mutableStateOf(false) }
+    // Local-only flag for the peer-to-peer side-trips (APK share +
+    // peer update). A single nullable enum replaces the previous
+    // pair of independent booleans because two independent flags
+    // could both flip true at once (e.g. one click queued while a
+    // previous selection's reset hadn't run), making precedence
+    // undeclared. A single state machine makes the choice explicit.
+    var sideTrip by rememberSaveable { mutableStateOf<SideTrip?>(null) }
 
-    if (showShareApp && state is OnboardingViewModel.UiState.DisplayQr) {
-        ShareApkScreen(onDone = { showShareApp = false })
-        return
-    }
-    if (showUpdateFromPeer && state is OnboardingViewModel.UiState.DisplayQr) {
-        UpdateFromPeerScreen(onDone = { showUpdateFromPeer = false })
+    if (sideTrip != null && state is OnboardingViewModel.UiState.DisplayQr) {
+        when (sideTrip) {
+            SideTrip.ShareApp -> ShareApkScreen(onDone = { sideTrip = null })
+            SideTrip.UpdateFromPeer -> UpdateFromPeerScreen(onDone = { sideTrip = null })
+            null -> Unit
+        }
         return
     }
 
@@ -89,8 +91,8 @@ fun OnboardingRoot(
                 onRefresh = viewModel::refreshQr,
                 onContinueToWallet = onContinueToWallet,
                 onFindPeers = viewModel::startScanning,
-                onShareApp = { showShareApp = true },
-                onUpdateFromPeer = { showUpdateFromPeer = true },
+                onShareApp = { sideTrip = SideTrip.ShareApp },
+                onUpdateFromPeer = { sideTrip = SideTrip.UpdateFromPeer },
             )
 
         is OnboardingViewModel.UiState.ScanPeerQr ->
@@ -126,3 +128,10 @@ fun OnboardingRoot(
             )
     }
 }
+
+/**
+ * Mutually-exclusive side-trip selector. `null` means the main
+ * onboarding flow is on screen; any non-null value diverts to the
+ * named ancillary screen until the user dismisses it.
+ */
+private enum class SideTrip { ShareApp, UpdateFromPeer }
