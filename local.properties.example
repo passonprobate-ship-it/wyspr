@@ -1,0 +1,2 @@
+# Copy to local.properties (gitignored). SPAWN Pi 5 SDK location:
+sdk.dir=/opt/android-sdk

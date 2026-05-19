@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+        Reticulum runs over arbitrary transports — TCP/UDP for backbone
+        nodes, USB-serial for LoRa modems, Bluetooth for short-range
+        radio bridges. We don't add any dangerous permissions here; the
+        host app declares INTERNET if a TCP interface is used and the
+        USB/Bluetooth permissions already come from the BLE module.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
