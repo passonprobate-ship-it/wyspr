@@ -1,0 +1,15 @@
+Keystone is a private network for small groups — families, co-ops, congregations, mutual-aid circles — built on the assumption that the platform layer (Google, your ISP, the underlying OS vendor) is not a friend.
+
+Membership is by face-to-face invitation only. A new member is added by an existing member scanning their QR code and running a Noise XX handshake over Bluetooth. There is no central server, no account, no phone number, and no email to register.
+
+Messages are encrypted end-to-end with the Noise protocol (XX pattern, X25519 + ChaCha20-Poly1305 + BLAKE2s). Identity keys are sealed in the Android hardware keystore — StrongBox where available, TEE everywhere else. Software-only keys are refused.
+
+Devices reach each other over Bluetooth Low Energy when in range, and over an embedded Tor hidden service across the internet. Each device publishes its own Tor v3 onion address — derived deterministically from the keystore identity, so it survives reinstalls. Peers exchange onions during the handshake and can reach each other anywhere afterwards. No third-party transport. No metadata logged.
+
+Trust is web-of-trust by construction: every authorization decision (who can invite, who has been revoked) is evaluated against k-independent paths through signed invitation certificates. A single compromised device cannot impersonate anyone else, and a revoked device is locked out by the next sync round.
+
+Today: encrypted messaging with read receipts, peer-to-peer APK distribution (no app store required), and trust-graph visualization.
+
+Coming: encrypted personal-records vault, member directory, coordination (events / voting), Monero wallet via embedded Tor, and reproducible builds.
+
+This is anti-platform software. The integrity of the private network beats every other concern.

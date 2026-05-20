@@ -1,0 +1,7 @@
+v0.6.7 — F-Droid release plumbing.
+
+• Fastlane metadata + draft F-Droid manifest for the first listing.
+• Version bumped from 0.1.0 to 0.6.7 (catches versionCode up to released sprint count).
+• Reproducible-build deviations documented in docs/FDROID.md.
+
+The codebase already shipped through six v0.6 sprints — embedded Tor with a keystore-pinned .onion, end-to-end messaging with read receipts, trust-graph quorum on invitations, foreground transport service, and peer-to-peer APK share. This release is the first one published as a real APK with a real version line.

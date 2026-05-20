@@ -1,0 +1,46 @@
+# F-Droid build manifest for Keystone.
+#
+# This file is the draft we plan to submit to f-droid/fdroiddata.
+# It is checked into our own repo so the build recipe lives next
+# to the code it builds. When we submit, this file is copied as-is
+# into fdroiddata/metadata/com.keystone.yml.
+#
+# Schema reference: https://f-droid.org/docs/Build_Metadata_Reference/
+# See also docs/FDROID.md in this repo for the reproducibility
+# deviation list and the maintainer release process.
+
+Categories:
+  - Security
+  - Connectivity
+License: Apache-2.0
+AuthorName: Keystone contributors
+SourceCode: https://github.com/passonprobate-ship-it/keystone
+IssueTracker: https://github.com/passonprobate-ship-it/keystone/issues
+
+AutoName: Keystone
+
+# Each Build entry corresponds to one tagged release in this repo.
+# The commit field MUST be a tag (not a branch or SHA) so F-Droid
+# can pin the build.
+Builds:
+  - versionName: 0.6.7
+    versionCode: 7
+    commit: v0.6.7
+    subdir: app
+    gradle:
+      - yes
+    # Tor binaries and libsodium native libraries arrive as
+    # pre-built AAR artifacts via kmp-tor and lazysodium-android.
+    # The from-source rebuild path is not yet wired (see
+    # docs/FDROID.md §3). For the first listing we declare the
+    # deviation honestly and accept that F-Droid's reproducible-
+    # build check will fail until we ship from-source builds.
+    prebuilds:
+      - com.goterl:lazysodium-android:5.1.0
+      - io.matthewnelson.kmp-tor:resource-exec-tor:408.13.2
+      - io.matthewnelson.kmp-tor:resource-noexec-tor:408.13.2
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 0.6.7
+CurrentVersionCode: 7

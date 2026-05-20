@@ -57,6 +57,14 @@
 -dontwarn java.awt.**
 -dontwarn javax.swing.**
 
+# kmp-process (a transitive dependency of kmp-tor) has a desktop-JVM
+# code path in PlatformBuilder.myPid that reads the PID via JMX. On
+# Android this branch is never taken — kmp-process uses /proc/self
+# instead — but R8 refuses to compile the release variant because
+# the JMX classes aren't on Android's bootclasspath. They are
+# absent at runtime too; the reference is dead code on Android.
+-dontwarn java.lang.management.**
+
 # BouncyCastle — used by SelfSignedCert for the share-server TLS cert.
 # BC's X.509 builders use service-loader / reflection to discover
 # OID handlers, so renaming or stripping unused-looking classes
