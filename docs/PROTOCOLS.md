@@ -275,6 +275,54 @@ Each frame goes through `NoiseSession.encrypt` on the sender and
 `decrypt` on the receiver. The 1000-envelope cap defends against a
 hostile peer claiming a huge array; arrays beyond that abort the round.
 
+After the messaging round (initiator sends `END`, responder
+returns `END`) both peers run the revocation anti-entropy round on
+the same Noise transport — see §5.3 below.
+
+### 5.3 Revocation anti-entropy round (v0.6.6)
+
+Piggybacks on the same Noise session as messaging sync. Six
+frames total, symmetric:
+
+```
+A                    B
+HaveSet (0x31)  -->
+                <--  HaveSet (0x31)
+Want (0x32)     -->          (= peerHave − ours, content-keyed)
+                <--  Want (0x32)
+Push (0x33)     -->          (wire bytes of certs peer asked for)
+                <--  Push (0x33)
+```
+
+CBOR shape (definite-length arrays):
+
+```
+HaveSet = [0x31, [[issuer_pub(32), target_pub(32)], ...]]
+Want    = [0x32, [[issuer_pub(32), target_pub(32)], ...]]
+Push    = [0x33, [wire_cert_bytes, ...]]
+```
+
+Each `wire_cert_bytes` is the canonical `RevocationCertificate`
+wire encoding (7-element CBOR array) so the receiver decodes,
+verifies, and ingests in one pass. `MAX_FRAME_BYTES = 16384`.
+
+Receive-side rules (`RevocationSyncRepository.ingest`):
+
+1. CBOR decode → silently drop malformed.
+2. `RevocationCertificate.verify(sodium)` → drop forgeries.
+3. `trustGraph.trustLevel(issuer)`:
+   - `Unknown` or `Quarantined` → drop silently (the gate that
+     blocks an attacker from impersonating a revoker).
+   - Otherwise → proceed.
+4. Upsert into `revocation` table; call
+   `TrustGraph.ingestRevocation(cert)` so subsequent certs in the
+   same batch see the freshly-Quarantined issuer.
+
+A revocation-round failure after a successful messaging round is
+non-fatal — the messaging exchange is preserved, and propagation
+retries the next time the same two peers sync. See
+SECURITY-MODEL.md §3.6 for the full threat-model write-up.
+
 ## 6. Service UUIDs
 
 The BLE service UUID and WiFi Direct service-info hash are both derived

@@ -79,6 +79,20 @@ primitives).
 | Lifecycle | `androidx.lifecycle:lifecycle-runtime-ktx` / `-runtime-compose` / `-viewmodel-compose` | `2.7.0` | Apache-2.0 | |
 | Splash | `androidx.core:core-splashscreen` | `1.0.1` | Apache-2.0 | |
 
+### Cryptocurrency (planned, v0.7.0b)
+
+| Concern | Library | Version | License | Notes |
+|---------|---------|---------|---------|-------|
+| Monero JNI binding | Monerujo `monero-android` (m2049r/xmrwallet) | TBD (vendored AAR or fork+JitPack) | GPL-3.0 | The only battle-tested Android binding for Monero. Bundled in `:feature:monero-wallet` only — but the resulting combined APK ships under GPLv3. F-Droid distributes GPL-licensed apps cleanly. Maintainer note: vendor + reproducible-build evaluation pending. |
+| Monero RPC transport | None — hand-rolled HTTP/1.1 over the existing `Socks5` dialer | — | — | OkHttp over `Proxy.SOCKS` resolves hostnames JVM-side, which would leak the remote node's `.onion`/host to the device DNS resolver. The minimal in-tree dialer uses SOCKS5 DOMAINNAME (ATYP=0x03) so Tor handles resolution. |
+
+**Rejected for the wallet:** Bitcoin / Lightning client libraries
+(default-transparent ledger violates the project ethos);
+`mymonero-core-cpp` (less actively maintained than Monerujo's
+fork); pure-Kotlin RPC-only clients (cannot scan blocks or sign
+transactions locally — they require trusting a wallet-RPC server
+with the view + spend keys).
+
 ### Build
 
 | Tool | Version | Notes |

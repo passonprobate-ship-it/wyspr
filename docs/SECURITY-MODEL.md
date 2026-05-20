@@ -170,8 +170,48 @@ Reason codes are an enumeration (`COMPROMISED`, `INFILTRATOR`, `INACTIVE`,
 Local revocation is fully implemented: the cert is persisted, the
 target is added to `TrustGraphImpl.revoked`, and path search blocks
 the revoked vertex thereafter so quarantined members cannot launder
-trust for anyone downstream. Cross-peer revocation propagation
-through sync is the next-sprint item (see §7).
+trust for anyone downstream.
+
+**Cross-peer propagation (v0.6.6).** Revocations now flow between
+trusted peers via an anti-entropy sub-protocol that piggybacks on
+the same Noise transport as the messaging round. After messaging
+sync finishes, both peers exchange `RevocationSync` frames:
+
+```
+A                    B
+|── HaveSet ────────►|     (issuer, target) pairs we hold
+|◄── HaveSet ────────|
+|── Want ───────────►|     pairs we don't yet have
+|◄── Want ───────────|
+|── Push ───────────►|     wire-encoded certs the peer asked for
+|◄── Push ───────────|
+```
+
+CBOR tags 0x31 (HaveSet), 0x32 (Want), 0x33 (Push) — see
+PROTOCOLS.md §4 for the wire format.
+
+On receipt of each cert, [`RevocationSyncRepository.ingest`] runs
+four checks in order:
+
+1. **CBOR decode.** Malformed input rejected silently.
+2. **Signature verify.** Ed25519 `verify(signedBytes, signature,
+   issuer_pub)` must succeed. Forgeries dropped.
+3. **Issuer trust check.** If `trustGraph.trustLevel(issuer) ∈
+   {Unknown, Quarantined}`, drop silently. This is the security-
+   critical gate: an attacker who learns *any* TrustEdge cannot
+   impersonate its revoker because their pub key is not in any
+   honest peer's trust graph. A previously-trusted member who is
+   themselves later revoked cannot retroactively revoke others
+   because their own subsequent revocations will be rejected.
+4. **Persist + graph update.** The cert is upserted into the
+   `revocation` table and `TrustGraph.ingestRevocation` updates
+   the in-memory state, so the next cert in the same batch sees
+   the freshly Quarantined issuer.
+
+A failure of the revocation round after the messaging round
+already succeeded is non-fatal — the message exchange is
+preserved and the revocation propagation is retried the next time
+the two peers sync.
 
 There is **no un-revoke**; a quarantined identity must re-handshake
 from scratch with a clean key pair.
@@ -343,11 +383,11 @@ These decisions are not final and should be revisited before v1.0:
    community.
 2. **Provisional TTL** — should `PROVISIONAL` edges expire if not upgraded
    within N days? Currently they persist indefinitely.
-3. **Revocation propagation** — local revocation is implemented; the sync
-   side that ships `RevocationCertificate` envelopes between peers (with
-   the rule that an unknown revoker is silently ignored, so an attacker
-   who learns *any* TrustEdge cannot impersonate its revoker) is the
-   next-sprint deliverable.
+3. **Revocation propagation — RESOLVED (v0.6.6).** Receive-side rules
+   landed in §3.6 above. The remaining work is the two-device
+   hardware proof (the Alice→Bob→Carol scenario) — code is wired
+   but unproven on physical devices. Tracked as v0.6.6b in
+   NEXT-STEPS.md.
 4. **Group key rotation** — Vault groups have no rotation story yet;
    when a group member is revoked, do we re-encrypt or accept that
    their old reads were already cached?
@@ -359,3 +399,65 @@ These decisions are not final and should be revisited before v1.0:
    simultaneously available to the same peer pair, do we pick one or
    multiplex? Multiplexing helps reliability; it also widens the
    timing-correlation surface.
+
+## 9. Software Distribution Tiers
+
+Anti-platform distribution in three tiers, in order of who is
+trusted to host the bytes:
+
+| Tier | Channel | Operator trust |
+|---|---|---|
+| 1 | F-Droid + community mirrors | Single signing key (Keystone maintainer) |
+| 2 | Peer share (`feature:onboarding/share/`) | The trusted peer in front of you |
+| 3 | Onion mirror (future, v0.7.4) | Any peer with a known `.onion` |
+
+F-Droid is the canonical channel. Its mirror format is signed flat
+files over HTTPS, so any HTTPS endpoint can rehost the same APK
+under the same signing key — useful when fdroid.org itself is
+blocked. The peer-share path uses an in-flight self-signed cert
+verified against a QR-delivered fingerprint, so the recipient
+verifies the bytes against the same person they just trust-paired
+with. The onion-mirror path (deferred) lets joiners fetch the APK
+through the embedded Tor we already ship, without any uplift in
+trust beyond their existing trust graph.
+
+We will never ship to Google Play — see docs/FDROID.md §4.
+
+## 10. Cryptocurrency Wallet (Monero)
+
+Keystone bundles a Monero wallet as a utility module
+(`:feature:monero-wallet`, v0.7.0a scaffold landed; JNI crypto
+engine scheduled for v0.7.0b).
+
+Selection rationale: Monero is the only mainstream cryptocurrency
+whose default-private semantics align with the project's anti-
+metadata posture. BTC is rejected (default-transparent). ARRR has
+strong cryptography but a smaller ecosystem and platform risk on
+Komodo.
+
+### 10.1 Threat additions
+
+| Threat | Mitigation |
+|---|---|
+| Remote-node operator correlates the user's IP with view-key registration | Mandatory routing through the embedded Tor SOCKS proxy. Node never sees device IP. |
+| Hostile remote node returns false chain tip / withholds inbound transactions | Round-robin across a curated node pool; majority-rules tip check; tx submission to ≥2 nodes (v0.8.2). |
+| Spend key on disk → wallet drain on device compromise | Encrypted under the `KEYSTONE/v1/monero` HKDF subkey of the hardware-keystore identity. Wallet file unrecoverable after a keystore reset. |
+| View-key leak reveals every incoming payment | Per-community sub-wallets so a compromised view key exposes only one community's payment history. |
+| DNS leak of remote-node hostname | RPC client uses SOCKS5 DOMAINNAME (ATYP=0x03) — Tor resolves the hostname; the device's stub resolver never sees it. |
+| Hostile node streams gigabytes to OOM the wallet UI | Response body capped at 256 KB per request. |
+| Header smuggling via hostile node hostname | Hostnames validated to `[A-Za-z0-9.-]` at construction; no CR/LF can reach the HTTP layer. |
+
+### 10.2 Out of scope (deferred)
+
+- **Decoy quality.** Remote-node decoy selection is what the node
+  ships; we trust the daemon's `get_outs` to follow the standard
+  selection algorithm. A future hardening would have us choose
+  decoys client-side.
+- **Tx fingerprinting via signing time / hop count.** Not yet
+  measured; tracked separately.
+
+### 10.3 Licence note
+
+The combined APK shifts to GPLv3 once the JNI crypto binding is
+bundled in v0.7.0b. Keystone's other modules remain Apache-2.0;
+GPL contagion is contained to the distributed binary.
