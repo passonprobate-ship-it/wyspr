@@ -1,4 +1,4 @@
-package com.keystone.app.transport
+package com.keystone.core.transport
 
 import java.io.IOException
 import java.io.InputStream
@@ -7,7 +7,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 
 /**
- * Minimal SOCKS5 dialer for `.onion` destinations.
+ * Minimal SOCKS5 dialer for Tor destinations.
  *
  * Tor's local SOCKS5 proxy speaks RFC 1928 with one quirk: the
  * `DOMAINNAME` address type (0x03) is the only way to ask Tor to
@@ -22,8 +22,14 @@ import java.net.Socket
  * The returned [Socket] is fully connected end-to-end: caller may
  * read/write to the destination directly. Closing the socket tears
  * the circuit down on Tor's side too.
+ *
+ * Used by:
+ *  - `TorHiddenServiceTransport` in `:app` to dial peer `.onion:9091`
+ *    for Keystone-to-Keystone Noise sessions.
+ *  - `MoneroRpcClient` in `:feature:monero-wallet` to dial Monero
+ *    remote-node RPC endpoints (clearnet or `.onion`) through Tor.
  */
-internal object Socks5 {
+object Socks5 {
 
     /**
      * Open a TCP stream through Tor to [host]:[port]. Blocking — caller
@@ -123,8 +129,9 @@ internal object Socks5 {
 
     /**
      * RFC 1928 §6 reply-code names; helpful for diagnostics when Tor
-     * refuses to dial a `.onion` (e.g. the descriptor hasn't propagated
-     * to the directory hash ring yet).
+     * refuses to dial a destination (e.g. a `.onion` descriptor hasn't
+     * propagated to the directory hash ring yet, or the remote daemon
+     * is just down).
      */
     private fun replyName(rep: Int): String = when (rep) {
         0x01 -> "general SOCKS server failure"

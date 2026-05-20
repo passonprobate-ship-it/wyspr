@@ -4,6 +4,7 @@ import android.util.Log
 import com.keystone.core.identity.CommunityId
 import com.keystone.core.transport.Link
 import com.keystone.core.transport.PeerEndpoint
+import com.keystone.core.transport.Socks5
 import com.keystone.core.transport.TorBackend
 import com.keystone.core.transport.Transport
 import kotlinx.coroutines.CoroutineScope

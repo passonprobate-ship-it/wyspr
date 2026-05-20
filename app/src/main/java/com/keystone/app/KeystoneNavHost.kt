@@ -14,6 +14,7 @@ import com.keystone.feature.coordination.CoordinationRoot
 import com.keystone.feature.directory.DirectoryRoot
 import com.keystone.feature.marketplace.MarketplaceRoot
 import com.keystone.feature.messaging.MessagingRoot
+import com.keystone.feature.monero.MoneroWalletRoot
 import com.keystone.feature.onboarding.OnboardingRoot
 import com.keystone.feature.onboarding.screens.DiscoveryScreen
 import com.keystone.feature.vault.VaultRoot
@@ -111,6 +112,9 @@ fun KeystoneNavHost(
         composable(Routes.Directory) {
             DirectoryRoot()
         }
+        composable(Routes.Monero) {
+            MoneroWalletRoot()
+        }
     }
 }
 
@@ -122,4 +126,5 @@ object Routes {
     const val Coordination = "coordination"
     const val Directory = "directory"
     const val Messaging = "messaging"
+    const val Monero = "monero"
 }
