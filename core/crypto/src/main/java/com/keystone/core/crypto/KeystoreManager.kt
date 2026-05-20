@@ -296,18 +296,20 @@ class AndroidKeystoreManager(
             require(sodium.cryptoSignSeedKeypair(publicKey, secretKey, seed)) {
                 "libsodium cryptoSignSeedKeypair failed"
             }
-            // Side-channel hardening: pad message to nearest 32-byte boundary
-            // before signing. Ed25519 with libsodium is constant-time with
-            // respect to the key, not the message length. For fixed-size
-            // payloads (invitation certs) this doesn't matter, but arbitrary
-            // sync envelopes would leak the message length in timing.
-            val padded = if (message.size % 32 == 0) message else {
-                val padLen = 32 - (message.size % 32)
-                message.copyOf(message.size + padLen)
-            }
+            // Sign the exact bytes the verifier will check. Earlier
+            // revisions pre-padded `message` to a 32-byte boundary as a
+            // putative timing-side-channel defence, but every verifier
+            // (`cryptoSignVerifyDetached` over `signedBytes()`) checks
+            // the unpadded form — so the padding silently invalidated
+            // every signature. The padding was the wrong defence anyway:
+            // for fixed-size payloads (certs) it's pointless, and for
+            // variable-size payloads the length is observable on the
+            // wire regardless. Ed25519 itself is constant-time wrt the
+            // key, and message-length timing leakage at the SHA-512
+            // step is dwarfed by network jitter.
             val signature = ByteArray(Sign.BYTES)
             require(
-                sodium.cryptoSignDetached(signature, padded, padded.size.toLong(), secretKey)
+                sodium.cryptoSignDetached(signature, message, message.size.toLong(), secretKey)
             ) { "libsodium cryptoSignDetached failed" }
             return signature
         } finally {

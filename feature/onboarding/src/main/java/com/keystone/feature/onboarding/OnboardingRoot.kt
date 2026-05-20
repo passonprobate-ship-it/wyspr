@@ -70,6 +70,18 @@ fun OnboardingRoot(
     }
 
     when (val s = state) {
+        OnboardingViewModel.UiState.Booting -> {
+            // Brief startup probe — the ViewModel decides whether to
+            // advance to RolePicker (new install) or AlreadyOnboarded
+            // (returning user with a trust edge). Show nothing for the
+            // ~50–150ms this typically takes rather than flashing the
+            // RolePicker screen.
+        }
+
+        OnboardingViewModel.UiState.AlreadyOnboarded -> {
+            LaunchedEffect(Unit) { onContinueToWallet() }
+        }
+
         OnboardingViewModel.UiState.RolePicker ->
             RolePickerScreen(onPick = viewModel::pickRole)
 
@@ -89,7 +101,9 @@ fun OnboardingRoot(
             PairScreen(
                 identity = s.identity,
                 qrBase32 = s.base32,
+                peerQr = s.peerQr,
                 onPeerScanned = viewModel::onPeerQrScanned,
+                onContinue = viewModel::onContinueFromPair,
                 onRefreshQr = viewModel::refreshQr,
                 onContinueToWallet = onContinueToWallet,
                 onShareApp = { sideTrip = SideTrip.ShareApp },

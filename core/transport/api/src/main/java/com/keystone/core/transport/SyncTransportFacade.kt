@@ -39,6 +39,22 @@ interface SyncTransportFacade {
     fun acceptedLinks(): Flow<Link>
 
     /**
+     * Close + discard any inbound Links currently buffered in the
+     * accept channels. Called by the responder side immediately
+     * before subscribing to [acceptedLinks] in a new sync round.
+     *
+     * The Tor accept channel persists across rounds (see the
+     * [TransportSelector.stopAll] kdoc) which means it can hold
+     * stale inbounds: connections that completed in a previous
+     * round, or were queued by the Tor daemon while our listener
+     * was bound but no collector was actively reading. If a fresh
+     * round picks up a stale Link, the peer that produced that
+     * Link is long gone and the Noise XX read on the responder
+     * side hangs forever.
+     */
+    fun drainStaleAccepted()
+
+    /**
      * Suspend until a BLE peer is discovered AND a Link to it is
      * established. Honours coroutine cancellation — the loser of a
      * race against [dialFirstKnownOnion] or [acceptedLinks] is

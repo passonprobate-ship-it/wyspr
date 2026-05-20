@@ -176,12 +176,29 @@ private fun ThreadRowView(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(
-                    row.fingerprint.toString(),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                )
+                val name = row.displayName?.takeIf { it.isNotBlank() }
+                if (name != null) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            name,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                        )
+                        Text(
+                            row.fingerprint.toString(),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    Text(
+                        row.fingerprint.toString(),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                    )
+                }
                 row.lastAt?.let {
                     Text(
                         DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it * 1000)),

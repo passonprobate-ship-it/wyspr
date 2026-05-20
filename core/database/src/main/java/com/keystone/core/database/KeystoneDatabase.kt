@@ -2,6 +2,7 @@ package com.keystone.core.database
 
 import com.keystone.core.database.dao.AccountDao
 import com.keystone.core.database.dao.CommunityMembershipDao
+import com.keystone.core.database.dao.ContactDao
 import com.keystone.core.database.dao.CurrencyEnvelopeDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.RevocationDao
@@ -53,4 +54,5 @@ interface KeystoneDatabase {
     val currencyEnvelopeDao: CurrencyEnvelopeDao
     val communityMembershipDao: CommunityMembershipDao
     val messageDao: MessageDao
+    val contactDao: ContactDao
 }

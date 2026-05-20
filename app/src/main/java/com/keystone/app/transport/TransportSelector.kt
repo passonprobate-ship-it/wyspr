@@ -13,6 +13,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
 
 /**
  * Façade that owns the BLE and Tor transports and the trust-edge
@@ -42,12 +43,26 @@ class TransportSelector(
 ) : SyncTransportFacade {
 
     override suspend fun startAll(communityId: CommunityId) {
+        // [TorHsTransport.start] is idempotent — the second call within
+        // a session returns early if the listener is already up. We
+        // exploit that to keep the loopback listener bound across sync
+        // rounds (see [stopAll]) so we don't fight kernel port-reuse
+        // delays on every retry.
         torTransport.start(communityId)
         bleTransport.start(communityId)
     }
 
     override suspend fun stopAll() {
-        runCatching { torTransport.stop() }
+        // Intentionally leave [torTransport] running. Per-round teardown
+        // is what produced the EADDRINUSE bind storm: the OS kept
+        // 127.0.0.1:9091 reserved for ~10s after [ServerSocket.close],
+        // even with SO_REUSEADDR set, presumably because Tor itself
+        // (or its forwarding rules) holds a transient reference to the
+        // forwarded socket. The loopback listener is cheap to keep
+        // alive — inbound connections from the .onion forwarder simply
+        // queue on the accept channel until the next sync round
+        // consumes them via [acceptedLinks]. The BLE radio is the
+        // expensive one and continues to start/stop per round.
         runCatching { bleTransport.stop() }
     }
 
@@ -60,6 +75,17 @@ class TransportSelector(
      */
     override fun acceptedLinks(): Flow<Link> =
         merge(torTransport.acceptedLinks(), bleTransport.acceptedLinks())
+            .onEach { Log.d(TAG, "acceptedLinks: inbound link arrived") }
+
+    /**
+     * Drop any inbound Links sitting in the Tor accept channel from
+     * before this round started. BLE doesn't need this — its
+     * transport restarts every round so its accept channel is always
+     * fresh.
+     */
+    override fun drainStaleAccepted() {
+        torTransport.drainAccepted()
+    }
 
     /**
      * Wait for a BLE peer to advertise, then connect to it. The two
@@ -69,7 +95,15 @@ class TransportSelector(
      */
     override suspend fun bleDiscoverAndConnect(): Link {
         val endpoint = bleTransport.discovered().first()
-        return bleTransport.connect(endpoint)
+        Log.d(TAG, "bleDiscoverAndConnect: discovered ${endpoint.opaqueAddress}, dialing")
+        return try {
+            bleTransport.connect(endpoint).also {
+                Log.d(TAG, "bleDiscoverAndConnect: dialed link to ${endpoint.opaqueAddress}")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "bleDiscoverAndConnect: connect to ${endpoint.opaqueAddress} failed: ${t::class.simpleName}: ${t.message}")
+            throw t
+        }
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.keystone.core.trust
 
+import android.util.Log
 import com.goterl.lazysodium.LazySodiumAndroid
 import com.goterl.lazysodium.interfaces.Box
 import com.keystone.core.crypto.Cbor
@@ -18,6 +19,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withTimeoutOrNull
+
+private const val TAG_HS = "HandshakeProtocol"
+private fun ByteArray.hexHead(n: Int = 6): String =
+    take(n).joinToString("") { "%02x".format(it) } + "…"
 
 /**
  * The Inviter mints, scans, runs Noise XX, signs an InvitationCertificate
@@ -280,6 +285,15 @@ private class RealSession(
                         now = clock(),
                         random = random,
                     )
+                    Log.d(
+                        TAG_HS,
+                        "Inviter: issued cert " +
+                            "inviterPub=${cert.inviterPub.bytes.hexHead()} " +
+                            "inviteePub=${cert.inviteePub.bytes.hexHead()} " +
+                            "community=${cert.communityId.bytes.hexHead()} " +
+                            "issuedAt=${cert.issuedAt} expiresAt=${cert.expiresAt} " +
+                            "sigLen=${cert.signature.size} wireLen=${cert.wireBytes().size}",
+                    )
                     sendFrame(noise.encrypt(cert.wireBytes()))
                     // Invitee echoes an ack (empty payload) — confirms it
                     // received and accepted. Any byte != 0 means rejected.
@@ -302,29 +316,59 @@ private class RealSession(
                 HandshakeProtocol.Role.Invitee -> {
                     val rawCert = receiveFrame()
                         ?.let { noise.decrypt(it) }
-                        ?: return abort(HandshakeSession.AbortReason.TransportFailed)
+                        ?: run {
+                            Log.w(TAG_HS, "Invitee: cert frame missing (transport failed)")
+                            return abort(HandshakeSession.AbortReason.TransportFailed)
+                        }
+                    Log.d(TAG_HS, "Invitee: received rawCert len=${rawCert.size}")
                     val cert = runCatching { InvitationCertificate.fromWire(rawCert) }
-                        .getOrElse { return abort(HandshakeSession.AbortReason.SignatureInvalid) }
+                        .getOrElse {
+                            Log.w(TAG_HS, "Invitee: fromWire parse failed: ${it::class.simpleName}: ${it.message}")
+                            return abort(HandshakeSession.AbortReason.SignatureInvalid)
+                        }
+                    Log.d(
+                        TAG_HS,
+                        "Invitee: parsed cert " +
+                            "inviterPub=${cert.inviterPub.bytes.hexHead()} " +
+                            "inviteePub=${cert.inviteePub.bytes.hexHead()} " +
+                            "community=${cert.communityId.bytes.hexHead()} " +
+                            "issuedAt=${cert.issuedAt} expiresAt=${cert.expiresAt} " +
+                            "sigLen=${cert.signature.size} now=${clock()}",
+                    )
                     if (cert.issuedAt > clock() + CLOCK_SKEW_SECONDS) {
+                        Log.w(TAG_HS, "Invitee: cert issuedAt in the future (issuedAt=${cert.issuedAt} now=${clock()} skew=$CLOCK_SKEW_SECONDS)")
                         return abort(HandshakeSession.AbortReason.CertificateExpired)
                     }
-                    // Symmetric clock-skew tolerance: the cert is
-                    // considered expired only once we are MORE than
-                    // CLOCK_SKEW_SECONDS past its expiresAt. Without
-                    // this, an Invitee whose clock is a few seconds
-                    // ahead of the Inviter would reject a freshly-
-                    // issued cert that verify() still accepts.
                     if (cert.expiresAt + CLOCK_SKEW_SECONDS <= clock()) {
+                        Log.w(TAG_HS, "Invitee: cert expired (expiresAt=${cert.expiresAt} now=${clock()} skew=$CLOCK_SKEW_SECONDS)")
                         return abort(HandshakeSession.AbortReason.CertificateExpired)
                     }
-                    if (!cert.inviterPub.bytes.contentEquals(peerPub.bytes) ||
-                        !cert.inviteePub.bytes.contentEquals(localPub.bytes) ||
-                        !cert.communityId.bytes.contentEquals(localQr.communityId.bytes)) {
+                    val inviterMatches = cert.inviterPub.bytes.contentEquals(peerPub.bytes)
+                    val inviteeMatches = cert.inviteePub.bytes.contentEquals(localPub.bytes)
+                    val communityMatches = cert.communityId.bytes.contentEquals(localQr.communityId.bytes)
+                    if (!inviterMatches || !inviteeMatches || !communityMatches) {
+                        Log.w(
+                            TAG_HS,
+                            "Invitee: cert key/community mismatch — " +
+                                "inviterMatches=$inviterMatches " +
+                                "(cert=${cert.inviterPub.bytes.hexHead()} expected=${peerPub.bytes.hexHead()}) " +
+                                "inviteeMatches=$inviteeMatches " +
+                                "(cert=${cert.inviteePub.bytes.hexHead()} expected=${localPub.bytes.hexHead()}) " +
+                                "communityMatches=$communityMatches " +
+                                "(cert=${cert.communityId.bytes.hexHead()} expected=${localQr.communityId.bytes.hexHead()})",
+                        )
                         return abort(HandshakeSession.AbortReason.SignatureInvalid)
                     }
                     if (!cert.verify(sodium, clock(), CLOCK_SKEW_SECONDS)) {
+                        Log.w(
+                            TAG_HS,
+                            "Invitee: cert.verify() returned false — " +
+                                "issuedAt=${cert.issuedAt} expiresAt=${cert.expiresAt} now=${clock()} " +
+                                "sigLen=${cert.signature.size} inviterPub=${cert.inviterPub.bytes.hexHead()}",
+                        )
                         return abort(HandshakeSession.AbortReason.SignatureInvalid)
                     }
+                    Log.d(TAG_HS, "Invitee: cert verified ✓, sending ACK")
                     sendFrame(noise.encrypt(byteArrayOf(ACK_OK)))
                     TrustEdge(
                         from = peerPub,
@@ -345,6 +389,7 @@ private class RealSession(
             // AEADBadTagException extends BadPaddingException; either way
             // it's an auth failure → the peer is lying or wired wrong.
             // Anything else is treated as a transport-level issue.
+            Log.w(TAG_HS, "run(): caught ${t::class.simpleName}: ${t.message}", t)
             return abort(
                 if (t is javax.crypto.BadPaddingException) {
                     HandshakeSession.AbortReason.SignatureInvalid

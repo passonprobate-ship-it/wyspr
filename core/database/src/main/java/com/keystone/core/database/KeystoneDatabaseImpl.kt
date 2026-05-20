@@ -28,6 +28,19 @@ class KeystoneDatabaseImpl(
 
     @Volatile
     private var room: KeystoneRoomDatabase? = null
+
+    /**
+     * The DB passphrase, kept alive for the lifetime of the open Room
+     * database. `SupportOpenHelperFactory` stores a reference (not a
+     * copy) of this array and consults it again every time the
+     * connection pool spins up a non-primary connection — zeroing it
+     * after the primary connection opens (as earlier revisions did)
+     * left the pool unable to decrypt on the next read and crashed
+     * any DAO that opened a secondary connection with SQLCipher's
+     * "file is not a database" error. Zeroed in [close]/[wipe].
+     */
+    @Volatile
+    private var passphrase: ByteArray? = null
     private val openLock = Mutex()
 
     override val isOpen: Boolean get() = room?.isOpen == true
@@ -38,6 +51,7 @@ class KeystoneDatabaseImpl(
     override val currencyEnvelopeDao get() = requireOpen().currencyEnvelopeDao()
     override val communityMembershipDao get() = requireOpen().communityMembershipDao()
     override val messageDao get() = requireOpen().messageDao()
+    override val contactDao get() = requireOpen().contactDao()
 
     override suspend fun open() = openLock.withLock {
         withContext(Dispatchers.IO) {
@@ -45,24 +59,31 @@ class KeystoneDatabaseImpl(
             // Load the native sqlcipher library before constructing any helpers.
             // System.loadLibrary is idempotent per classloader.
             System.loadLibrary("sqlcipher")
-            val passphrase = keystore.deriveSubkey(DB_KEY_INFO, length = 32)
-            try {
-                val factory = SupportOpenHelperFactory(passphrase)
-                room = Room.databaseBuilder(
-                    appContext,
-                    KeystoneRoomDatabase::class.java,
-                    DB_FILENAME,
-                )
-                    .openHelperFactory(factory)
-                    .fallbackToDestructiveMigration()
-                    .build()
-                // Touch the DB to force open + key check now, not on first
-                // DAO call. If the passphrase is wrong (e.g. keystore was
-                // rotated externally), this throws here, not silently later.
-                room?.openHelper?.writableDatabase
-            } finally {
-                passphrase.fill(0)
-            }
+            val pp = keystore.deriveSubkey(DB_KEY_INFO, length = 32)
+            // Stash the passphrase reference; the factory holds it for
+            // the lifetime of every connection it spins up. See the
+            // [passphrase] field comment for why we can't zero it here.
+            passphrase = pp
+            val factory = SupportOpenHelperFactory(pp)
+            val built = Room.databaseBuilder(
+                appContext,
+                KeystoneRoomDatabase::class.java,
+                DB_FILENAME,
+            )
+                .openHelperFactory(factory)
+                // Real migrations from v5 onwards so the first
+                // hardware-proven pair (2026-05-20) survives schema
+                // bumps. Earlier versions still fall back to a
+                // destructive migration since no real install was
+                // ever on those.
+                .addMigrations(MIGRATION_5_6)
+                .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
+                .build()
+            room = built
+            // Touch the DB to force open + key check now, not on first
+            // DAO call. If the passphrase is wrong (e.g. keystore was
+            // rotated externally), this throws here, not silently later.
+            built.openHelper.writableDatabase
         }
     }
 
@@ -70,6 +91,8 @@ class KeystoneDatabaseImpl(
         withContext(Dispatchers.IO) {
             room?.close()
             room = null
+            passphrase?.fill(0)
+            passphrase = null
         }
     }
 
@@ -78,6 +101,8 @@ class KeystoneDatabaseImpl(
             withContext(Dispatchers.IO) {
                 room?.close()
                 room = null
+                passphrase?.fill(0)
+                passphrase = null
                 // Delete the SQLite file plus the WAL + SHM sidecars Room may
                 // leave next to it. deleteDatabase handles all three atomically.
                 appContext.deleteDatabase(DB_FILENAME)

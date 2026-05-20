@@ -1,5 +1,6 @@
 package com.keystone.feature.messaging.sync
 
+import android.util.Log
 import com.keystone.core.crypto.NoiseSession
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.transport.Link
@@ -43,40 +44,70 @@ internal class MessageSyncEngine(
     )
 
     suspend fun run(): Result {
+        Log.d(TAG, "engine.run: start (role=$role)")
         var pushed = 0
         var received = 0
-        when (role) {
-            HandshakeRole.Initiator -> {
-                pushed += pushPending()
-                received += awaitPushAndAck()
-                exchangeReadReceipts()
-                sendFrame(MessageSyncFrame.End)
-                awaitEndOrNothing()
+        try {
+            when (role) {
+                HandshakeRole.Initiator -> {
+                    Log.d(TAG, "engine.run(Initiator): pushPending")
+                    pushed += pushPending()
+                    Log.d(TAG, "engine.run(Initiator): awaitPushAndAck")
+                    received += awaitPushAndAck()
+                    Log.d(TAG, "engine.run(Initiator): exchangeReadReceipts")
+                    exchangeReadReceipts()
+                    Log.d(TAG, "engine.run(Initiator): sending End")
+                    sendFrame(MessageSyncFrame.End)
+                    Log.d(TAG, "engine.run(Initiator): awaitEndOrNothing")
+                    awaitEndOrNothing()
+                }
+                HandshakeRole.Responder -> {
+                    Log.d(TAG, "engine.run(Responder): awaitPushAndAck")
+                    received += awaitPushAndAck()
+                    Log.d(TAG, "engine.run(Responder): pushPending")
+                    pushed += pushPending()
+                    Log.d(TAG, "engine.run(Responder): exchangeReadReceipts")
+                    exchangeReadReceipts()
+                    Log.d(TAG, "engine.run(Responder): awaitEndOrNothing")
+                    awaitEndOrNothing()
+                    Log.d(TAG, "engine.run(Responder): sending End")
+                    sendFrame(MessageSyncFrame.End)
+                }
             }
-            HandshakeRole.Responder -> {
-                received += awaitPushAndAck()
-                pushed += pushPending()
-                exchangeReadReceipts()
-                awaitEndOrNothing()
-                sendFrame(MessageSyncFrame.End)
-            }
+            Log.d(TAG, "engine.run: done (pushed=$pushed received=$received)")
+        } catch (t: Throwable) {
+            Log.w(TAG, "engine.run: failed (${t.javaClass.simpleName}: ${t.message})")
+            throw t
         }
         return Result(pushedCount = pushed, receivedCount = received)
     }
 
     /**
-     * After the Push/Ack round both sides exchange read receipts:
-     * each side sends [MessageSyncFrame.Read] listing the ids of
-     * inbound messages from the peer that the local user has now
-     * viewed. The peer's response uses [MessageSyncFrame.Ack] to
-     * confirm receipt; we then mark our outbound rows for those
-     * ids as `read`, and tell the store our own inbound viewed
-     * receipts have been delivered.
+     * After the Push/Ack round both sides exchange read receipts.
+     * The Initiator sends first / receives second; the Responder
+     * receives first / sends second — same shape as
+     * pushPending/awaitPushAndAck. A symmetric send-first design
+     * deadlocked here (both sides sent Read, both then expected
+     * Ack but got the peer's Read frame, surfaced as
+     * "expected Ack of Read, got Read" in run 21).
      */
     private suspend fun exchangeReadReceipts() {
+        when (role) {
+            HandshakeRole.Initiator -> {
+                sendOwnReadFrame()
+                awaitPeerReadFrame()
+            }
+            HandshakeRole.Responder -> {
+                awaitPeerReadFrame()
+                sendOwnReadFrame()
+            }
+        }
+    }
+
+    /** Send our Read frame, then await peer's Ack of it. */
+    private suspend fun sendOwnReadFrame() {
         val pendingReads = store.pendingReadAckFor(peerPub)
         sendFrame(MessageSyncFrame.Read(pendingReads.map { it.id }))
-        // Wait for peer's Ack confirming receipt of our Read frame.
         val ackFrame = receiveFrame() ?: return
         val ack = (ackFrame as? MessageSyncFrame.Ack)
             ?: error("expected Ack of Read, got ${ackFrame::class.simpleName}")
@@ -87,8 +118,10 @@ internal class MessageSyncEngine(
         if (confirmedReadAcks.isNotEmpty()) {
             store.markReadAcked(confirmedReadAcks)
         }
+    }
 
-        // Receive peer's Read frame — the messages they've now read.
+    /** Await peer's Read frame, apply it, then send our Ack. */
+    private suspend fun awaitPeerReadFrame() {
         val peerReadFrame = receiveFrame() ?: return
         val peerRead = (peerReadFrame as? MessageSyncFrame.Read)
             ?: error("expected Read, got ${peerReadFrame::class.simpleName}")
@@ -157,15 +190,25 @@ internal class MessageSyncEngine(
 
     private suspend fun sendFrame(frame: MessageSyncFrame) {
         val bytes = frame.wireBytes()
-        link.send(noise.encrypt(bytes))
+        val ct = noise.encrypt(bytes)
+        Log.d(TAG, "sendFrame: ${frame::class.simpleName} plaintext=${bytes.size} ct=${ct.size}")
+        link.send(ct)
+        Log.d(TAG, "sendFrame: ${frame::class.simpleName} link.send returned")
     }
 
     private suspend fun receiveFrame(): MessageSyncFrame? {
+        Log.d(TAG, "receiveFrame: awaiting (timeout=${frameTimeoutMs}ms)")
         val ciphertext = withTimeoutOrNull(frameTimeoutMs) {
             link.incoming().firstOrNull()
-        } ?: return null
+        } ?: run {
+            Log.w(TAG, "receiveFrame: timeout / channel closed")
+            return null
+        }
+        Log.d(TAG, "receiveFrame: got ciphertext (${ciphertext.size} bytes), decrypting")
         val plaintext = noise.decrypt(ciphertext)
-        return MessageSyncFrame.fromWire(plaintext)
+        val frame = MessageSyncFrame.fromWire(plaintext)
+        Log.d(TAG, "receiveFrame: decoded ${frame::class.simpleName}")
+        return frame
     }
 
     private fun com.keystone.core.database.entities.MessageEntity.toEnvelope(): MessageEnvelope =
@@ -181,5 +224,6 @@ internal class MessageSyncEngine(
     companion object {
         /** 30s/frame budget — generous for slow BLE, tight against hostile stall. */
         const val DEFAULT_FRAME_TIMEOUT_MS: Long = 30_000L
+        private const val TAG = "SyncEngine"
     }
 }

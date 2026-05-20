@@ -1,5 +1,6 @@
 package com.keystone.feature.messaging.sync
 
+import android.util.Log
 import com.goterl.lazysodium.LazySodiumAndroid
 import com.keystone.core.crypto.KeystoreManager
 import com.keystone.core.crypto.NoiseSession
@@ -16,16 +17,19 @@ import com.keystone.core.trust.runRevocationSyncRound
 import com.keystone.feature.messaging.MessageStore
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.random.Random
 
 /**
  * One-shot peer message sync. User taps "Sync now" on the
@@ -78,6 +82,30 @@ class MessageSyncService @Inject constructor(
 
     private val lock = Mutex()
 
+    /**
+     * Class-level scope for the race deferreds in [firstAvailableLink].
+     *
+     * Critical that this is NOT a child of the caller's job. Earlier
+     * iterations created the SupervisorJob inside `firstAvailableLink`
+     * with `currentCoroutineContext()[Job]` as parent, which made it
+     * a child of the surrounding `withTimeoutOrNull` body. When the
+     * body returned its [LinkOutcome], structured-concurrency rules
+     * still kept `withTimeoutOrNull` blocked waiting on the
+     * SupervisorJob to complete — which it couldn't, because two
+     * losing deferreds were stuck in non-interruptible I/O (the Tor
+     * SOCKS5 dial in particular). The 12s timeout would then fire
+     * EVEN THOUGH THE OUTCOME WAS ALREADY ASSIGNED, and the round
+     * reported "timed out waiting for a link" despite the select
+     * having succeeded ~10s earlier.
+     *
+     * Detaching the scope from the caller lets `firstAvailableLink`
+     * return immediately after the select; losing deferreds drain in
+     * the background on the class scope. We cancel them via
+     * `Deferred.cancel()` in a `finally` so they exit ASAP, but
+     * their actual exit isn't on the round's critical path.
+     */
+    private val raceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     data class Result(
         val attemptedPeers: Int,
         val pushedMessages: Int,
@@ -95,42 +123,102 @@ class MessageSyncService @Inject constructor(
     }
 
     private suspend fun runOnceInternal(timeoutMs: Long): Result {
+        Log.d(TAG_SYNC, "runOnce: start (timeoutMs=$timeoutMs)")
         if (!database.isOpen) database.open()
         val ownIdentity = runCatching { keystore.loadOrCreateIdentityKey() }.getOrNull()
-            ?: return Result(0, 0, 0, errorReason = "Could not load local identity")
+            ?: run {
+                Log.w(TAG_SYNC, "runOnce: could not load local identity")
+                return Result(0, 0, 0, errorReason = "Could not load local identity")
+            }
         val ownPub = PublicKey(ownIdentity.publicKey)
 
         val membership = database.communityMembershipDao.firstOrNull()
-            ?: return Result(0, 0, 0, errorReason = "No active community on this device")
+            ?: run {
+                Log.w(TAG_SYNC, "runOnce: no community membership")
+                return Result(0, 0, 0, errorReason = "No active community on this device")
+            }
         val communityId = CommunityId(membership.communityId)
 
         // Build the X25519 lookup table once — the channel-binding
         // step compares the peer's noise static against these.
         val peerLookup = buildPeerLookup(ownPub)
         if (peerLookup.isEmpty()) {
+            Log.w(TAG_SYNC, "runOnce: no paired peers")
             return Result(0, 0, 0, errorReason = "No paired peers — complete a handshake first")
         }
+        Log.d(TAG_SYNC, "runOnce: ${peerLookup.size} paired peer(s), community=${communityId.bytes.take(4).joinToString("") { "%02x".format(it) }}…, starting transports")
+
+        // Pick a role bias from the lexicographic compare of own pub
+        // vs. the first paired peer's pub. Both phones reach the same
+        // ordering (compare is total), so they reach opposite biases.
+        // This breaks the symmetric race: smaller-pub side dials,
+        // larger-pub side accepts. With multiple peers we still pick
+        // a single bias for the round — the race only matters when
+        // both sides happen to fire simultaneously, which is the
+        // first-paired-peer case in practice. Fallbacks still cover
+        // asymmetric multi-peer rounds.
+        val anyPeerPub = peerLookup.values.first().bytes
+        val preferInitiator = compareLex(ownPub.bytes, anyPeerPub) < 0
+        Log.d(TAG_SYNC, "runOnce: preferInitiator=$preferInitiator")
 
         transportLifecycle.acquireForSharing()
         try {
             transports.startAll(communityId)
-            val outcome = withTimeoutOrNull(timeoutMs) { firstAvailableLink(ownPub.bytes) }
-                ?: return Result(0, 0, 0, errorReason = "No peer in range")
+            Log.d(TAG_SYNC, "runOnce: transports started, waiting for first link (timeout ${timeoutMs}ms)")
+            val outcome = withTimeoutOrNull(timeoutMs) { firstAvailableLink(ownPub.bytes, preferInitiator) }
+                ?: run {
+                    Log.w(TAG_SYNC, "runOnce: timed out waiting for a link")
+                    return Result(0, 0, 0, errorReason = "No peer in range")
+                }
             val link = outcome.link
             val role = outcome.role
+            Log.d(TAG_SYNC, "runOnce: got link via $role")
             try {
-                val sessionResult = openSessionAndSync(
-                    role = role,
-                    link = link,
-                    communityId = communityId,
-                    ownPub = ownPub,
-                    peerLookup = peerLookup,
-                ) ?: return Result(
-                    attemptedPeers = 1,
-                    pushedMessages = 0,
-                    receivedMessages = 0,
-                    errorReason = "Peer not recognised (channel-binding failed)",
-                )
+                // Wrap the Noise XX handshake + message exchange in
+                // a timeout. Without this, a half-dead Link (e.g. a
+                // Tor circuit that completed on the responder side
+                // but failed on the initiator side, leaving the
+                // responder reading m1 from an initiator that won't
+                // send) would hang here forever — holding the round
+                // mutex and blocking every subsequent runOnce call.
+                // The auto-sync loop then goes silent. The timeout
+                // releases the lock and lets the next round retry.
+                //
+                // Outer null = timed out; inner null = channel
+                // binding rejected the peer. Distinguish them so the
+                // user-facing error is accurate.
+                val sessionOutcome: SessionOutcome = withTimeoutOrNull(SESSION_TIMEOUT_MS) {
+                    val r = openSessionAndSync(
+                        role = role,
+                        link = link,
+                        communityId = communityId,
+                        ownPub = ownPub,
+                        peerLookup = peerLookup,
+                    )
+                    if (r == null) SessionOutcome.NotRecognised else SessionOutcome.Ok(r)
+                } ?: SessionOutcome.TimedOut
+                val sessionResult = when (sessionOutcome) {
+                    is SessionOutcome.Ok -> sessionOutcome.result
+                    SessionOutcome.NotRecognised -> {
+                        Log.w(TAG_SYNC, "runOnce: peer not recognised (channel-binding failed)")
+                        return Result(
+                            attemptedPeers = 1,
+                            pushedMessages = 0,
+                            receivedMessages = 0,
+                            errorReason = "Peer not recognised (channel-binding failed)",
+                        )
+                    }
+                    SessionOutcome.TimedOut -> {
+                        Log.w(TAG_SYNC, "runOnce: session timed out (${SESSION_TIMEOUT_MS}ms — peer didn't complete Noise XX)")
+                        return Result(
+                            attemptedPeers = 1,
+                            pushedMessages = 0,
+                            receivedMessages = 0,
+                            errorReason = "Peer didn't respond in time",
+                        )
+                    }
+                }
+                Log.d(TAG_SYNC, "runOnce: session opened, pushed=${sessionResult.engineResult.pushedCount} received=${sessionResult.engineResult.receivedCount}")
                 if (sessionResult.engineResult.receivedCount > 0) {
                     postInboundNotification(sessionResult.peerPub)
                 }
@@ -189,46 +277,115 @@ class MessageSyncService @Inject constructor(
      * [awaitCancellation] when Tor isn't viable, so the BLE-only
      * first-pairing case isn't slowed down.
      */
-    private suspend fun firstAvailableLink(ownPubBytes: ByteArray): LinkOutcome = coroutineScope {
-        val bleConnectDeferred = async {
+    private suspend fun firstAvailableLink(
+        ownPubBytes: ByteArray,
+        preferInitiator: Boolean,
+    ): LinkOutcome {
+        // HARD role bias derived from pubkey compare. We tried a soft
+        // bias (delay the disfavoured branch) but that didn't work
+        // against the realities of BLE + Tor:
+        //
+        //   - The accept channel can have stale buffered links from
+        //     prior rounds (Tor listener stays alive across rounds).
+        //     A soft delay just shifts WHEN the accept consumes the
+        //     stale link, not whether it does.
+        //   - BLE scan + discover + dial takes 5-10s before the dial
+        //     branch can win. Any 2-3s accept delay loses to even
+        //     a moderately stale inbound.
+        //
+        // Hard bias: smaller-pub side runs DIAL ONLY (no accept
+        // branch). Larger-pub side runs ACCEPT ONLY (no dial). Both
+        // sides agree on roles because compareLex is total, and
+        // neither side can accidentally take the wrong role from a
+        // stale buffered link.
+        //
+        // Cost: no automatic fallback if the favoured branch fails.
+        // But that's actually a feature — a failed round just times
+        // out cleanly and the auto-sync loop retries 8s later. No
+        // silent role flip.
+        val outcome: LinkOutcome = if (preferInitiator) {
+            Log.d(TAG_SYNC, "firstAvailableLink: dial-only mode")
+            dialOnly(ownPubBytes)
+        } else {
+            Log.d(TAG_SYNC, "firstAvailableLink: accept-only mode")
+            acceptOnly()
+        }
+        Log.d(TAG_SYNC, "firstAvailableLink: returning (role=${outcome.role})")
+        return outcome
+    }
+
+    /**
+     * Initiator side: race BLE discover+connect and Tor dial. First
+     * to a Link wins; the loser is cancelled. No accept branch — if
+     * neither dial succeeds, the round times out cleanly and the
+     * auto-sync loop tries again.
+     */
+    private suspend fun dialOnly(ownPubBytes: ByteArray): LinkOutcome {
+        val bleConnectDeferred = raceScope.async {
+            delay(Random.nextLong(0, DIAL_JITTER_MS))
             val link = transports.bleDiscoverAndConnect()
             LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
         }
-        val torDialDeferred = async {
+        val torDialDeferred = raceScope.async {
+            delay(Random.nextLong(0, DIAL_JITTER_MS))
             val link = transports.dialFirstKnownOnion(ownPubBytes)
                 ?: awaitCancellation()
             LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
         }
-        val acceptDeferred = async {
-            val link = transports.acceptedLinks().first()
-            LinkOutcome(link, MessageSyncEngine.HandshakeRole.Responder)
-        }
-        val outcome = kotlinx.coroutines.selects.select<LinkOutcome> {
-            bleConnectDeferred.onAwait { it }
-            torDialDeferred.onAwait { it }
-            acceptDeferred.onAwait { it }
-        }
-        // Three branches, one winner. Each loser is in one of two
-        // states: still suspended (cancel it) or already completed
-        // in the same tick as the winner (close its dangling Link
-        // — cancel() after completion doesn't reclaim the resource).
-        for (d in listOf(bleConnectDeferred, torDialDeferred, acceptDeferred)) {
-            if (d.isCompleted) {
-                val loser = runCatching { d.getCompleted() }.getOrNull() ?: continue
-                if (loser.link !== outcome.link) {
-                    launch { runCatching { loser.link.close() } }
-                }
-            } else {
-                d.cancel()
+        val deferreds = listOf(bleConnectDeferred, torDialDeferred)
+        try {
+            val outcome = kotlinx.coroutines.selects.select<LinkOutcome> {
+                bleConnectDeferred.onAwait { it }
+                torDialDeferred.onAwait { it }
             }
+            for (d in deferreds) {
+                if (d.isCompleted) {
+                    val loser = runCatching { d.getCompleted() }.getOrNull() ?: continue
+                    if (loser.link !== outcome.link) {
+                        raceScope.launch { runCatching { loser.link.close() } }
+                    }
+                }
+            }
+            return outcome
+        } finally {
+            for (d in deferreds) if (!d.isCompleted) d.cancel()
         }
-        outcome
+    }
+
+    /**
+     * Responder side: subscribe to the accept flow and take the
+     * first inbound Link. The peer dialed us — we just answered.
+     *
+     * Drain stale items from the accept channels BEFORE subscribing.
+     * Otherwise we'd pick up Links that completed before this round
+     * (Tor inbounds queued by the local Tor daemon while no
+     * collector was reading, dial completions that landed past
+     * their round's timeout). A stale Link's peer is gone, so the
+     * Noise XX read hangs forever.
+     */
+    private suspend fun acceptOnly(): LinkOutcome {
+        transports.drainStaleAccepted()
+        Log.d(TAG_SYNC, "accept deferred: subscribing to acceptedLinks")
+        val link = transports.acceptedLinks().first()
+        Log.d(TAG_SYNC, "accept deferred: first() returned a link")
+        return LinkOutcome(link, MessageSyncEngine.HandshakeRole.Responder)
     }
 
     private data class SessionResult(
         val peerPub: PublicKey,
         val engineResult: MessageSyncEngine.Result,
     )
+
+    /**
+     * Tri-state result of the wrapped session call so the caller
+     * can tell timeout (whole withTimeoutOrNull body) from channel-
+     * binding rejection (inner null) without overloading null.
+     */
+    private sealed interface SessionOutcome {
+        data class Ok(val result: SessionResult) : SessionOutcome
+        data object NotRecognised : SessionOutcome
+        data object TimedOut : SessionOutcome
+    }
 
     private suspend fun openSessionAndSync(
         role: MessageSyncEngine.HandshakeRole,
@@ -247,17 +404,31 @@ class MessageSyncService @Inject constructor(
             noise.start(prologue, keystore)
             when (noiseRole) {
                 NoiseSession.Role.Initiator -> {
-                    link.send(noise.writeHandshakeMessage())
+                    val m1 = noise.writeHandshakeMessage()
+                    Log.d(TAG_SYNC, "noise(Initiator): sending m1 (${m1.size} bytes)")
+                    link.send(m1)
+                    Log.d(TAG_SYNC, "noise(Initiator): m1 sent, waiting for m2")
                     val m2 = link.incoming().first()
+                    Log.d(TAG_SYNC, "noise(Initiator): m2 received (${m2.size} bytes)")
                     noise.readHandshakeMessage(m2)
-                    link.send(noise.writeHandshakeMessage())
+                    val m3 = noise.writeHandshakeMessage()
+                    Log.d(TAG_SYNC, "noise(Initiator): sending m3 (${m3.size} bytes)")
+                    link.send(m3)
+                    Log.d(TAG_SYNC, "noise(Initiator): m3 sent, handshake complete")
                 }
                 NoiseSession.Role.Responder -> {
+                    Log.d(TAG_SYNC, "noise(Responder): waiting for m1")
                     val m1 = link.incoming().first()
+                    Log.d(TAG_SYNC, "noise(Responder): m1 received (${m1.size} bytes)")
                     noise.readHandshakeMessage(m1)
-                    link.send(noise.writeHandshakeMessage())
+                    val m2 = noise.writeHandshakeMessage()
+                    Log.d(TAG_SYNC, "noise(Responder): sending m2 (${m2.size} bytes)")
+                    link.send(m2)
+                    Log.d(TAG_SYNC, "noise(Responder): m2 sent, waiting for m3")
                     val m3 = link.incoming().first()
+                    Log.d(TAG_SYNC, "noise(Responder): m3 received (${m3.size} bytes)")
                     noise.readHandshakeMessage(m3)
+                    Log.d(TAG_SYNC, "noise(Responder): handshake complete")
                 }
             }
             check(noise.state == NoiseSession.State.Transport) {
@@ -329,9 +500,33 @@ class MessageSyncService @Inject constructor(
     private fun buildSyncPrologue(communityId: CommunityId): ByteArray =
         PROLOGUE_PREFIX + communityId.bytes
 
+    /** Unsigned-byte lexicographic compare. */
+    private fun compareLex(a: ByteArray, b: ByteArray): Int {
+        val n = minOf(a.size, b.size)
+        for (i in 0 until n) {
+            val ai = a[i].toInt() and 0xFF
+            val bi = b[i].toInt() and 0xFF
+            if (ai != bi) return ai - bi
+        }
+        return a.size - b.size
+    }
+
     companion object {
         const val DEFAULT_TIMEOUT_MS: Long = 30_000L
+        /**
+         * Budget for the Noise XX handshake + message exchange + revocation
+         * round AFTER a Link has been acquired. Caps the time a stuck Link
+         * (peer didn't actually respond) can hold the round mutex. The
+         * caller's `withTimeoutOrNull(timeoutMs)` only covers Link acquisition.
+         */
+        const val SESSION_TIMEOUT_MS: Long = 20_000L
         const val NOTIFICATION_PREVIEW_CHARS = 120
         private val PROLOGUE_PREFIX = "KEYSTONE/v1/sync".encodeToByteArray()
+        private const val TAG_SYNC = "MessageSync"
+        // Upper bound for the randomised dial-jitter delay. 1500ms is
+        // enough to give a peer that started ~simultaneously time to
+        // see our advert and dial first, without slowing the typical
+        // one-peer-passive case noticeably.
+        private const val DIAL_JITTER_MS: Long = 1500
     }
 }

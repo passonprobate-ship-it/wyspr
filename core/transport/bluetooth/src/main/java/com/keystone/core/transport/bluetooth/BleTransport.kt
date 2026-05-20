@@ -29,6 +29,7 @@ import com.keystone.core.transport.ServiceUuid
 import com.keystone.core.transport.Transport
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,6 +46,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -246,14 +248,123 @@ class BleTransport(private val context: Context) : Transport {
     ): BluetoothGattServer {
         val manager = bluetoothManager ?: error("no BluetoothManager")
         val outboundSinks = ConcurrentHashMap<String, kotlinx.coroutines.channels.Channel<ByteArray>>()
+        // Per-device flow-control signal for the notify drainer.
+        // Android's BluetoothGattServer.notifyCharacteristicChanged
+        // silently drops chunks if you fire them faster than the
+        // internal queue drains — every chunk past the first 1-3
+        // disappears. The fix is to wait for `onNotificationSent`
+        // between chunks. Each device gets its own 1-slot Channel;
+        // the drainer awaits a receive after every notify; the
+        // callback trySends. RENDEZVOUS would deadlock if the
+        // callback fires before the drainer is back at receive, so
+        // capacity=1 with DROP_OLDEST gives us a "latest signal
+        // wins" semantics that's robust to harmless races.
+        val notifyAcks = ConcurrentHashMap<String, kotlinx.coroutines.channels.Channel<Unit>>()
+
+        // Forward reference to the GATT characteristic this server
+        // will host — needed inside the connection-state callback to
+        // wire the outbound notify drainer, but the characteristic
+        // itself can't be constructed until after the callback is
+        // built (the server reference is passed in to addService).
+        // Set after `openGattServer` returns; safe because no peer
+        // can connect before the surrounding `start()` finishes
+        // advertising.
+        val registeredCharRef = AtomicReference<BluetoothGattCharacteristic?>(null)
+
+        // Create-or-get the Link for a peer. Idempotent via
+        // computeIfAbsent — called from BOTH onConnectionStateChange
+        // (so the accept side of `firstAvailableLink` can win as
+        // soon as the GATT connection is up) and from
+        // onCharacteristicWriteRequest (defensive: covers the rare
+        // case where the first write race-arrives before the
+        // CONNECTED callback fires).
+        //
+        // Previously the Link was only created on first write, which
+        // meant the accept-side flow only emitted AFTER the peer had
+        // already sent a payload — far too late for sync rounds
+        // where both peers race to dial and the accept signal needs
+        // to win the `select` before our own dial returns.
+        fun createOrGetLink(device: BluetoothDevice): BleLink? {
+            val char = registeredCharRef.get() ?: return null
+            return acceptedLinks.computeIfAbsent(device.address) { _ ->
+                val endpoint = PeerEndpoint(Transport.Kind.BluetoothLe, device.address)
+                val (newLink, sink) = newBleLink(endpoint = endpoint, onClose = {
+                    outboundSinks.remove(device.address)?.close()
+                    notifyAcks.remove(device.address)?.close()
+                })
+                outboundSinks[device.address] = sink
+                val notifyAck = kotlinx.coroutines.channels.Channel<Unit>(
+                    capacity = 1,
+                    onBufferOverflow = BufferOverflow.DROP_OLDEST,
+                )
+                notifyAcks[device.address] = notifyAck
+                // The drainer feeds raw BLE chunks through the
+                // assembler in arrival order on a single coroutine
+                // — see BleLink kdoc. Must be started BEFORE any
+                // ingestInbound call or the first chunk queues with
+                // no consumer.
+                newLink.startInboundDrainer(ioScope)
+                ioScope.launch {
+                    for (frame in sink) {
+                        val chunker = BleOutboundChunker(mtuPayload = DEFAULT_MTU_PAYLOAD)
+                        for (chunk in chunker.chunk(frame)) {
+                            // Drain any stale signal so receive() below
+                            // actually waits for THIS write's ack.
+                            notifyAck.tryReceive()
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                runCatching {
+                                    this@BleTransport.session?.gattServer?.notifyCharacteristicChanged(device, char, false, chunk)
+                                }
+                            } else {
+                                @Suppress("DEPRECATION")
+                                char.value = chunk
+                                @Suppress("DEPRECATION")
+                                runCatching {
+                                    this@BleTransport.session?.gattServer?.notifyCharacteristicChanged(device, char, false)
+                                }
+                            }
+                            // Wait for onNotificationSent — Android's BLE
+                            // stack only queues a few notifies at a time;
+                            // firing the next before the previous is
+                            // confirmed silently drops it. The timeout is
+                            // a backstop against a stack that decides
+                            // never to deliver the callback for some
+                            // reason — we'd rather a slow link than a
+                            // wedged one. runCatching catches
+                            // ClosedReceiveChannelException for the link-
+                            // teardown race: an engine error closes the
+                            // link, which closes notifyAck, and the
+                            // already-suspended receive() throws. That
+                            // exception used to crash the worker thread
+                            // (see run 21 A02s FATAL).
+                            runCatching {
+                                withTimeoutOrNull(NOTIFY_ACK_TIMEOUT_MS) { notifyAck.receive() }
+                            }
+                        }
+                    }
+                }
+                ioScope.launch { runCatching { accepted.send(newLink) } }
+                newLink
+            }
+        }
 
         val callback = object : BluetoothGattServerCallback() {
             override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
                 val addr = device.address ?: return
-                if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    val link = acceptedLinks.remove(addr)
-                    outboundSinks.remove(addr)?.close()
-                    link?.let { ioScope.launch { runCatching { it.close() } } }
+                when (newState) {
+                    BluetoothProfile.STATE_CONNECTED -> {
+                        // Materialise the Link immediately on connect
+                        // so `acceptedLinks` can fire before the peer
+                        // sends any data. Idempotent — if the dialer
+                        // somehow gets a write in first, the
+                        // characteristic-write path is a no-op.
+                        createOrGetLink(device)
+                    }
+                    BluetoothProfile.STATE_DISCONNECTED -> {
+                        val link = acceptedLinks.remove(addr)
+                        outboundSinks.remove(addr)?.close()
+                        link?.let { ioScope.launch { runCatching { it.close() } } }
+                    }
                 }
             }
 
@@ -270,47 +381,10 @@ class BleTransport(private val context: Context) : Transport {
                 if (responseNeeded) {
                     server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
                 }
-                // computeIfAbsent guarantees the (link, drainer-start,
-                // accepted.send) wiring happens exactly once per peer
-                // address, even under concurrent writes from the same
-                // device on different binder threads. The previous
-                // read-then-modify pattern could create two BleLinks
-                // for the same peer and leak the loser.
-                val link = acceptedLinks.computeIfAbsent(device.address) { _ ->
-                    val endpoint = PeerEndpoint(Transport.Kind.BluetoothLe, device.address)
-                    val (newLink, sink) = newBleLink(endpoint = endpoint, onClose = {
-                        outboundSinks.remove(device.address)?.close()
-                    })
-                    outboundSinks[device.address] = sink
-                    // The drainer feeds raw BLE chunks through the
-                    // assembler in arrival order on a single coroutine
-                    // — see BleLink kdoc. Must be started BEFORE we
-                    // call ingestInbound below or the first chunk
-                    // queues with no consumer.
-                    newLink.startInboundDrainer(ioScope)
-                    val charForNotify = characteristic
-                    ioScope.launch {
-                        for (frame in sink) {
-                            val chunker = BleOutboundChunker(mtuPayload = DEFAULT_MTU_PAYLOAD)
-                            for (chunk in chunker.chunk(frame)) {
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                    runCatching {
-                                        server?.notifyCharacteristicChanged(device, charForNotify, false, chunk)
-                                    }
-                                } else {
-                                    @Suppress("DEPRECATION")
-                                    charForNotify.value = chunk
-                                    @Suppress("DEPRECATION")
-                                    runCatching {
-                                        server?.notifyCharacteristicChanged(device, charForNotify, false)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    ioScope.launch { runCatching { accepted.send(newLink) } }
-                    newLink
-                }
+                // Defensive fallback: if the CONNECTED callback hasn't
+                // fired yet (rare on Android binder ordering), the
+                // first write is sufficient to create the Link.
+                val link = createOrGetLink(device) ?: return
                 // ingestInbound is non-suspending — safe from the BLE
                 // binder thread without an extra dispatcher hop.
                 link.ingestInbound(value)
@@ -330,6 +404,15 @@ class BleTransport(private val context: Context) : Transport {
                         device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null,
                     )
                 }
+            }
+
+            override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+                // Flow-control signal for the per-device notify drainer.
+                // Fires after each `notifyCharacteristicChanged` is
+                // accepted by the local BLE stack — the drainer awaits
+                // this before sending the next chunk so we don't
+                // overflow the kernel's internal notify queue.
+                notifyAcks[device.address]?.trySend(Unit)
             }
         }
 
@@ -358,6 +441,11 @@ class BleTransport(private val context: Context) : Transport {
         characteristic.addDescriptor(cccd)
         service.addCharacteristic(characteristic)
         server.addService(service)
+        // Publish the characteristic to the callback's createOrGetLink
+        // helper. Must happen before the surrounding `start()` begins
+        // advertising — otherwise an early CONNECTED callback would
+        // see a null ref and skip the Link.
+        registeredCharRef.set(characteristic)
         return server
     }
 
@@ -399,6 +487,19 @@ class BleTransport(private val context: Context) : Transport {
         // Volatile-equivalent via AtomicInteger — @Volatile only applies to
         // class fields, not coroutine-captured locals.
         val clientMtu = java.util.concurrent.atomic.AtomicInteger(23)
+        // Flow-control signal for the client-side write drainer. Same
+        // rationale as the server's notifyAck (see openGattServer):
+        // BluetoothGatt.writeCharacteristic with WRITE_TYPE_NO_RESPONSE
+        // can only have a small number of writes outstanding (typically
+        // 1-3). If the drainer fires chunks faster than the stack drains
+        // them, the excess get silently dropped. The 13KB Push frame
+        // that surfaced this in run-20 fragmented to ~27 chunks; only
+        // the first few reached the peer. Wait for onCharacteristicWrite
+        // between chunks to throttle to the stack's actual capacity.
+        val writeAck = kotlinx.coroutines.channels.Channel<Unit>(
+            capacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
 
         fun resumeWith(action: () -> Unit) {
             if (resolved.compareAndSet(false, true) && cont.isActive) action()
@@ -508,10 +609,13 @@ class BleTransport(private val context: Context) : Transport {
                 link.startInboundDrainer(ioScope)
                 ioScope.launch {
                     val chunker = BleOutboundChunker(
-                        mtuPayload = (clientMtu.get() - 3).coerceAtLeast(MIN_MTU_PAYLOAD),
+                        mtuPayload = (clientMtu.get() - 3)
+                            .coerceAtLeast(MIN_MTU_PAYLOAD)
+                            .coerceAtMost(MAX_MTU_PAYLOAD),
                     )
                     for (frame in outboundSink) {
                         for (chunk in chunker.chunk(frame)) {
+                            writeAck.tryReceive()
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 g.writeCharacteristic(
                                     ch,
@@ -526,6 +630,19 @@ class BleTransport(private val context: Context) : Transport {
                                     BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
                                 @Suppress("DEPRECATION")
                                 g.writeCharacteristic(ch)
+                            }
+                            // See `writeAck` kdoc — wait for the local
+                            // stack's onCharacteristicWrite callback so
+                            // we never have more than one outstanding
+                            // write per BLE peer. Timeout protects
+                            // against a stack that drops the callback
+                            // (rare but observed on Samsung firmware).
+                            // runCatching catches the link-teardown race
+                            // where the engine errors, closes the link,
+                            // closes writeAck, and the suspended receive
+                            // throws ClosedReceiveChannelException.
+                            runCatching {
+                                withTimeoutOrNull(WRITE_ACK_TIMEOUT_MS) { writeAck.receive() }
                             }
                         }
                     }
@@ -544,6 +661,17 @@ class BleTransport(private val context: Context) : Transport {
                 // the link's rawChunks Channel until the drainer is
                 // started in onDescriptorWrite.
                 link.ingestInbound(value)
+            }
+
+            override fun onCharacteristicWrite(
+                g: BluetoothGatt,
+                ch: BluetoothGattCharacteristic,
+                status: Int,
+            ) {
+                // Flow-control signal for the outbound drainer — fires
+                // once the local stack has accepted the write into its
+                // internal queue. See the `writeAck` kdoc above.
+                writeAck.trySend(Unit)
             }
 
             @Deprecated("kept for pre-T platforms that haven't upgraded to the value-overload")
@@ -566,5 +694,17 @@ class BleTransport(private val context: Context) : Transport {
         // BLE 4.0 minimum until MTU negotiation succeeds.
         private const val DEFAULT_MTU_PAYLOAD = 244
         private const val MIN_MTU_PAYLOAD = 20
+        // Android caps writeCharacteristic value at GATT_MAX_ATTR_LEN
+        // (512). Even when ATT MTU negotiates to 517 (Samsung stack),
+        // the actual write payload must not exceed 512 or the BLE
+        // stack throws IllegalArgumentException.
+        private const val MAX_MTU_PAYLOAD = 512
+        // Per-chunk wait for the BLE stack's local ack callback
+        // (onCharacteristicWrite on the client, onNotificationSent
+        // on the server). 1500ms is conservative — typical ack is
+        // sub-100ms — but it's a backstop, not the normal path. The
+        // drainer almost always wakes within milliseconds.
+        private const val WRITE_ACK_TIMEOUT_MS: Long = 1500
+        private const val NOTIFY_ACK_TIMEOUT_MS: Long = 1500
     }
 }

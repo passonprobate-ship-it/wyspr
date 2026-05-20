@@ -57,7 +57,7 @@ class OnboardingViewModel @Inject constructor(
     private val transportLifecycle: TransportLifecycle,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow<UiState>(UiState.RolePicker)
+    private val _state = MutableStateFlow<UiState>(UiState.Booting)
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private val _role = MutableStateFlow<Role?>(null)
@@ -66,6 +66,31 @@ class OnboardingViewModel @Inject constructor(
     private var activeSession: HandshakeSession? = null
     private var activeJob: Job? = null
 
+    init {
+        // On app launch, decide whether the user needs to see
+        // onboarding at all. If there is already at least one trust
+        // edge in the database, the user has already paired with
+        // someone — emit AlreadyOnboarded so the host can route
+        // straight to the main app. New installs fall through to
+        // RolePicker as before. Any failure (e.g. database not yet
+        // open and refuses to open) is treated as "not onboarded",
+        // so the worst case is the user sees onboarding once more.
+        viewModelScope.launch {
+            val onboarded = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (!database.isOpen) database.open()
+                    database.trustEdgeDao.count() > 0
+                }.getOrDefault(false)
+            }
+            // Only transition out of Booting — don't trample a state
+            // the user might have already advanced into (rotation,
+            // process restart while in the middle of onboarding, etc.).
+            if (_state.value is UiState.Booting) {
+                _state.value = if (onboarded) UiState.AlreadyOnboarded else UiState.RolePicker
+            }
+        }
+    }
+
     fun pickRole(role: Role) {
         _role.value = role
         _state.value = UiState.KeyGeneration(KeyGenStatus.Pending)
@@ -73,12 +98,18 @@ class OnboardingViewModel @Inject constructor(
 
     fun back() {
         _state.value = when (val s = state.value) {
+            // Booting and AlreadyOnboarded aren't user-interactive
+            // and shouldn't expose a back affordance — but keep the
+            // when exhaustive so future additions to UiState are caught
+            // at compile time.
+            UiState.Booting -> UiState.Booting
+            UiState.AlreadyOnboarded -> UiState.AlreadyOnboarded
             UiState.RolePicker -> UiState.RolePicker
             is UiState.KeyGeneration -> UiState.RolePicker
             is UiState.Pair -> UiState.RolePicker
-            is UiState.CompareFingerprints -> UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32)
-            is UiState.RunHandshake -> { cancelHandshake(); UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32) }
-            is UiState.Result -> UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32)
+            is UiState.CompareFingerprints -> UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32, peerQr = null)
+            is UiState.RunHandshake -> { cancelHandshake(); UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32, peerQr = null) }
+            is UiState.Result -> UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32, peerQr = null)
         }
     }
 
@@ -130,6 +161,11 @@ class OnboardingViewModel @Inject constructor(
 
     fun onPeerQrScanned(peerQr: HandshakeQr) {
         val s = state.value as? UiState.Pair ?: return
+        // Ignore re-emits once we've already locked in a peerQr — the
+        // camera analyzer normally stops itself, but the user may have
+        // rotated through Refresh QR between scans and we don't want
+        // a stray second emit to silently replace the captured one.
+        if (s.peerQr != null) return
         if (!peerQr.communityId.bytes.contentEquals(s.qr.communityId.bytes)) {
             // First-launch pairing: both devices auto-mint random
             // communityIds in generateIdentity(). To converge, the
@@ -165,6 +201,21 @@ class OnboardingViewModel @Inject constructor(
             )
             return
         }
+        // Hold on the Pair screen so our own QR stays visible for the
+        // peer to scan. The user taps Continue (onContinueFromPair) to
+        // advance once they're satisfied the peer has scanned them.
+        _state.value = s.copy(peerQr = peerQr)
+    }
+
+    /**
+     * Advance from Pair → CompareFingerprints once this side has both
+     * QRs in hand. The Noise prologue requires both nonces + ephPubs;
+     * the peer's QR comes from [onPeerQrScanned], so we wait on a
+     * deliberate user tap rather than auto-advancing.
+     */
+    fun onContinueFromPair() {
+        val s = state.value as? UiState.Pair ?: return
+        val peerQr = s.peerQr ?: return
         _state.value = UiState.CompareFingerprints(
             identity = s.identity,
             backing = s.backing,
@@ -203,11 +254,14 @@ class OnboardingViewModel @Inject constructor(
                 )
                 return@launch
             }
-            _state.value = UiState.CompareFingerprints(
+            // Same hold-on-Pair behaviour as the same-community path:
+            // re-minted QR plus the scanned peer, waiting on the user's
+            // Continue tap so our refreshed QR is visible to the peer.
+            _state.value = UiState.Pair(
                 identity = s.identity,
                 backing = s.backing,
-                localQr = newLocalQr,
-                localQrBase32 = newBase32,
+                qr = newLocalQr,
+                base32 = newBase32,
                 peerQr = peerQr,
             )
         }
@@ -257,7 +311,7 @@ class OnboardingViewModel @Inject constructor(
 
     fun retryFromPair() {
         val s = state.value as? UiState.Result ?: return
-        _state.value = UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32)
+        _state.value = UiState.Pair(s.identity, s.backing, s.localQr, s.localQrBase32, peerQr = null)
     }
 
     private fun startHandshake(
@@ -394,20 +448,42 @@ class OnboardingViewModel @Inject constructor(
     enum class Role { Inviter, Invitee }
 
     sealed interface UiState {
+        /**
+         * Initial state while we check whether the user has already
+         * paired with anyone. Resolves to either [RolePicker] (no
+         * existing trust edge → first-launch onboarding) or
+         * [AlreadyOnboarded] (skip straight to the main app).
+         */
+        data object Booting : UiState
+
+        /**
+         * Sentinel state emitted when at least one trust edge already
+         * exists at app launch. The host catches this and navigates
+         * to the main app rather than walking the user through
+         * onboarding again.
+         */
+        data object AlreadyOnboarded : UiState
+
         data object RolePicker : UiState
         data class KeyGeneration(val status: KeyGenStatus) : UiState
 
         /**
          * Combined "show + scan" state. Both sides see their own QR
-         * and a live camera; either party scanning the other's QR
-         * advances the flow to [CompareFingerprints]. Replaces the
-         * previous DisplayQr → ScanPeerQr two-step.
+         * and a live camera; once the user scans the peer's QR, the
+         * scanned [peerQr] is stored here and the screen switches to
+         * a "scanned them — waiting for them to scan you" layout
+         * with the local QR still visible. The actual transition to
+         * [CompareFingerprints] is gated by the user tapping Continue
+         * (see [onContinueFromPair]) so the peer always has time to
+         * complete their own scan of our QR — the Noise prologue
+         * needs both sides to hold both QRs.
          */
         data class Pair(
             val identity: Identity,
             val backing: KeystoreManager.Backing,
             val qr: HandshakeQr,
             val base32: String,
+            val peerQr: HandshakeQr? = null,
         ) : UiState
 
         data class CompareFingerprints(

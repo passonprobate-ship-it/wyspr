@@ -9,6 +9,7 @@ import com.keystone.core.transport.TorBackend
 import com.keystone.core.transport.Transport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
@@ -16,8 +17,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -82,11 +83,30 @@ class TorHiddenServiceTransport(
         // 127.0.0.1:targetPort. Binding on 0.0.0.0 would expose the
         // service on every interface, defeating the point of the
         // hidden service.
+        //
+        // Rapid stop()/start() cycles (each sync round currently
+        // tears the listener down and brings it back up) can race
+        // with the kernel's TIME_WAIT release of the previous bind
+        // and surface as `EADDRINUSE` even with SO_REUSEADDR set.
+        // Retry briefly before giving up so a single transient
+        // collision doesn't kill the whole sync round.
         val server = withContext(Dispatchers.IO) {
-            ServerSocket().apply {
-                reuseAddress = true
-                bind(java.net.InetSocketAddress(InetAddress.getLoopbackAddress(), targetPort))
+            var lastErr: Throwable? = null
+            var attempt = 0
+            while (attempt < BIND_RETRY_COUNT) {
+                try {
+                    return@withContext ServerSocket().apply {
+                        reuseAddress = true
+                        bind(java.net.InetSocketAddress(InetAddress.getLoopbackAddress(), targetPort))
+                    }
+                } catch (be: java.net.BindException) {
+                    lastErr = be
+                    attempt += 1
+                    Log.w(TAG, "start: bind attempt $attempt failed (${be.message}); retrying in ${BIND_RETRY_BACKOFF_MS}ms")
+                    delay(BIND_RETRY_BACKOFF_MS)
+                }
             }
+            throw lastErr ?: java.net.BindException("bind to :$targetPort failed after $BIND_RETRY_COUNT attempts")
         }
         Log.d(TAG, "start: listening on 127.0.0.1:$targetPort (community ${communityId.bytes.take(4).joinToString("") { "%02x".format(it) }}…)")
 
@@ -121,8 +141,39 @@ class TorHiddenServiceTransport(
 
     override fun discovered(): Flow<PeerEndpoint> = emptyFlow()
 
+    // `receiveAsFlow`, NOT `consumeAsFlow`: the Tor listener is kept
+    // alive across sync rounds (see [TransportSelector.stopAll]) so
+    // a single Channel is shared by every round. `consumeAsFlow`
+    // would cancel that Channel when the first round's `first()`
+    // collection ends, leaving every subsequent round unable to
+    // accept Tor inbounds. `receiveAsFlow` leaves the Channel open
+    // and lets the next round resubscribe.
     override fun acceptedLinks(): Flow<Link> =
-        session?.accepted?.consumeAsFlow() ?: emptyFlow()
+        session?.accepted?.receiveAsFlow() ?: emptyFlow()
+
+    /**
+     * Discard every Link currently buffered in the accept channel
+     * without consuming the channel itself. Called by the responder-
+     * side sync code at round start so a brand-new round doesn't
+     * pick up a Tor inbound that completed in a previous round (or
+     * was queued by the Tor daemon while our listener was bound but
+     * no collector was active).
+     *
+     * Each drained Link is closed asynchronously so its underlying
+     * socket gets released; the peer that connected will see EOF on
+     * its next read.
+     */
+    fun drainAccepted() {
+        val current = session ?: return
+        var drained = 0
+        while (true) {
+            val r = current.accepted.tryReceive()
+            val link = r.getOrNull() ?: break
+            drained++
+            current.scope.launch { runCatching { link.close() } }
+        }
+        if (drained > 0) Log.d(TAG, "drainAccepted: closed $drained stale link(s)")
+    }
 
     /**
      * Dial a peer `.onion` over Tor. [endpoint.opaqueAddress] must be
@@ -183,5 +234,7 @@ class TorHiddenServiceTransport(
 
     private companion object {
         private const val TAG = "TorHsTransport"
+        private const val BIND_RETRY_COUNT = 5
+        private const val BIND_RETRY_BACKOFF_MS = 200L
     }
 }

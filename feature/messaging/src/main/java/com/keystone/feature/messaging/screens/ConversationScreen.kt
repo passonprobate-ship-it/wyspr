@@ -1,5 +1,6 @@
 package com.keystone.feature.messaging.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,12 +14,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,6 +51,23 @@ fun ConversationScreen(
     LaunchedEffect(peer.bytes.toList()) { viewModel.bind(peer) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     var draft by remember { mutableStateOf("") }
+    var renameDialogOpen by remember { mutableStateOf(false) }
+
+    // Pull the current display name from Ready state — falls back to
+    // null while loading so the header just shows the fingerprint
+    // until the contact feed delivers.
+    val currentDisplayName: String? = (state as? ConversationViewModel.UiState.Ready)?.displayName
+
+    if (renameDialogOpen) {
+        RenameContactDialog(
+            initial = currentDisplayName.orEmpty(),
+            onDismiss = { renameDialogOpen = false },
+            onConfirm = { newName ->
+                viewModel.renameContact(newName)
+                renameDialogOpen = false
+            },
+        )
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -59,13 +79,39 @@ fun ConversationScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             OutlinedButton(onClick = onBack) { Text("Back") }
-            Text(
-                peer.fingerprint.toString(),
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                modifier = Modifier.weight(1f),
-            )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { renameDialogOpen = true },
+                verticalArrangement = Arrangement.spacedBy(1.dp),
+            ) {
+                val name = currentDisplayName?.takeIf { it.isNotBlank() }
+                if (name != null) {
+                    Text(
+                        name,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                    )
+                    Text(
+                        peer.fingerprint.toString(),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        peer.fingerprint.toString(),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        "Tap to add a name",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
 
         val listState = rememberLazyListState()
@@ -129,6 +175,41 @@ fun ConversationScreen(
             ) { Text("Send") }
         }
     }
+}
+
+@Composable
+private fun RenameContactDialog(
+    initial: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var value by remember(initial) { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Name this contact") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    placeholder = { Text("e.g. Sam") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Shown only on this device. Leave blank to clear the name.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(value) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

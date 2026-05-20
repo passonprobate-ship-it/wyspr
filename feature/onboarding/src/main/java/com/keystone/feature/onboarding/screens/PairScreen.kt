@@ -33,13 +33,20 @@ import com.keystone.core.trust.HandshakeQr
 import com.keystone.core.ui.QrRenderer
 
 /**
- * Combined pair-with-peer screen — the user's own QR sits above a
- * live camera scanner so both devices can scan each other without
- * navigating between screens or handing the phone back and forth.
+ * Combined pair-with-peer screen.
  *
- * Replaces the previous DisplayQr → ScanPeerQr two-screen flow. The
- * camera permission is requested up-front by [PeerQrCamera] so the
- * Inviter doesn't fail on first scan attempt.
+ * Initial state (peerQr == null): the user's own QR sits above a live
+ * camera scanner so each device can scan the other without screen
+ * swapping. Replaces the previous DisplayQr → ScanPeerQr two-screen
+ * flow. The camera permission is requested up-front by [PeerQrCamera]
+ * so the Inviter doesn't fail on first scan attempt.
+ *
+ * After scanning (peerQr != null): the camera is torn down and the
+ * QR remains visible so the peer can complete their own scan. A
+ * Continue button gates the transition to fingerprint comparison —
+ * advancing earlier would tear our QR off the screen before the peer
+ * can scan it, and the Noise prologue requires both sides to hold
+ * both QRs.
  *
  * Sidetrip CTAs (share APK, peer update) are tucked into a small
  * footer to avoid crowding the primary scan/show actions.
@@ -48,7 +55,9 @@ import com.keystone.core.ui.QrRenderer
 fun PairScreen(
     identity: Identity,
     qrBase32: String,
+    peerQr: HandshakeQr?,
     onPeerScanned: (HandshakeQr) -> Unit,
+    onContinue: () -> Unit,
     onRefreshQr: () -> Unit,
     onContinueToWallet: () -> Unit,
     onShareApp: () -> Unit = {},
@@ -64,13 +73,17 @@ fun PairScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        val scanned = peerQr != null
         Text(
-            "Pair with someone",
+            if (scanned) "Got their code" else "Pair with someone",
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(top = 8.dp),
         )
         Text(
-            "Show them this code, and point your camera at theirs.",
+            if (scanned)
+                "Keep this screen up so they can scan you. Tap Continue once they have."
+            else
+                "Show them this code, and point your camera at theirs.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -99,26 +112,45 @@ fun PairScreen(
             textAlign = TextAlign.Center,
         )
 
-        // ---- Their QR (camera) ----
-        Surface(
-            color = Color.Black,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f),
-        ) {
-            PeerQrCamera(
-                modifier = Modifier.fillMaxSize(),
-                onScanned = onPeerScanned,
+        if (scanned) {
+            // Camera intentionally removed from the composition — its
+            // DisposableEffect tears down CameraX so we don't keep a
+            // live analyzer pegged while the user waits on the peer.
+            Text(
+                "Scanned them — waiting for them to scan you.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                textAlign = TextAlign.Center,
+            )
+        } else {
+            // ---- Their QR (camera) ----
+            Surface(
+                color = Color.Black,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f),
+            ) {
+                PeerQrCamera(
+                    modifier = Modifier.fillMaxSize(),
+                    onScanned = onPeerScanned,
+                )
+            }
+            Text(
+                "Looking for their QR…",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Text(
-            "Looking for their QR…",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
         Spacer(modifier = Modifier.padding(top = 4.dp))
+
+        if (scanned) {
+            androidx.compose.material3.Button(
+                onClick = onContinue,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Continue") }
+        }
 
         OutlinedButton(
             onClick = onRefreshQr,

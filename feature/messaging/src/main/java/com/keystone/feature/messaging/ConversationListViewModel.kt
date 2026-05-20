@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.keystone.core.crypto.KeystoreManager
 import com.keystone.core.database.KeystoneDatabase
+import com.keystone.core.database.entities.ContactEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.identity.Fingerprint
 import com.keystone.core.identity.PublicKey
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -83,9 +85,14 @@ class ConversationListViewModel @Inject constructor(
                 val ownPub = PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
                 ownPub to loadPeers(ownPub)
             }
-            messageStore.latestPerThreadFlow().collectLatest { latest ->
-                _state.value = project(own, peers, latest)
-            }
+            // Combine latest-per-thread with the contact rename feed
+            // so renaming a peer immediately re-renders without
+            // waiting for the next message.
+            messageStore.latestPerThreadFlow()
+                .combine(database.contactDao.allFlow()) { latest, contacts -> latest to contacts }
+                .collectLatest { (latest, contacts) ->
+                    _state.value = project(own, peers, latest, contacts)
+                }
         }
     }
 
@@ -109,15 +116,20 @@ class ConversationListViewModel @Inject constructor(
         ownPub: PublicKey,
         peers: List<PublicKey>,
         latest: List<MessageEntity>,
+        contacts: List<ContactEntity>,
     ): UiState {
         val latestByPeer: Map<List<Byte>, MessageEntity> =
             latest.associateBy { it.threadPub.toList() }
+        val nameByPeer: Map<List<Byte>, String> = contacts
+            .mapNotNull { c -> c.displayName?.takeIf { it.isNotBlank() }?.let { c.peerPub.toList() to it } }
+            .toMap()
         if (peers.isEmpty()) return UiState.NoPeers
         val rows = peers.map { peer ->
             val last = latestByPeer[peer.bytes.toList()]
             ThreadRow(
                 peer = peer,
                 fingerprint = peer.fingerprint,
+                displayName = nameByPeer[peer.bytes.toList()],
                 lastBodyPreview = last?.body?.take(BODY_PREVIEW_CHARS),
                 lastAt = last?.createdAt,
                 lastFromSelf = last?.fromPub?.contentEquals(ownPub.bytes),
@@ -135,6 +147,8 @@ class ConversationListViewModel @Inject constructor(
     data class ThreadRow(
         val peer: PublicKey,
         val fingerprint: Fingerprint,
+        /** User-set friendly name; null/blank means fall back to [fingerprint]. */
+        val displayName: String?,
         val lastBodyPreview: String?,
         val lastAt: Long?,
         /** True when the last message was from us, false from them, null when there are no messages. */

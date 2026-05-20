@@ -201,7 +201,15 @@ internal class BleLinkAssembler {
  * them into MTU-sized chunks to feed the BLE write/notify pipe.
  */
 internal class BleOutboundChunker(private val mtuPayload: Int) {
-    init { require(mtuPayload in 20..512) { "mtu payload out of typical range" } }
+    // Lower bound: ATT MTU min is 23, payload = 23 - 3 = 20.
+    // Upper bound: GATT_MAX_ATTR_LEN is 512 in Android — `BluetoothGatt
+    // .writeCharacteristic` throws IllegalArgumentException("value
+    // should not be longer than max length of an attribute value") at
+    // anything above. The ATT MTU itself can negotiate up to 517 on
+    // BLE 5.x (Samsung stack does this even when we request 247) so
+    // the raw MTU isn't a safe payload bound. Callers must clamp
+    // their `mtuPayload` to 512.
+    init { require(mtuPayload in 20..512) { "mtu payload $mtuPayload out of [20, 512]" } }
 
     fun chunk(framed: ByteArray): List<ByteArray> {
         if (framed.size <= mtuPayload) return listOf(framed)

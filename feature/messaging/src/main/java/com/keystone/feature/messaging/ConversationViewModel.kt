@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.keystone.core.crypto.KeystoreManager
 import com.keystone.core.database.KeystoneDatabase
+import com.keystone.core.database.entities.ContactEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.transport.MessagingNotifier
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,18 +65,49 @@ class ConversationViewModel @Inject constructor(
                 // as read-receipts to push back.
                 messageStore.markInboundViewed(peer)
             }
-            messageStore.threadFlow(peer).collectLatest { messages ->
-                _state.value = UiState.Ready(
-                    own = ownPub?.let { PublicKey(it) },
-                    peer = peer,
-                    messages = messages,
-                )
-                // Any newly-arrived "received" messages get flipped
-                // to "viewed" while the chat is open, so the read
-                // receipt fires on the next sync without the user
-                // re-entering the screen.
-                withContext(Dispatchers.IO) {
-                    messageStore.markInboundViewed(peer)
+            messageStore.threadFlow(peer)
+                .combine(database.contactDao.allFlow()) { messages, contacts ->
+                    val name = contacts
+                        .firstOrNull { it.peerPub.contentEquals(peer.bytes) }
+                        ?.displayName
+                        ?.takeIf { it.isNotBlank() }
+                    Triple(messages, name, Unit)
+                }
+                .collectLatest { (messages, displayName, _) ->
+                    _state.value = UiState.Ready(
+                        own = ownPub?.let { PublicKey(it) },
+                        peer = peer,
+                        displayName = displayName,
+                        messages = messages,
+                    )
+                    // Any newly-arrived "received" messages get flipped
+                    // to "viewed" while the chat is open, so the read
+                    // receipt fires on the next sync without the user
+                    // re-entering the screen.
+                    withContext(Dispatchers.IO) {
+                        messageStore.markInboundViewed(peer)
+                    }
+                }
+        }
+    }
+
+    /**
+     * Set or clear the friendly name shown for [peerPub]. A null or
+     * blank value drops the contact row entirely so the UI falls
+     * back to the raw fingerprint.
+     */
+    fun renameContact(name: String) {
+        val peer = peerPub ?: return
+        val trimmed = name.trim()
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                if (!database.isOpen) database.open()
+                if (trimmed.isEmpty()) {
+                    database.contactDao.clear(peer)
+                } else {
+                    database.contactDao.upsert(
+                        ContactEntity(peerPub = peer, displayName = trimmed),
+                    )
                 }
             }
         }
@@ -117,6 +150,8 @@ class ConversationViewModel @Inject constructor(
         data class Ready(
             val own: PublicKey?,
             val peer: PublicKey,
+            /** User-set friendly name for the peer, or null/blank to use fingerprint. */
+            val displayName: String?,
             val messages: List<MessageEntity>,
         ) : UiState
     }
