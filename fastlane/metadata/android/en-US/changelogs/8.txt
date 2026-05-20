@@ -1,0 +1,14 @@
+v0.7.0a — Monero wallet scaffold.
+
+• New :feature:monero-wallet module wired into the bottom nav.
+• All Monero RPC traffic routes through the embedded Tor SOCKS proxy
+  (SOCKS5 DOMAINNAME, no DNS leak). Multi-node round-robin across a
+  curated public-node pool.
+• Wallet UI shows Tor bootstrap status, remote-node chain tip, and a
+  clear "engine not bundled" panel. No misleading 0 XMR rows.
+• v0.6.6 revocation propagation: revocation certs now flow between
+  trusted peers as a piggyback round on the messaging sync.
+
+This is a pre-release alpha. The on-device crypto engine (block scan
++ tx signing) ships in v0.7.0b once the GPL-licensed Monerujo JNI
+binding is bundled; balance/history/send remain disabled until then.

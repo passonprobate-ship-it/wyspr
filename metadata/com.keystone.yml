@@ -40,7 +40,18 @@ Builds:
       - io.matthewnelson.kmp-tor:resource-exec-tor:408.13.2
       - io.matthewnelson.kmp-tor:resource-noexec-tor:408.13.2
 
+  - versionName: 0.7.0a
+    versionCode: 8
+    commit: v0.7.0a
+    subdir: app
+    gradle:
+      - yes
+    prebuilds:
+      - com.goterl:lazysodium-android:5.1.0
+      - io.matthewnelson.kmp-tor:resource-exec-tor:408.13.2
+      - io.matthewnelson.kmp-tor:resource-noexec-tor:408.13.2
+
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 0.6.7
-CurrentVersionCode: 7
+CurrentVersion: 0.7.0a
+CurrentVersionCode: 8
