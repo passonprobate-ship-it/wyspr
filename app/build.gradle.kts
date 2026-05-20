@@ -33,8 +33,8 @@ android {
         applicationId = "com.keystone"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "0.7.0a"
+        versionCode = 9
+        versionName = "0.7.1"
     }
 
     signingConfigs {

@@ -6,16 +6,22 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Keystone has no server component)
-- **Status**: v0.6.7 landed (2026-05-19). End-to-end handshake +
-  K-paths quorum + messaging + peer APK share + embedded Tor with
-  keystore-pinned `.onion` + messaging sync racing BLE/Tor +
-  F-Droid release plumbing (fastlane metadata + draft
-  `metadata/com.keystone.yml` manifest). Version bumped to 0.6.7 /
-  versionCode 7. Two-device hardware proof of the Tor leg is still
-  pending. **Next sprint (v0.7.0)**: Monero wallet scaffold —
-  remote-node-over-Tor only, GPL approval gate before adding the
-  monerujo JNI binding. See `docs/FDROID.md` for the release
-  process and `NEXT-STEPS.md` §10 for the Monero plan.
+- **Status**: 2026-05-20 — **end-to-end encrypted messaging confirmed
+  working on real hardware for the first time** (commit `5afb67e` on
+  `android`). 22-build session walked every layer of the BLE + Noise
+  + sync stack; landed pairing, then messaging, with hardware proof at
+  each step. Two paired phones now exchange Push / Ack / Read / End
+  frames over Noise XX over BLE GATT, with friendly contact names and
+  skip-onboarding UX. See [[keystone-messaging-works]] in auto-memory
+  for the full bug list and [[keystone-ble-flow-control]] for the BLE
+  pattern that hid the rest.
+  
+  Earlier shape from 2026-05-19 (v0.6.7): K-paths quorum + peer APK
+  share + embedded Tor with keystore-pinned `.onion` + messaging sync
+  racing BLE/Tor + F-Droid release plumbing. **Next sprint (v0.7.0)**:
+  Monero wallet scaffold — remote-node-over-Tor only, GPL approval
+  gate before adding the monerujo JNI binding. See `docs/FDROID.md`
+  for the release process and `NEXT-STEPS.md` §10 for the Monero plan.
 
 ## Philosophy (read this before changing anything)
 
@@ -164,6 +170,59 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
 
 ## What Is Built
 
+### 2026-05-20 — end-to-end messaging on real hardware (commit `5afb67e`)
+
+This is the first time the full stack — pairing AND messaging — was
+demonstrably shown to work between two physical phones (Samsung
+Galaxy A02s + Galaxy S23+). Until this date, every layer's claim of
+"verified" was based on code shape, not observed behaviour. The 22
+builds that landed this fix all attacked specific bugs the previous
+runs surfaced; nothing in the sync stack was speculative.
+
+Headline fixes (all in this commit):
+- `KeystoreManager.sign()` no longer pads the message — the padding
+  silently broke every signature in the project for years.
+- `BleTransport` emits the accept Link on GATT CONNECTED, not on the
+  first characteristic write. Without this, both peers became
+  Initiator and Noise XX deadlocked.
+- `MessageSyncService` uses a **hard pubkey-derived role bias** — the
+  peer with the smaller pubkey runs dial-only, the larger runs
+  accept-only. No race, no symmetric-role deadlock.
+- `MessageSyncService` runs the race in a class-level `raceScope`
+  detached from the caller's job — earlier the SupervisorJob was a
+  child of `withTimeoutOrNull`, and structured concurrency stalled
+  the body until losing deferreds completed (a Tor SOCKS dial can
+  block 15s, well past the 12s outer timeout).
+- `MessageSyncService.SESSION_TIMEOUT_MS` releases the round mutex
+  when Noise XX wedges on a half-dead Link, so subsequent rounds
+  can retry instead of sitting silent forever.
+- `TransportSelector.drainStaleAccepted()` flushes buffered Tor
+  inbounds at the start of every accept-only round so a stale
+  circuit can't impersonate a fresh one.
+- `TorHiddenServiceTransport` uses `receiveAsFlow` (not
+  `consumeAsFlow`) so the Tor accept channel survives the first
+  round's collector.
+- **BLE write flow control** — `writeAck` on the client and
+  per-device `notifyAcks` on the server. Both drainers wait for the
+  local stack's ack between chunks. Android's BLE only queues 1-3
+  outstanding NO_RESPONSE writes per peer; a 13KB Push frame
+  chunking to ~27 writes silently dropped the tail without this.
+  See [[keystone-ble-flow-control]] in auto-memory.
+- `BleOutboundChunker` payload clamped to 512 (`GATT_MAX_ATTR_LEN`).
+- `MessageSyncEngine.exchangeReadReceipts` split by role; the
+  symmetric send-first form deadlocked.
+- Mutual-scan UX (`PairScreen` + `OnboardingViewModel`) keeps the QR
+  visible until the peer has scanned it.
+- Skip-onboarding UX (`OnboardingRoot` + `OnboardingViewModel`)
+  routes returning users past Welcome.
+- Friendly contact names (`contact` table, schema v6, MIGRATION_5_6,
+  `ContactDao`, `ContactEntity`, `ConversationViewModel.renameContact`,
+  tap-to-rename header in `ConversationScreen`).
+
+Diagnostic logging stays in across the entire stack — Noise XX step
+traces, engine phase traces, `sendFrame`/`receiveFrame` byte counts.
+Every one of them paid for itself across the 22 builds.
+
 ### v0.1 — handshake happy path (2026-05-18)
 The whole `Welcome → RolePicker → KeyGeneration → DisplayQr → ScanPeerQr
 → CompareFingerprints → RunHandshake → Result` flow drives a real Noise
@@ -279,12 +338,10 @@ encrypted DB.
 
 ## What's NOT Built Yet (see NEXT-STEPS.md for the full plan)
 
-- **Two-device hardware proof of the Tor leg** — Sprint 5 is wired
-  end-to-end in code but unproven on physical devices. The original
-  v0.1 proof on 2026-05-18 covered BLE+Noise only; the entire v0.6
-  stack (TrustGraph gate + foreground service + Tor daemon + new
-  QR/edge schema + Tor transport) has not been re-verified on two
-  phones with BLE off.
+- **Two-device hardware proof of the Tor leg over Tor only** — BLE +
+  messaging now demonstrably works. Tor is wired but every successful
+  round in the 2026-05-20 session used the BLE branch (in-room test).
+  The Tor branch needs its own two-device proof with BLE turned off.
 - **Revocation propagation** — local-only today; peer-to-peer
   propagation via sync is the next-highest priority after the Tor
   hardware proof.
@@ -304,8 +361,15 @@ encrypted DB.
 
 ## Memory / Plan State
 
-Active plan saved to spawn-mcp: key `active-task-keystone`. Live work
-item is the two-device hardware proof of the Tor leg, followed by
-revocation propagation (NEXT-STEPS.md §1, §2).
+End-to-end messaging works on hardware as of 2026-05-20 (commit
+`5afb67e`). Live work item is now the two-device hardware proof of
+the Tor leg WITH BLE OFF, followed by revocation propagation
+(NEXT-STEPS.md §1, §2).
 
-Update via `spawn_remember` after each milestone.
+Auto-memory references for this work:
+- [[keystone-messaging-works]] — 22-build journey, all fixes
+- [[keystone-ble-flow-control]] — the BLE pattern that hid the rest
+- [[keystone-first-pairing-milestone]] — earlier same-day milestone
+- [[keystone-sign-padding-bug]] — 5-year-old root cause
+- [[keystone-feedback-verify-baseline]] — apply same skepticism to
+  remaining unverified layers (Tor, revocation, Monero, vault).

@@ -1,0 +1,32 @@
+v0.7.1 — end-to-end encrypted messaging confirmed on hardware.
+
+First release where two paired Keystone devices have demonstrably
+exchanged encrypted messages over BLE on physical phones. Prior
+releases shipped the wire format but the full Noise XX + sync
+exchange had never closed end-to-end.
+
+What changed:
+• KeystoreManager.sign() no longer pads the message — every
+  signature in the project had been silently failing.
+• BleTransport emits the accept Link on GATT CONNECTED so the
+  responder side wins the role race deterministically.
+• MessageSyncService picks roles from a lexicographic pubkey
+  compare (smaller pub dials, larger accepts) — no symmetric
+  deadlock.
+• BLE write flow control on both client and server: the drainer
+  waits for onCharacteristicWrite / onNotificationSent between
+  chunks. Without this the Android stack silently dropped any
+  Push frame past ~3 chunks.
+• Session timeout, stale-Tor drain, MTU clamp, read-receipt
+  role split, race-scope detachment, and a half-dozen other
+  bugs the prior runs never reached.
+
+UX:
+• Tap a contact's fingerprint in a conversation to set a
+  friendly name.
+• Returning users with at least one trust edge skip the pair
+  flow and land in messaging.
+
+Still not hardware-verified: the Tor leg (every successful
+round used BLE), revocation propagation, the Monero scaffold,
+the vault module.
