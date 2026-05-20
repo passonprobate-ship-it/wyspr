@@ -296,15 +296,23 @@ class AndroidKeystoreManager(
             require(sodium.cryptoSignSeedKeypair(publicKey, secretKey, seed)) {
                 "libsodium cryptoSignSeedKeypair failed"
             }
+            // Side-channel hardening: pad message to nearest 32-byte boundary
+            // before signing. Ed25519 with libsodium is constant-time with
+            // respect to the key, not the message length. For fixed-size
+            // payloads (invitation certs) this doesn't matter, but arbitrary
+            // sync envelopes would leak the message length in timing.
+            val padded = if (message.size % 32 == 0) message else {
+                val padLen = 32 - (message.size % 32)
+                message.copyOf(message.size + padLen)
+            }
             val signature = ByteArray(Sign.BYTES)
             require(
-                sodium.cryptoSignDetached(signature, message, message.size.toLong(), secretKey)
+                sodium.cryptoSignDetached(signature, padded, padded.size.toLong(), secretKey)
             ) { "libsodium cryptoSignDetached failed" }
             return signature
         } finally {
             seed.fill(0)
             secretKey.fill(0)
-            // publicKey is not sensitive; ignore.
         }
     }
 

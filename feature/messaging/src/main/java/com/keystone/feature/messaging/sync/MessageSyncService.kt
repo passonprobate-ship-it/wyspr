@@ -9,16 +9,19 @@ import com.keystone.core.identity.CommunityId
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.transport.Link
 import com.keystone.core.transport.MessagingNotifier
-import com.keystone.core.transport.PeerEndpoint
+import com.keystone.core.transport.SyncTransportFacade
 import com.keystone.core.transport.TransportLifecycle
-import com.keystone.core.transport.bluetooth.BleTransport
+import com.keystone.core.trust.TrustGraphService
+import com.keystone.core.trust.runRevocationSyncRound
 import com.keystone.feature.messaging.MessageStore
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -26,28 +29,34 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * One-shot peer message sync. User taps "Sync now" on the
- * conversation list; both devices race to discover each other over
- * BLE, run Noise XX with channel binding against the local
- * TrustEdges, then invoke [MessageSyncEngine] to push pending +
+ * conversation list; both devices race to reach each other on every
+ * available transport, run Noise XX with channel binding against the
+ * local TrustEdges, then invoke [MessageSyncEngine] to push pending +
  * ingest inbound.
  *
  * Sprint 2 MVP: manual trigger, single attempt, 30s budget. Sprint
- * 3 will move this into a periodic background loop driven by the
- * transport foreground service.
+ * 5 (Tor end-to-end) widens the race to add Tor circuits alongside
+ * BLE — a peer with a known `.onion` is reachable across the
+ * internet, not just in the same room.
  *
  * ## Race semantics
  *
- * Both sides call [runOnce]. Each side starts [BleTransport]; the
- * service then races `discovered().first()` against
- * `acceptedLinks().first()`. Whichever fires first decides our
- * role:
- *   - discovered first → we initiate `connect()`, run Noise as Initiator
- *   - accepted first   → peer connected to us, run Noise as Responder
+ * Both sides call [runOnce]. Each side calls [SyncTransportFacade.startAll],
+ * then races three paths:
+ *   - BLE discover → connect (Initiator role)
+ *   - Tor dial of any known peer `.onion` (Initiator role)
+ *   - merged accept flow from BLE + Tor (Responder role)
+ *
+ * Whichever path produces a Link first wins; the losers are
+ * cancelled. The Tor branch returns null and stays parked (via
+ * [awaitCancellation]) when Tor isn't bootstrapped or no peer
+ * `.onion` is known — so it doesn't block the BLE-only first-pairing
+ * case.
  *
  * After Noise reaches transport, the peer's static key (X25519) is
  * checked against the X25519 derivations of every known TrustEdge
- * endpoint. A non-match closes the link unprocessed — Sprint 2 does
- * not negotiate with strangers, even strangers on the same community.
+ * endpoint. A non-match closes the link unprocessed — we do not
+ * negotiate with strangers, even strangers on the same community.
  *
  * ## Lifecycle
  *
@@ -60,10 +69,11 @@ class MessageSyncService @Inject constructor(
     private val database: KeystoneDatabase,
     private val keystore: KeystoreManager,
     private val sodium: LazySodiumAndroid,
-    private val bleTransport: BleTransport,
+    private val transports: SyncTransportFacade,
     private val store: MessageStore,
     private val transportLifecycle: TransportLifecycle,
     private val notifier: MessagingNotifier,
+    private val trustGraphService: TrustGraphService,
 ) {
 
     private val lock = Mutex()
@@ -72,6 +82,7 @@ class MessageSyncService @Inject constructor(
         val attemptedPeers: Int,
         val pushedMessages: Int,
         val receivedMessages: Int,
+        val revocationsReceived: Int = 0,
         val errorReason: String? = null,
     )
 
@@ -86,25 +97,25 @@ class MessageSyncService @Inject constructor(
     private suspend fun runOnceInternal(timeoutMs: Long): Result {
         if (!database.isOpen) database.open()
         val ownIdentity = runCatching { keystore.loadOrCreateIdentityKey() }.getOrNull()
-            ?: return Result(0, 0, 0, "Could not load local identity")
+            ?: return Result(0, 0, 0, errorReason = "Could not load local identity")
         val ownPub = PublicKey(ownIdentity.publicKey)
 
         val membership = database.communityMembershipDao.firstOrNull()
-            ?: return Result(0, 0, 0, "No active community on this device")
+            ?: return Result(0, 0, 0, errorReason = "No active community on this device")
         val communityId = CommunityId(membership.communityId)
 
         // Build the X25519 lookup table once — the channel-binding
         // step compares the peer's noise static against these.
         val peerLookup = buildPeerLookup(ownPub)
         if (peerLookup.isEmpty()) {
-            return Result(0, 0, 0, "No paired peers — complete a handshake first")
+            return Result(0, 0, 0, errorReason = "No paired peers — complete a handshake first")
         }
 
         transportLifecycle.acquireForSharing()
         try {
-            bleTransport.start(communityId)
-            val outcome = withTimeoutOrNull(timeoutMs) { firstAvailableLink() }
-                ?: return Result(0, 0, 0, "No peer in range")
+            transports.startAll(communityId)
+            val outcome = withTimeoutOrNull(timeoutMs) { firstAvailableLink(ownPub.bytes) }
+                ?: return Result(0, 0, 0, errorReason = "No peer in range")
             val link = outcome.link
             val role = outcome.role
             try {
@@ -123,16 +134,47 @@ class MessageSyncService @Inject constructor(
                 if (sessionResult.engineResult.receivedCount > 0) {
                     postInboundNotification(sessionResult.peerPub)
                 }
+                // Piggyback a revocation anti-entropy round on the
+                // same Noise transport. Both peers are already
+                // mutually authenticated; revocations they hold get
+                // exchanged before the link closes.
+                //
+                // Failures here are non-fatal — the messaging
+                // exchange already succeeded and the user has already
+                // seen their messages. We just don't carry the
+                // revocation count forward. CancellationException is
+                // rethrown so the parent scope's cancellation
+                // contract is preserved.
+                val revocationsReceived = try {
+                    val graph = trustGraphService.snapshot()
+                    runRevocationSyncRound(
+                        link = link,
+                        database = database,
+                        communityId = communityId.bytes,
+                        trustGraph = graph,
+                        sodium = sodium,
+                    )
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    android.util.Log.w(
+                        "MessageSyncService",
+                        "Revocation round failed after messaging succeeded: " +
+                            "${t.javaClass.simpleName}",
+                    )
+                    0
+                }
                 return Result(
                     attemptedPeers = 1,
                     pushedMessages = sessionResult.engineResult.pushedCount,
                     receivedMessages = sessionResult.engineResult.receivedCount,
+                    revocationsReceived = revocationsReceived,
                 )
             } finally {
                 runCatching { link.close() }
             }
         } finally {
-            runCatching { bleTransport.stop() }
+            runCatching { transports.stopAll() }
             transportLifecycle.release()
         }
     }
@@ -140,28 +182,45 @@ class MessageSyncService @Inject constructor(
     private data class LinkOutcome(val link: Link, val role: MessageSyncEngine.HandshakeRole)
 
     /**
-     * Race the discovery flow against the accept flow. The first
-     * to produce a usable Link wins; we cancel the loser.
+     * Race three paths to a Link: BLE discover+connect, Tor dial of
+     * any known peer `.onion`, and the merged accept flow from both
+     * transports. The first to produce a Link wins; losers are
+     * cancelled. The Tor dial path returns null and parks on
+     * [awaitCancellation] when Tor isn't viable, so the BLE-only
+     * first-pairing case isn't slowed down.
      */
-    private suspend fun firstAvailableLink(): LinkOutcome = coroutineScope {
-        val discoverDeferred = async {
-            val endpoint: PeerEndpoint = bleTransport.discovered().first()
-            val link = bleTransport.connect(endpoint)
+    private suspend fun firstAvailableLink(ownPubBytes: ByteArray): LinkOutcome = coroutineScope {
+        val bleConnectDeferred = async {
+            val link = transports.bleDiscoverAndConnect()
+            LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
+        }
+        val torDialDeferred = async {
+            val link = transports.dialFirstKnownOnion(ownPubBytes)
+                ?: awaitCancellation()
             LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
         }
         val acceptDeferred = async {
-            val link = bleTransport.acceptedLinks().first()
+            val link = transports.acceptedLinks().first()
             LinkOutcome(link, MessageSyncEngine.HandshakeRole.Responder)
         }
-        // select-like race via try/catch on the loser path.
         val outcome = kotlinx.coroutines.selects.select<LinkOutcome> {
-            discoverDeferred.onAwait { it }
+            bleConnectDeferred.onAwait { it }
+            torDialDeferred.onAwait { it }
             acceptDeferred.onAwait { it }
         }
-        if (outcome.role == MessageSyncEngine.HandshakeRole.Initiator) {
-            acceptDeferred.cancel()
-        } else {
-            discoverDeferred.cancel()
+        // Three branches, one winner. Each loser is in one of two
+        // states: still suspended (cancel it) or already completed
+        // in the same tick as the winner (close its dangling Link
+        // — cancel() after completion doesn't reclaim the resource).
+        for (d in listOf(bleConnectDeferred, torDialDeferred, acceptDeferred)) {
+            if (d.isCompleted) {
+                val loser = runCatching { d.getCompleted() }.getOrNull() ?: continue
+                if (loser.link !== outcome.link) {
+                    launch { runCatching { loser.link.close() } }
+                }
+            } else {
+                d.cancel()
+            }
         }
         outcome
     }

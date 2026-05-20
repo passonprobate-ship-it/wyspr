@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Pre-commit hook — runs unit tests for modules that have staged changes.
+# Install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+CHANGED_MODULES=$(git diff --cached --name-only -- '*/src/main/*' '*/src/test/*' | \
+  sed -n 's|^\(.*\)/src/.*$|\1|p' | sort -u)
+
+if [ -z "$CHANGED_MODULES" ]; then
+  echo "pre-commit: no module sources changed, skipping tests."
+  exit 0
+fi
+
+TEST_TASKS=()
+for mod in $CHANGED_MODULES; do
+  if [ -f "$mod/build.gradle.kts" ]; then
+    # Convert path to Gradle project name, e.g. core/crypto -> :core:crypto
+    PROJECT=":$(echo "$mod" | tr '/' ':')"
+    TEST_TASKS+=("${PROJECT}:testDebugUnitTest")
+  fi
+done
+
+if [ ${#TEST_TASKS[@]} -eq 0 ]; then
+  echo "pre-commit: no Gradle modules matched, skipping tests."
+  exit 0
+fi
+
+echo "pre-commit: running tests for changed modules..."
+./gradlew "${TEST_TASKS[@]}" --no-daemon --stacktrace
+echo "pre-commit: all tests passed."

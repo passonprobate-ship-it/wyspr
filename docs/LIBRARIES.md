@@ -13,8 +13,9 @@ use, why we picked it, and what we deliberately rejected.
    adversarial environments (Briar, Signal, Tor).
 3. **Reproducible builds.** Prefer libraries that publish source +
    checksums to Maven Central; avoid AAR-only black-box drops.
-4. **Native code = scrutinize twice.** Native (JNI) dependencies have
-   a larger attack surface than pure-JVM ones. Justify every native lib.
+4. **Native code = scrutinize twice.** Native (JNI / fork) dependencies
+   have a larger attack surface than pure-JVM ones. Justify every native
+   lib.
 5. **No analytics. No telemetry. No crash reporters that phone home.**
    If a library includes one, fork it or pick a different one.
 
@@ -24,22 +25,28 @@ use, why we picked it, and what we deliberately rejected.
 
 | Concern | Library | Version | License | Notes |
 |---------|---------|---------|---------|-------|
-| Noise protocol | `com.github.rweather:noise-java` | `0.1.x` | MIT | Reference Java implementation. Audited and used by several projects. We use Noise_XX_25519_ChaChaPoly_BLAKE2s. |
-| AEAD, HKDF, Ed25519 | `com.goterl:lazysodium-android` | `5.1.x` | MPL-2.0 | libsodium binding. ARM64 + x86_64 binaries shipped. Preferred over Tink for stable API and small surface. |
-| Hardware keystore | `androidx.security:security-crypto` | `1.1.0-alpha06` | Apache-2.0 | Only for `EncryptedSharedPreferences`; primary keystore use is direct via `java.security.KeyStore`. |
+| Noise protocol | `com.github.rweather:noise-java` | commit `49377b6` (JitPack) | MIT | Reference Java impl of the Noise framework. We use `Noise_XX_25519_ChaChaPoly_BLAKE2s`. No tagged release exists on JitPack; pinning the SHA keeps the build reproducible. Re-evaluate if JitPack ever refuses the commit — fallback is a hand-rolled XX over libsodium primitives plus a ported BLAKE2s (libsodium exposes only BLAKE2b). |
+| BLAKE2s digest | `noise-java`'s `Blake2sMessageDigest` | (transitive) | MIT | Already on the classpath; used by `ServiceUuid` to derive the BLE service UUID from `community_id`. RFC 7693 vectors tested. |
+| AEAD, HKDF, Ed25519, X25519 | `com.goterl:lazysodium-android` + `net.java.dev.jna:jna` | `5.1.0@aar` + `5.13.0@aar` | MPL-2.0 / Apache-2.0 | libsodium binding. ARM64 + x86_64 binaries shipped. Preferred over Tink for stable API and small surface. Hard requirement: Ed25519 → X25519 derivation via `crypto_sign_ed25519_sk_to_curve25519`. |
+| HSv3 key derivation | `org.bouncycastle:bcprov-jdk18on` | `1.78.1` | MIT-style | Needed for SHA3-256 + Ed25519 `scalarMultBase` on minSdk 26, where the platform JCE doesn't expose them. Declared explicitly on `:app` because `:feature:onboarding` pulls it transitively as `implementation`, hiding its classes from `:app` at compile time. |
+| Hardware keystore | `androidx.security:security-crypto` | `1.1.0-alpha06` | Apache-2.0 | Only for `EncryptedSharedPreferences`; primary keystore use is direct via `java.security.KeyStore` (StrongBox preferred, TEE floor; refuses software-only). |
+| Biometric prompt | `androidx.biometric:biometric` + `androidx.fragment:fragment-ktx` | `1.1.0` + `1.6.2` | Apache-2.0 | App-level lock on launch, gating keystore-derived key access. |
 
-**Rejected**: BouncyCastle pure-JVM crypto (too large, pure-software,
-encourages weaker fallbacks); Google Tink (fine but heavier and harder
-to pin to specific primitives).
+**Rejected**: BouncyCastle as a general-purpose crypto layer (too large,
+pure-software, encourages weaker fallbacks — we keep the surface
+minimal); Google Tink (fine but heavier and harder to pin to specific
+primitives).
 
-### P2P / Transport
+### Transport
 
 | Concern | Library | Version | License | Notes |
 |---------|---------|---------|---------|-------|
-| BLE GATT | `androidx.bluetooth:bluetooth` | `1.0.0-alpha02` (track stable) | Apache-2.0 | New Jetpack BLE library; cleaner than `android.bluetooth.le.*` directly. Falls back to platform APIs if unstable. |
-| WiFi Direct | Platform `android.net.wifi.p2p.WifiP2pManager` | n/a | n/a | No third-party wrapper; the platform API is the right abstraction level. |
-| Long-range (deferred) | `info.guardianproject:tor-android` | `0.4.x` | BSD-3 | For optional Tor hidden-service transport. Scoped out of v0. |
-| QR codes | `com.google.zxing:core` + `com.journeyapps:zxing-android-embedded` | `3.5.x` + `4.3.x` | Apache-2.0 | Read + generate. Used only for handshake; no other QR surface. |
+| BLE GATT | Platform `android.bluetooth.*` | n/a | n/a | Direct platform APIs — the Jetpack `androidx.bluetooth` lib was unstable when we evaluated and ships less surface than we need (no GATT server). |
+| WiFi Direct | Platform `android.net.wifi.p2p.WifiP2pManager` | n/a | n/a | Discovery half implemented; `connect()` deferred to a later sprint. |
+| Tor (embedded) | `io.matthewnelson.kmp-tor:runtime` + `:resource-exec-tor` + `:resource-noexec-tor` | `2.0.0` + `408.13.2` × 2 | Apache-2.0 / BSD-3 (tor) | Bundles a real `tor` binary, extracted to `nativeLibraryDir` on install and `fork()`ed at runtime; the `-noexec` companion is a shim picked on devices that block fork. Pinned to 2.0.0 because everything later is built against Kotlin 2.1+ whose stdlib metadata our 1.9.22 compiler cannot read. Re-evaluate the moment Keystone upgrades past Kotlin 2.0. JNI extraction requires `packaging { jniLibs { useLegacyPackaging = true } }`. |
+| Reticulum / LoRa | (none — placeholder) | — | — | `:core:transport:reticulum` is a stub. No maintained Kotlin/JVM Reticulum client exists; the wiring will most likely come via JNI to the C port or a localhost bridge to a paired Reticulum daemon on an ironmesh node. |
+| QR rendering | `com.google.zxing:core` | `3.5.2` | Apache-2.0 | Used by `core:ui/QrRenderer`. Lives in `:core:ui` because we render fingerprints + share URLs in multiple features. |
+| QR scanning | `androidx.camera:camera-core` / `-camera2` / `-lifecycle` / `-view` + `com.google.zxing:core` | CameraX `1.3.1` | Apache-2.0 | CameraX lives only in `:feature:onboarding` (`ScanPeerQrScreen`, peer-share-mini-site URL pickup). Scanning is hardened against phone-screen reading conditions: ZXing TRY_HARDER hints, multi-frame retry, glare/low-light tolerance. |
 
 **Rejected**:
 
@@ -50,32 +57,37 @@ to pin to specific primitives).
   means depending on Google. Disqualified by Pillar 1.
 - **Bridgefy SDK** — proprietary, phoned home in past versions, audit
   history of catastrophic bugs. Hard reject.
+- **Tor-Android (Guardian Project)** — superseded by `kmp-tor`, which
+  ships a more current `tor` binary and a Kotlin/coroutines API.
 
 ### Persistence
 
 | Concern | Library | Version | License | Notes |
 |---------|---------|---------|---------|-------|
-| Relational store | `androidx.room:room-runtime` / `-ktx` / `-compiler` | `2.6.1` | Apache-2.0 | Standard Room. |
-| Encrypted SQLite | `net.zetetic:sqlcipher-android` | `4.6.x` | BSD-3 | Backs Room via `SupportFactory`. Key derived from hardware-keystore identity. |
+| Relational store | `androidx.room:room-runtime` / `-ktx` / `-compiler` | `2.6.1` | Apache-2.0 | Standard Room. Migrations are additive — see PROTOCOLS.md §3.4 for the live schema versions. |
+| Encrypted SQLite | `net.zetetic:sqlcipher-android` | `4.6.x` | BSD-3 | Backs Room via `SupportOpenHelperFactory`. Key derived from `KEYSTONE/v1/db` HKDF subkey of the hardware-keystore identity. |
 | Preferences | `androidx.datastore:datastore-preferences` | `1.0.0` | Apache-2.0 | UI prefs only — never identity or trust state. |
 
-### UI / DI
+### UI / DI / Lifecycle
 
 | Concern | Library | Version | License | Notes |
 |---------|---------|---------|---------|-------|
-| Compose | `androidx.compose:compose-bom` | `2024.02.00` | Apache-2.0 | Same BOM as xpat for consistency on Pi 5 build. |
+| Compose | `androidx.compose:compose-bom` | `2024.02.00` | Apache-2.0 | Pinned for Pi 5 build stability. Material3 + extended icons. |
 | Navigation | `androidx.navigation:navigation-compose` | `2.7.7` | Apache-2.0 | Single-activity, Compose nav. |
-| DI | `com.google.dagger:hilt-android` | `2.50` | Apache-2.0 | Same as xpat / rovo. |
-| Work | `androidx.work:work-runtime-ktx` | `2.9.0` | Apache-2.0 | For periodic sync attempts when transports come up. |
+| Activity | `androidx.activity:activity-compose` | `1.8.2` | Apache-2.0 | |
+| DI | `com.google.dagger:hilt-android` | `2.50` (KSP) | Apache-2.0 | Hilt at the DI root; manual factories below it. KSP `1.9.22-1.0.18`. |
+| Lifecycle | `androidx.lifecycle:lifecycle-runtime-ktx` / `-runtime-compose` / `-viewmodel-compose` | `2.7.0` | Apache-2.0 | |
+| Splash | `androidx.core:core-splashscreen` | `1.0.1` | Apache-2.0 | |
 
 ### Build
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| AGP | `8.2.0` | Pinned to xpat's version for Pi 5 build stability |
-| Kotlin | `1.9.22` | KSP `1.9.22-1.0.18` |
-| Compose compiler ext | `1.5.10` | |
-| JDK target | `17` | OpenJDK 17.0.18 already installed |
+| AGP | `8.2.0` | Pinned for build stability across CI + Pi 5. |
+| Kotlin | `1.9.22` | KSP `1.9.22-1.0.18`. **Do not bump past 2.0 without coordinating with the kmp-tor pin.** |
+| Compose compiler ext | `1.5.10` | Tied to the Kotlin version. |
+| JDK target | `17` | OpenJDK 17 already installed across dev machines. |
+| Gradle heap | `1536m` | Bump to `2048m` if KSP/Hilt OOMs. |
 
 ## Forbidden Dependencies (project-wide deny list)
 
@@ -87,18 +99,22 @@ Anything from this list MUST NOT be added without explicit security review.
 - Facebook SDK, Twitter Kit, any social SDK
 - Any analytics library, including "self-hosted" ones we haven't audited
 - AppsFlyer, Branch, Adjust, or any attribution SDK
-- Stripe / Braintree client SDKs (Keystone doesn't take payments; if it ever does, the integration is server-side via a user-controlled VPS)
+- Stripe / Braintree client SDKs (Keystone doesn't take payments; if it
+  ever does, the integration is server-side via a user-controlled VPS)
 
-The CI pipeline will fail any PR introducing one of these. (CI not yet wired;
-see `CLAUDE.md`.)
+CI grep that fails the build on any banned identifier is still
+outstanding — see NEXT-STEPS.md §7.
 
 ## Update Policy
 
 - **Crypto libraries**: update on every security advisory, within 7 days.
 - **Transport libraries**: update on minor releases; major releases get
-  a fresh review of the changelog before merge.
-- **Everything else**: quarterly batch update with a fresh dependency scan.
+  a fresh review of the changelog before merge. The kmp-tor pin is held
+  on the Kotlin 1.9 boundary — see the inline build-file comment for
+  the resignation criteria.
+- **Everything else**: quarterly batch update with a fresh dependency
+  scan.
 
-`gradle/libs.versions.toml` is the single source of truth for versions
-(once introduced; first sprint inlines them in `app/build.gradle.kts`
-for simplicity).
+Per-module versions are inlined in each `build.gradle.kts` for now.
+A consolidated `gradle/libs.versions.toml` is on the roadmap once the
+dependency surface stops moving.

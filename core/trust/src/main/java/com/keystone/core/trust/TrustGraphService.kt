@@ -2,6 +2,7 @@ package com.keystone.core.trust
 
 import com.keystone.core.crypto.KeystoreManager
 import com.keystone.core.database.KeystoneDatabase
+import com.keystone.core.database.entities.RevocationEntity
 import com.keystone.core.database.entities.TrustEdgeEntity
 import com.keystone.core.identity.CommunityId
 import com.keystone.core.identity.PublicKey
@@ -87,12 +88,31 @@ class TrustGraphService(
         // protocol), this is the only Root in the local graph.
         val roots: Set<PublicKey> = if (membership.isFounder) setOf(ownPub) else emptySet()
         val edges = database.trustEdgeDao.all().map { it.toTrustEdge() }
+        // Persisted revocations are trusted: they were verified by
+        // RevocationSyncRepository.ingest before they reached the DB.
+        // Replaying them here surfaces the matching peers as
+        // Quarantined in [trustLevel], which is what gates further
+        // revocations issued by an already-revoked attacker from being
+        // accepted in this round.
+        val revocations = database.revocationDao.all().map { it.toRevocation(communityId) }
         return TrustGraphImpl(
             communityId = communityId,
             roots = roots,
             initialEdges = edges,
+            initialRevocations = revocations,
         )
     }
+
+    private fun RevocationEntity.toRevocation(communityId: CommunityId): RevocationCertificate =
+        RevocationCertificate(
+            version = RevocationCertificate.VERSION,
+            issuerPub = PublicKey(issuerPub),
+            targetPub = PublicKey(targetPub),
+            communityId = communityId,
+            issuedAt = issuedAt,
+            reasonCode = RevocationCertificate.ReasonCode.valueOf(reasonCode),
+            signature = signature,
+        )
 
     private fun TrustEdgeEntity.toTrustEdge(): TrustEdge = TrustEdge(
         from = PublicKey(fromPub),

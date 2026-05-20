@@ -19,6 +19,23 @@ interface TrustEdgeDao {
     @Query("DELETE FROM trust_edge WHERE fromPub = :from AND toPub = :to")
     suspend fun delete(from: ByteArray, to: ByteArray)
 
+    @Query("SELECT * FROM trust_edge WHERE toPub = :toPub LIMIT 1")
+    suspend fun byToPub(toPub: ByteArray): TrustEdgeEntity?
+
+    /**
+     * Resolve the peer's `.onion` for an edge that involves both [a]
+     * and [b], regardless of which side issued the cert. The Inviter
+     * stores its edge as `(local, peer)` and the Invitee stores its
+     * edge as `(peer, local)`; a lookup by a single column would miss
+     * the other case.
+     */
+    @Query(
+        "SELECT peerOnion FROM trust_edge " +
+            "WHERE (fromPub = :a AND toPub = :b) OR (fromPub = :b AND toPub = :a) " +
+            "LIMIT 1"
+    )
+    suspend fun peerOnionForEndpoints(a: ByteArray, b: ByteArray): String?
+
     @Query("SELECT COUNT(*) FROM trust_edge")
     suspend fun count(): Int
 }

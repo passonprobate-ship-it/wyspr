@@ -5,6 +5,9 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.NetworkInfo
+import android.net.wifi.p2p.WifiP2pConfig
+import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
@@ -13,31 +16,28 @@ import com.keystone.core.transport.Link
 import com.keystone.core.transport.PeerEndpoint
 import com.keystone.core.transport.ServiceUuid
 import com.keystone.core.transport.Transport
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 
-/**
- * WiFi Direct transport — discovery half. PROTOCOLS.md §6.
- *
- * v0.1 scope:
- *   - Publish a Bonjour-style local service whose name encodes the
- *     community UUID (no device name, no per-device identifier).
- *   - Discover other peers publishing the same service name.
- *   - Stream them as [PeerEndpoint]s.
- *
- * v0.2 (deferred):
- *   - connect() — invite peer + open TCP socket on the group owner
- *   - Link impl with length-prefixed framing over TCP
- *
- * BLE remains the primary handshake transport. WiFi Direct is reserved
- * for high-bandwidth post-handshake sync sessions, and is initiated
- * only after both sides have authenticated over BLE first.
- */
+private const val TCP_PORT = 9092
+private const val ACCEPT_BACKLOG = 50
+
 class WifiDirectTransport(private val context: Context) : Transport {
 
     override val kind: Transport.Kind = Transport.Kind.WifiDirect
@@ -49,6 +49,8 @@ class WifiDirectTransport(private val context: Context) : Transport {
     private val lock = Mutex()
     @Volatile private var session: Session? = null
 
+    private val transportScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private data class Session(
         val community: CommunityId,
         val channel: WifiP2pManager.Channel,
@@ -57,6 +59,9 @@ class WifiDirectTransport(private val context: Context) : Transport {
         val serviceRequest: WifiP2pDnsSdServiceRequest,
         val receiver: BroadcastReceiver,
         val discovered: MutableSharedFlow<PeerEndpoint>,
+        val serverSocket: ServerSocket,
+        val acceptJob: Job,
+        val accepted: MutableSharedFlow<Link>,
     )
 
     val isWifiP2pReady: Boolean get() = manager != null
@@ -100,12 +105,34 @@ class WifiDirectTransport(private val context: Context) : Transport {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 if (intent?.action == WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION) {
-                    // Peer set changed — re-query services so the listener fires.
                     m.discoverServices(channel, null)
                 }
             }
         }
         context.registerReceiver(receiver, IntentFilter(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION))
+
+        val serverSocket = ServerSocket(TCP_PORT, ACCEPT_BACKLOG)
+        val accepted = MutableSharedFlow<Link>(
+            replay = 0,
+            extraBufferCapacity = 16,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+
+        val acceptJob = transportScope.launch {
+            try {
+                while (true) {
+                    val socket = serverSocket.accept()
+                    runCatching { socket.tcpNoDelay = true }
+                    val link = WifiDirectLink(
+                        PeerEndpoint(kind, socket.inetAddress?.hostAddress ?: "unknown"),
+                        socket,
+                    )
+                    accepted.tryEmit(link)
+                }
+            } catch (_: IOException) {
+                // server socket closed — stop accepting
+            }
+        }
 
         session = Session(
             community = communityId,
@@ -115,10 +142,12 @@ class WifiDirectTransport(private val context: Context) : Transport {
             serviceRequest = request,
             receiver = receiver,
             discovered = discovered,
+            serverSocket = serverSocket,
+            acceptJob = acceptJob,
+            accepted = accepted,
         )
     }
 
-    @SuppressLint("MissingPermission")
     override suspend fun stop(): Unit = lock.withLock {
         val current = session ?: return@withLock
         session = null
@@ -127,17 +156,60 @@ class WifiDirectTransport(private val context: Context) : Transport {
         runCatching { m.removeServiceRequest(current.channel, current.serviceRequest, null) }
         runCatching { m.clearServiceRequests(current.channel, null) }
         runCatching { context.unregisterReceiver(current.receiver) }
+        current.acceptJob.cancel()
+        runCatching { current.serverSocket.close() }
     }
 
     override fun discovered(): Flow<PeerEndpoint> =
         session?.discovered?.asSharedFlow() ?: emptyFlow()
 
-    override suspend fun connect(endpoint: PeerEndpoint): Link {
+    override fun acceptedLinks(): Flow<Link> =
+        session?.accepted?.asSharedFlow() ?: emptyFlow()
+
+    @SuppressLint("MissingPermission")
+    override suspend fun connect(endpoint: PeerEndpoint): Link = withContext(Dispatchers.IO) {
         require(endpoint.kind == Transport.Kind.WifiDirect)
-        TODO(
-            "v0.2: implement WifiP2pManager.connect + TCP socket on the " +
-                "group-owner IP. v0.1 ships with BLE-only handshakes; this " +
-                "transport is currently discovery-only."
+        val s = session ?: error("WifiDirectTransport not started — call start() first")
+        val m = manager ?: error("WiFi Direct not available")
+
+        val config = WifiP2pConfig().apply { deviceAddress = endpoint.opaqueAddress }
+
+        val groupOwnerIp = CompletableDeferred<InetAddress>()
+
+        val connReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action != WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION) return
+                val networkInfo = intent.getParcelableExtra<NetworkInfo>(WifiP2pManager.EXTRA_NETWORK_INFO)
+                val wifiP2pInfo = intent.getParcelableExtra<WifiP2pInfo>(WifiP2pManager.EXTRA_WIFI_P2P_INFO)
+                if (networkInfo?.isConnected == true && wifiP2pInfo?.groupFormed == true) {
+                    val addr = wifiP2pInfo.groupOwnerAddress
+                    if (addr != null) {
+                        groupOwnerIp.complete(addr)
+                    }
+                }
+            }
+        }
+
+        context.registerReceiver(
+            connReceiver,
+            IntentFilter(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION),
         )
+
+        m.connect(s.channel, config, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() { /* wait for broadcast */ }
+            override fun onFailure(reason: Int) {
+                groupOwnerIp.completeExceptionally(
+                    IOException("WiFi P2P connect failed: reason=$reason"),
+                )
+            }
+        })
+
+        try {
+            val addr = groupOwnerIp.await()
+            val socket = Socket(addr, TCP_PORT)
+            WifiDirectLink(endpoint, socket)
+        } finally {
+            runCatching { context.unregisterReceiver(connReceiver) }
+        }
     }
 }

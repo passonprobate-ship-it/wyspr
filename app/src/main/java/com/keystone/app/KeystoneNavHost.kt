@@ -10,10 +10,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.keystone.app.biometric.BiometricUnlocker
 import com.keystone.app.permissions.rememberBlePermissionGate
+import com.keystone.feature.coordination.CoordinationRoot
+import com.keystone.feature.directory.DirectoryRoot
 import com.keystone.feature.marketplace.MarketplaceRoot
 import com.keystone.feature.messaging.MessagingRoot
 import com.keystone.feature.onboarding.OnboardingRoot
 import com.keystone.feature.onboarding.screens.DiscoveryScreen
+import com.keystone.feature.vault.VaultRoot
 
 /**
  * Top-level navigation graph. Feature modules each contribute a
@@ -80,7 +83,7 @@ fun KeystoneNavHost(
             DiscoveryScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.Vault) {
-            // TODO: feature:vault entry composable
+            VaultRoot()
         }
         composable(Routes.Marketplace) {
             MarketplaceRoot(
@@ -103,10 +106,10 @@ fun KeystoneNavHost(
             )
         }
         composable(Routes.Coordination) {
-            // TODO: feature:coordination entry composable
+            CoordinationRoot()
         }
         composable(Routes.Directory) {
-            // TODO: feature:directory entry composable
+            DirectoryRoot()
         }
     }
 }

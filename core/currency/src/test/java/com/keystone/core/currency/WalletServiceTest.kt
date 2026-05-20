@@ -337,6 +337,9 @@ class WalletServiceTest {
             override suspend fun upsert(edge: TrustEdgeEntity) = throw NotImplementedError()
             override suspend fun all(): List<TrustEdgeEntity> = throw NotImplementedError()
             override suspend fun delete(from: ByteArray, to: ByteArray) = throw NotImplementedError()
+            override suspend fun byToPub(toPub: ByteArray): TrustEdgeEntity? = throw NotImplementedError()
+            override suspend fun peerOnionForEndpoints(a: ByteArray, b: ByteArray): String? =
+                throw NotImplementedError()
             override suspend fun count(): Int = throw NotImplementedError()
         }
         override val revocationDao: RevocationDao = object : RevocationDao {
@@ -354,6 +357,23 @@ class WalletServiceTest {
                     throw NotImplementedError()
                 override suspend fun count(): Int = throw NotImplementedError()
                 override suspend fun deleteAll() = throw NotImplementedError()
+            }
+        // Messaging is not exercised in WalletServiceTest, but the
+        // KeystoneDatabase contract now requires the field. Every
+        // method throws so a stray test that reaches for it fails
+        // loudly instead of silently returning empty.
+        override val messageDao: com.keystone.core.database.dao.MessageDao =
+            object : com.keystone.core.database.dao.MessageDao {
+                override suspend fun upsert(message: com.keystone.core.database.entities.MessageEntity) =
+                    throw NotImplementedError()
+                override fun threadFlow(peerPub: ByteArray) = throw NotImplementedError()
+                override suspend fun threadSnapshot(peerPub: ByteArray) = throw NotImplementedError()
+                override fun latestPerThreadFlow() = throw NotImplementedError()
+                override suspend fun unreadCountFor(peerPub: ByteArray) = throw NotImplementedError()
+                override suspend fun pendingOutboundFrom(selfPub: ByteArray) = throw NotImplementedError()
+                override suspend fun updateStatus(id: ByteArray, status: String) = throw NotImplementedError()
+                override suspend fun delete(id: ByteArray) = throw NotImplementedError()
+                override suspend fun byId(id: ByteArray) = throw NotImplementedError()
             }
     }
 

@@ -5,11 +5,14 @@ in any module MUST match this spec; if they diverge, the spec is wrong, fix
 it here first.
 
 All multi-byte integers are big-endian. All structured payloads are CBOR
-(RFC 8949) with deterministic encoding (RFC 8949 §4.2.1).
+(RFC 8949) with deterministic encoding (RFC 8949 §4.2.1) via the shared
+`core:crypto/Cbor` codec, which rejects non-shortest integer encodings,
+indefinite-length items, and trailing bytes on decode.
 
 ## 1. Frame Layer
 
-Every transport (BLE, WiFi Direct, future Tor) carries the same frame:
+Every transport (BLE, WiFi Direct, Tor, future Reticulum) carries the
+same frame:
 
 ```
 [ frame_len: u16 ][ payload: bytes ]
@@ -20,12 +23,14 @@ Every transport (BLE, WiFi Direct, future Tor) carries the same frame:
   establishment, or a Noise handshake message **during** establishment.
 - There are no plaintext frames at the application layer. Ever.
 
-Transports MAY add their own framing below this (BLE has L2CAP MTU; WiFi
-Direct uses TCP-over-P2P) but MUST NOT inspect or modify the payload.
+Transports MAY add their own framing below this (BLE chunks at `MTU − 3`
+bytes with a length-prefixed reassembler; Tor wraps in TCP-over-circuit)
+but MUST NOT inspect or modify the payload.
 
 ## 2. Noise Session
 
-Pattern: `Noise_XX_25519_ChaChaPoly_BLAKE2s`.
+Pattern: `Noise_XX_25519_ChaChaPoly_BLAKE2s`, via the `noise-java` impl
+pinned at commit `49377b6`.
 
 Why XX:
 - Mutual authentication.
@@ -37,11 +42,11 @@ Channel binding:
 - The handshake hash after the final XX message is included in the first
   application message. The receiver re-derives it and compares. If it
   differs, the session terminates.
-- For the handshake initiated from a QR scan, both QR nonces are mixed
-  into the prologue:
-  `prologue = "KEYSTONE/v1" || community_id || nonce_a || nonce_b`
-  where `nonce_a` and `nonce_b` come from the two QRs. This binds the
-  cryptographic session to the physical-world act of scanning.
+- For the handshake initiated from a QR scan, both QR nonces and the
+  community id are mixed into the prologue:
+  `prologue = "KEYSTONE/v1" || community_id || nonce_inviter || nonce_invitee || eph_pub_inviter || eph_pub_invitee`
+  This binds the cryptographic session to the physical-world act of
+  scanning.
 
 Rekey policy:
 - Rekey after `2^20` frames or 24 hours, whichever comes first.
@@ -50,21 +55,29 @@ Rekey policy:
 
 ### 3.1 QR Payload
 
-CBOR map, base32 (no padding) encoded for QR density:
+Canonical CBOR array, base32 (no padding) encoded for QR density.
+**Wire version 2** (current — Sprint 3 onwards) carries seven fields:
 
 ```
-HandshakeQR {
-  v:    u8 = 1                  // schema version
-  cid:  bytes[32]               // community_id
-  ipub: bytes[32]               // identity public key
-  epub: bytes[32]               // ephemeral X25519 public key for this handshake
-  n:    bytes[16]               // nonce; bound into Noise prologue
-  ts:   u64                     // unix seconds; QR is rejected if > 5 min old
-}
+HandshakeQR v2 [
+  ver:        u8 = 2,
+  community:  bstr(32),     // community_id
+  identity:   bstr(32),     // identity public key
+  ephemeral:  bstr(32),     // ephemeral X25519 public key for this handshake
+  nonce:      bstr(16),     // bound into Noise prologue
+  mintedAt:   u64,          // unix seconds; QR is rejected if > 5 min old
+  onion:      bstr(56) | null,  // optional HSv3 .onion (ASCII)
+]
 ```
 
-QR is regenerated every 5 minutes while the screen is open. Stale QRs are
-rejected on scan.
+**Wire version 1** (legacy, decode-only) is identical without the trailing
+`onion`. Encoding always emits v2 — the QR is regenerated every 5 minutes
+while the screen is open, so there are no v1 emitters to keep working.
+Stale QRs are rejected on scan.
+
+The decoder pins the field count to the declared version: a v1 array
+masquerading as `ver=2` (or vice versa) is rejected even though both
+versions are otherwise accepted.
 
 ### 3.2 Sequence
 
@@ -85,6 +98,10 @@ scan QR_B  ───────────────────────
 
            [secure transport mode begins]
 
+           [Inviter consults local TrustGraph.canIssueInvitations(self);
+            aborts here without leaking which check failed if it returns
+            false]
+
            ── InvitationCertificate (CBOR, encrypted) ────────────────►
            ◄── IdentityClaim       (CBOR, encrypted) ──────────────────
            ── ACK ────────────────────────────────────────────────────►
@@ -102,101 +119,161 @@ Both devices write a `TrustEdge` row to `core:database`:
 
 ```
 TrustEdge {
-  self_pub:      bytes[32]
-  peer_pub:      bytes[32]
-  community_id:  bytes[32]
-  vouch_level:   u8              // PROVISIONAL | FULL
-  established:  u64
-  cert_blob:    bytes            // signed InvitationCertificate (peer-side)
-  cert_signer:  bytes[32]        // == peer_pub for the Inviter row
+  fromPub:        bytes[32]     // self
+  toPub:          bytes[32]     // peer
+  vouchLevel:     str           // "PROVISIONAL" | "FULL"
+  establishedAt:  u64
+  certBlob:       bytes         // signed InvitationCertificate (peer-side)
+  certSigner:     bytes[32]     // == peer pub for the Inviter row
+  peerOnion:      str | null    // peer's HSv3 .onion captured from QR
 }
 ```
 
-## 4. Sync
+The primary key is `(fromPub, toPub)`; a second handshake between the
+same pair replaces the first. `peerOnion` is captured at handshake time
+and used by the Tor transport to dial the peer when out of BLE range.
 
-Sync is the only protocol that moves user payloads between nodes after
-the handshake. It runs whenever two trust-graph-connected nodes are
-within transport range.
+### 3.4 Schema versions
 
-### 4.1 Message envelope
+`core:database` migrates additively:
 
-```
-SyncEnvelope {
-  v:        u8 = 1
-  type:     u8                  // see below
-  origin:   bytes[32]           // originating identity public key
-  seq:      u64                 // origin's monotonic per-feed counter
-  ts:       u64                 // origin's unix seconds (advisory; not trusted)
-  payload:  bytes               // CBOR, type-specific
-  sig:      bytes[64]           // Ed25519(origin) over (v||type||origin||seq||ts||payload)
-}
-```
+| Version | Change |
+|---------|--------|
+| 1 | Initial schema: trust_edge, revocation, community_membership |
+| 2 | Marketplace/wallet (currency_envelope) tables |
+| 3 | Messaging tables (`message_outbound`, `message_inbound`, conversation index) |
+| 4 | Read-receipts column on outbound messages |
+| 5 | `trust_edge.peerOnion` nullable text — captures peer's HSv3 address from the QR |
 
-Types (initial):
+Older devices that haven't migrated to v5 simply lack the column and
+fall back to BLE-only reconnect; the handshake still completes.
 
-| Code | Name | Body |
+## 4. Currency / Marketplace Sync
+
+The `core:sync` engine moves community-currency envelopes between peers
+once Noise is up. The protocol is a single round of HaveSet → Want → Push.
+
+### 4.1 Envelope shape
+
+Envelopes are stored in `currency_envelope` keyed by
+`(community, typeTag, primaryKey)`. The wire form is the canonical CBOR
+of the underlying payload — sync moves bytes; only the receiver decodes.
+
+Type tags (stable, never reuse or reorder — see CURRENCY.md §7):
+
+| Tag | Name | Body |
 |------|------|------|
-| `0x01` | `VAULT_RECORD` | per-recipient sealed payload |
-| `0x02` | `MARKETPLACE_OFFER` | local resource offer |
-| `0x03` | `COORDINATION_EVENT` | task/event update |
-| `0x04` | `DIRECTORY_ENTRY` | self-published role/skills |
-| `0x10` | `INVITATION_CERT` | new invitation cert (for graph propagation) |
-| `0x11` | `REVOCATION_CERT` | revocation (high priority) |
+| `0x10` | `GENESIS_ISSUANCE` | community-bootstrap mint |
+| `0x11` | `SERVICE_ISSUANCE` | service-time issuance |
+| `0x12` | `TRANSFER` | peer-to-peer transfer |
+| `0x13` | `TRANSFER_MEMO` | optional memo attached to a transfer |
+| `0x14` | `SLASH` | revocation of a previously issued unit |
 
-`seq` is per (`origin`, `type`) and strictly monotonic. Receivers reject
-any envelope whose `seq` is not strictly greater than the highest seen
-for that pair.
-
-### 4.2 Anti-entropy
-
-When two peers connect and complete Noise, they exchange a `HaveSet`:
+### 4.2 Anti-entropy round
 
 ```
+SyncMessage = HaveSet | Want | Push
+
 HaveSet {
-  pairs: [
-    { origin: bytes[32], type: u8, max_seq: u64 }, ...
-  ]
+  community: bytes[32]
+  keys: [ { typeTag: u32, primaryKey: bytes } ... ]
+}
+
+Want {
+  community: bytes[32]
+  keys: [ { typeTag: u32, primaryKey: bytes } ... ]
+}
+
+Push {
+  rows: [ EnvelopeRow ... ]
+}
+
+EnvelopeRow {
+  community:  bytes[32]
+  typeTag:    u32
+  primaryKey: bytes
+  body:       bytes          // canonical CBOR of the underlying envelope
+  observedAt: u64
 }
 ```
 
-Each side computes the delta and streams the missing envelopes. There is
-no global ordering — the system is eventually consistent per (origin, type)
-feed, and that is sufficient because every envelope is independently
-signed and verified.
+Round shape:
+
+1. Both peers send `HaveSet`.
+2. Both peers send `Want` (peer's keys minus ours).
+3. Both peers send `Push` with the rows the peer wanted.
+
+There is no global ordering — the system is eventually consistent
+per `(community, typeTag, primaryKey)`, and that is sufficient because
+every payload is independently signed and verified before being persisted.
 
 ### 4.3 Trust filtering
 
 Before persisting any received envelope, the receiver checks:
 
-1. `origin` is in the receiver's trust graph at level ≥ `Provisional`.
-2. The Ed25519 signature verifies under `origin`.
-3. `seq` is strictly greater than the local high-water mark for
-   `(origin, type)`.
-4. Type-specific constraints (e.g. `INVITATION_CERT` originator must be
-   `Full` and have a Root-anchored path).
+1. The originator (recovered from the body's signature) is in the
+   receiver's trust graph at level ≥ `Provisional`.
+2. The Ed25519 signature on the body verifies.
+3. Type-specific constraints (e.g. issuance signed by an account
+   authorised under the community's currency rules; transfer balances
+   reconcile).
 
 Failing any check: drop the envelope, increment a per-peer suspicion
 counter. Three failures within an hour and the peer is `Quarantined`
 locally pending a full re-handshake.
 
-## 5. Vault Sealing (Type-Specific)
+## 5. Messaging Sync
 
-`VAULT_RECORD` payloads are per-recipient. Body:
+Messaging runs in a separate sync pass over the same Noise session.
+The protocol is small enough that it has its own framing rather than
+sharing the currency engine's HaveSet/Want/Push.
+
+### 5.1 Envelope
 
 ```
-VaultRecord {
-  recipients: [
-    { peer_pub: bytes[32], wrapped_key: bytes[32+16] /* X25519 || mac */ },
-    ...
-  ]
-  nonce:      bytes[24]
-  ciphertext: bytes           // XChaCha20-Poly1305 over the plaintext record
-}
+MessageEnvelope [           // signed bytes are the first 5 fields
+  id:        bstr(16),      // random per-message
+  fromPub:   bstr(32),      // sender identity
+  toPub:     bstr(32),      // recipient identity
+  createdAt: u64,           // sender's unix seconds
+  body:      bstr,          // UTF-8, ≤ 16384 bytes
+  signature: bstr(64),      // Ed25519 over the 5 fields above
+]
 ```
 
-A vault record visible to N members has N wrapped keys. Non-recipients
-can still relay the envelope (relays trust-filter on `origin`, not on
-recipient list) but cannot decrypt.
+The signed form (5 fields) and wire form (6 fields with the trailing
+signature) share the same canonical encoder. The hardware keystore
+produces the signature; the recipient verifies via libsodium before
+persisting.
+
+### 5.2 Round protocol
+
+After Noise is up, either side may initiate a messaging round. Each
+frame is a 1- or 2-element CBOR array `[tag, payload?]`:
+
+| Tag | Name | Payload |
+|-----|------|---------|
+| `0` | `Push` | `[ MessageEnvelope.wireBytes ... ]` (≤ 1000 per frame) |
+| `1` | `Ack`  | `[ bstr(16) ... ]` — ids the receiver now holds |
+| `3` | `Read` | `[ bstr(16) ... ]` — ids the receiver has read; flips read-receipt state on the outbound side |
+| `2` | `End`  | empty — closes the round |
+
+```
+Initiator                       Responder
+---------                       ---------
+PUSH(env...)        -->
+                    <--         ACK(id...)
+                    <--         PUSH(env...)   (if responder has pending)
+ACK(id...)          -->
+READ(id...)         -->         (optional)
+                    <--         READ(id...)    (optional)
+END                 -->
+                    <--         END
+```
+
+Each frame goes through `NoiseSession.encrypt` on the sender and
+`decrypt` on the receiver. The 1000-envelope cap defends against a
+hostile peer claiming a huge array; arrays beyond that abort the round.
 
 ## 6. Service UUIDs
 
@@ -204,19 +281,106 @@ The BLE service UUID and WiFi Direct service-info hash are both derived
 deterministically from `community_id`:
 
 ```
-service_uuid = UUID(BLAKE2s(community_id || "KEYSTONE-SVC"))
+service_uuid = UUID(BLAKE2s-256(community_id || "KEYSTONE-SVC")[0..16])
 ```
+
+BLAKE2s is provided by noise-java's `Blake2sMessageDigest` (already on
+the classpath via Noise). RFC 7693 vectors are exercised by
+`ServiceUuidTest`.
 
 This means a passive scanner with no `community_id` cannot identify
 Keystone nodes by advertisement alone. They appear as devices serving
 an arbitrary 128-bit UUID. (A scanner who has joined any community can
 of course detect *their* community's UUID; this is the intended outcome.)
 
-## 7. Versioning
+## 7. Long-Range Transport (Tor Hidden Services)
 
-The leading `v:` byte in every CBOR structure is the protocol version.
-Receiving a higher version than known: drop the message, do not error.
-Receiving a lower version than the floor we still accept: drop the
-message, do not error. Version negotiation is per-message-type and one-
-way; there is no handshake-time version exchange because the handshake
-itself is versioned by `HandshakeQR.v`.
+Two peers who completed an in-person QR handshake can reconnect over
+the public internet without exposing IPs or relying on any Keystone
+infrastructure.
+
+### 7.1 Hidden service key derivation
+
+Each install runs an embedded Tor daemon (kmp-tor `-exec`). The HSv3
+Ed25519 key seed is derived from the device's keystore identity:
+
+```
+hs_seed = HKDF-SHA256(
+    ikm  = keystoreManager.deriveSubkey("KEYSTONE/v1/tor-hs"),
+    info = "..."
+)
+```
+
+The resulting v3 onion address is **stable across reinstalls** as long
+as the user's keystore identity survives. Wiping the identity (factory
+reset, app reinstall on a wiped device) regenerates the keystore
+identity and therefore the `.onion`.
+
+### 7.2 Address exchange
+
+Each device publishes its own `.onion` only inside the handshake QR
+(see §3.1). After the handshake the peer's `.onion` is persisted on
+the `TrustEdge` row (`peerOnion`). There is no directory, no
+beacon, no third-party rendezvous.
+
+### 7.3 Transport mechanics
+
+- Tor's SOCKS5 listener is picked automatically; the chosen port is
+  surfaced via `RuntimeEvent.LISTENERS`.
+- The hidden service forwards `<our>.onion:9091` →
+  `localhost:9091` (`TorBackend.DEFAULT_HS_TARGET_PORT`), where the
+  `TorHiddenServiceTransport` binds its Noise listener.
+- Outbound connects SOCKS5-CONNECT through the local Tor listener to
+  `<peer>.onion:9091`. Frames on the resulting TCP socket follow §1.
+- Bootstrap progress is surfaced via `TorBackend.state` so the UI
+  can render `Bootstrapping(percent)` → `Ready`.
+
+## 8. Software Distribution
+
+### 8.1 Peer APK share
+
+When a user opens "Share Keystone", the device:
+
+1. Starts the foreground transport service (so the share survives
+   backgrounding).
+2. Generates a per-session self-signed X.509 certificate (RSA-2048,
+   `CN=<random-token>`).
+3. Binds an HTTPS listener on the first private-network IPv4
+   discovered by `LocalIp` (RFC 1918, then any other non-loopback v4).
+4. Encodes the URL into a QR shown on screen, with a "tap to copy"
+   affordance for cameras that can't read it.
+
+The recipient's browser displays a TLS warning (self-signed); the
+mini-site explains the warning and offers the APK directly.
+
+### 8.2 Layer-1 peer update
+
+A user pastes or scans a peer's share URL. The client:
+
+1. Resolves the host through the **SSRF gate** — admits only
+   `10/8`, `172.16/12`, `192.168/16`, and `100.64/10` (CGNAT /
+   Tailscale). Rejects loopback, link-local, multicast, IPv6, and any
+   public IPv4.
+2. Fetches `/version.json`. Compares `versionCode` to the local
+   build.
+3. If newer, streams `/keystone.apk` with on-the-fly SHA-256
+   computation against the digest in `/version.json`.
+4. On match, hands the APK to the system `PackageInstaller`. The
+   system layer will reject the install if the signer differs from
+   the installed Keystone.
+5. If the user has not granted `REQUEST_INSTALL_PACKAGES`, surface
+   a dedicated state prompting them to enable "Install unknown apps"
+   for Keystone.
+
+Layer-2 (automatic discovery through the BLE trust channel) and
+Layer-3 (K-quorum verification of the APK over the trust graph)
+remain open work.
+
+## 9. Versioning
+
+The leading `ver:` element in every CBOR structure is the protocol
+version. Receiving a higher version than known: drop the message, do
+not error. Receiving a lower version than the floor we still accept:
+drop the message, do not error. Version negotiation is per-message-type
+and one-way; there is no handshake-time version exchange because the
+handshake itself is versioned by `HandshakeQR.ver`.

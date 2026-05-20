@@ -29,4 +29,9 @@ dependencies {
     implementation("androidx.sqlite:sqlite:2.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlin:kotlin-test:1.9.22")
+    testImplementation("androidx.room:room-testing:2.6.1")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
 }

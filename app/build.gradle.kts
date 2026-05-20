@@ -75,7 +75,7 @@ android {
     kotlinOptions {
         jvmTarget = "17"
         // Fail the build on warnings; Keystone runs hot, no laxity.
-        allWarningsAsErrors = false  // flip to true once stubs are filled
+        allWarningsAsErrors = true
     }
 
     buildFeatures {
