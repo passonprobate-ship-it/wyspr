@@ -23,9 +23,8 @@ import com.keystone.feature.marketplace.MarketplaceRoot
 import com.keystone.feature.marketplace.screens.CommunityGraphScreen
 import com.keystone.feature.marketplace.screens.CommunityScreen
 import com.keystone.feature.messaging.MessagingRoot
-import com.keystone.feature.messaging.mailbox.screens.BeMailboxScreen
+import com.keystone.feature.messaging.mailbox.screens.MailboxScreen
 import com.keystone.feature.messaging.mailbox.screens.ScanMailboxQrScreen
-import com.keystone.feature.messaging.mailbox.screens.UseMailboxScreen
 import com.keystone.feature.monero.MoneroWalletRoot
 import com.keystone.feature.onboarding.OnboardingRoot
 import com.keystone.feature.onboarding.screens.DiscoveryScreen
@@ -108,19 +107,15 @@ fun KeystoneNavHost(
                 onOpenWallet = { navController.navigate(Routes.Marketplace) },
                 onOpenFindPeers = { navController.navigate(Routes.Discovery) },
                 onOpenShareApp = { navController.navigate(Routes.ShareApp) },
-                onOpenUseMailbox = { navController.navigate(Routes.MailboxUse) },
-                onOpenBeMailbox = { navController.navigate(Routes.MailboxBe) },
+                onOpenMailbox = { navController.navigate(Routes.Mailbox) },
                 onOpenSettings = { navController.navigate(Routes.Settings) },
             )
         }
-        composable(Routes.MailboxUse) {
-            UseMailboxScreen(
+        composable(Routes.Mailbox) {
+            MailboxScreen(
                 onBack = { navController.popBackStack() },
                 onScan = { navController.navigate(Routes.MailboxScan) },
             )
-        }
-        composable(Routes.MailboxBe) {
-            BeMailboxScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.MailboxScan) {
             ScanMailboxQrScreen(onBack = { navController.popBackStack() })
@@ -225,8 +220,7 @@ object Routes {
     const val PeerPage = "peer_page"
     const val ShareApp = "share_app"
     const val UpdateFromPeer = "update_from_peer"
-    const val MailboxUse = "mailbox_use"
-    const val MailboxBe = "mailbox_be"
+    const val Mailbox = "mailbox"
     const val MailboxScan = "mailbox_scan"
 }
 

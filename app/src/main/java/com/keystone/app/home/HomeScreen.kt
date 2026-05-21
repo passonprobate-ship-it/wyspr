@@ -21,8 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Bluetooth
-import androidx.compose.material.icons.filled.Inbox
-import androidx.compose.material.icons.filled.MailOutline
+import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Settings
@@ -63,8 +62,7 @@ fun HomeScreen(
     onOpenWallet: () -> Unit,
     onOpenFindPeers: () -> Unit,
     onOpenShareApp: () -> Unit,
-    onOpenUseMailbox: () -> Unit,
-    onOpenBeMailbox: () -> Unit,
+    onOpenMailbox: () -> Unit,
     onOpenSettings: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
@@ -95,8 +93,7 @@ fun HomeScreen(
                 onOpenWallet = onOpenWallet,
                 onOpenFindPeers = onOpenFindPeers,
                 onOpenShareApp = onOpenShareApp,
-                onOpenUseMailbox = onOpenUseMailbox,
-                onOpenBeMailbox = onOpenBeMailbox,
+                onOpenMailbox = onOpenMailbox,
                 onOpenSettings = onOpenSettings,
             )
         }
@@ -139,8 +136,7 @@ private fun HomeTiles(
     onOpenWallet: () -> Unit,
     onOpenFindPeers: () -> Unit,
     onOpenShareApp: () -> Unit,
-    onOpenUseMailbox: () -> Unit,
-    onOpenBeMailbox: () -> Unit,
+    onOpenMailbox: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     LazyVerticalGrid(
@@ -201,18 +197,10 @@ private fun HomeTiles(
         }
         item {
             HomeTile(
-                icon = Icons.Filled.MailOutline,
-                title = "Use a mailbox",
+                icon = Icons.Filled.Mail,
+                title = "Mailbox",
                 subtitle = "Async delivery",
-                onClick = onOpenUseMailbox,
-            )
-        }
-        item {
-            HomeTile(
-                icon = Icons.Filled.Inbox,
-                title = "Be a mailbox",
-                subtitle = "Hold for community",
-                onClick = onOpenBeMailbox,
+                onClick = onOpenMailbox,
             )
         }
         item {

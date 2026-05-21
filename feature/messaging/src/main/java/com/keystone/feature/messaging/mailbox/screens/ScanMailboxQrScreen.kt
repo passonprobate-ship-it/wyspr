@@ -2,6 +2,7 @@ package com.keystone.feature.messaging.mailbox.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.util.Log
 import android.util.Size
 import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -83,6 +84,21 @@ fun ScanMailboxQrScreen(
     viewModel: MailboxClientViewModel = hiltViewModel(),
 ) {
     var errorText by remember { mutableStateOf<String?>(null) }
+    // The CameraX analyzer dispatches onPayload from a background
+    // executor thread. Touching navController.popBackStack() (or any
+    // Compose nav APIs) from that thread silently no-ops — the user
+    // sees the camera stay open even though the scan succeeded and
+    // the binding got persisted. Hand the decoded QR off to a
+    // mutableState; a LaunchedEffect on the composition's main
+    // dispatcher then drives the apply + pop.
+    var scannedQr by remember { mutableStateOf<MailboxQr?>(null) }
+
+    LaunchedEffect(scannedQr) {
+        val qr = scannedQr ?: return@LaunchedEffect
+        Log.d("ScanMailboxQr", "main-thread apply: persisting + popping")
+        viewModel.applyScannedQr(qr)
+        onBack()
+    }
 
     Scaffold(
         topBar = {
@@ -118,10 +134,7 @@ fun ScanMailboxQrScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 QrScanPane(
-                    onScanned = { qr ->
-                        viewModel.applyScannedQr(qr)
-                        onBack()
-                    },
+                    onScanned = { qr -> scannedQr = qr },
                     onInvalid = { msg -> errorText = msg },
                 )
             }
@@ -168,11 +181,14 @@ private fun QrScanPane(
             )
         } else {
             CameraPreview(onPayload = { text ->
+                Log.d("ScanMailboxQr", "raw payload: len=${text.length} preview=\"${text.take(40)}…\"")
                 val qr = decodeOrNull(text)
                 if (qr == null) {
+                    Log.w("ScanMailboxQr", "decode failed: not a valid MailboxQr (len=${text.length})")
                     onInvalidRef("That QR isn't a Keystone mailbox code.")
                     return@CameraPreview
                 }
+                Log.i("ScanMailboxQr", "scan ok: pub=${qr.mailboxPub.bytes.take(4)}… onion=${qr.onionAddress != null}")
                 if (doneFlag.compareAndSet(false, true)) {
                     onScannedRef(qr)
                 }
