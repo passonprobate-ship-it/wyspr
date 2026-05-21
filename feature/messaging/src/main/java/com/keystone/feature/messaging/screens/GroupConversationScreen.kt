@@ -119,9 +119,16 @@ fun GroupConversationScreen(
                     }
                     is GroupConversationViewModel.UiState.Ready -> {
                         val listState = rememberLazyListState()
+                        // Scroll to bottom whenever the message count grows.
+                        // delay(50) lets the LazyColumn measure its items
+                        // first — without it, the initial open of a thread
+                        // with pre-existing messages tries to scroll before
+                        // layout exists and lands at index 0 (so the user
+                        // sees the OLDEST messages instead of the newest).
                         LaunchedEffect(s.messages.size) {
                             if (s.messages.isNotEmpty()) {
-                                listState.animateScrollToItem(s.messages.lastIndex)
+                                kotlinx.coroutines.delay(50)
+                                listState.scrollToItem(s.messages.lastIndex)
                             }
                         }
                         if (s.messages.isEmpty()) {
