@@ -1,8 +1,10 @@
 package com.keystone.feature.messaging.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,7 @@ import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -30,9 +33,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -41,6 +46,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -191,7 +197,16 @@ fun ConversationListScreen(
                                     s.groupRows,
                                     key = { it.groupId.bytes.toList() },
                                 ) { row ->
-                                    GroupRowView(row = row, onClick = { onOpenGroup(row.groupId) })
+                                    GroupRowView(
+                                        row = row,
+                                        onClick = { onOpenGroup(row.groupId) },
+                                        onRename = { newName ->
+                                            viewModel.renameGroupLocal(row.groupId, newName)
+                                        },
+                                        onLeave = {
+                                            viewModel.leaveGroupLocal(row.groupId)
+                                        },
+                                    )
                                 }
                             }
                             if (s.rows.isNotEmpty()) {
@@ -365,16 +380,68 @@ private fun FingerprintChip(fingerprint: String) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GroupRowView(
     row: ConversationListViewModel.GroupRow,
     onClick: () -> Unit,
+    onRename: (String?) -> Unit = {},
+    onLeave: () -> Unit = {},
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
+    var renameOpen by remember { mutableStateOf(false) }
+    var confirmLeave by remember { mutableStateOf(false) }
+
+    if (renameOpen) {
+        GroupRenameDialog(
+            initial = row.name,
+            onDismiss = { renameOpen = false },
+            onConfirm = { newName ->
+                onRename(newName)
+                renameOpen = false
+            },
+        )
+    }
+    if (confirmLeave) {
+        LeaveGroupDialog(
+            groupName = row.name,
+            onDismiss = { confirmLeave = false },
+            onConfirm = {
+                onLeave()
+                confirmLeave = false
+            },
+        )
+    }
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { menuOpen = true },
+            ),
     ) {
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text("Rename") },
+                onClick = {
+                    menuOpen = false
+                    renameOpen = true
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Leave group") },
+                onClick = {
+                    menuOpen = false
+                    confirmLeave = true
+                },
+            )
+        }
         Row(
             modifier = Modifier.padding(14.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -444,6 +511,74 @@ private fun GroupRowView(
             }
         }
     }
+}
+
+@Composable
+private fun GroupRenameDialog(
+    initial: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String?) -> Unit,
+) {
+    var value by remember(initial) { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename group") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    placeholder = { Text("Your label for this group") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Local-only — your peers still see the original group name. " +
+                        "Leave blank to revert.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(value) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
+}
+
+@Composable
+private fun LeaveGroupDialog(
+    groupName: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Leave \"$groupName\"?") },
+        text = {
+            Text(
+                "Removes this group and all its messages from THIS device. " +
+                    "Other members still have the group; you'll re-join " +
+                    "only if you accept a fresh membership cert from the " +
+                    "creator. There is no undo.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error,
+                ),
+            ) { Text("Leave") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable

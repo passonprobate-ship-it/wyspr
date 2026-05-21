@@ -96,6 +96,54 @@ class GroupConversationViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Snapshot of active members for the currently-bound group, paired
+     * with each member's friendly contact name (or null). Used by the
+     * member-list dialog.
+     */
+    data class MemberView(
+        val pub: PublicKey,
+        val displayName: String?,
+        val isSelf: Boolean,
+        val isCreator: Boolean,
+    )
+
+    suspend fun loadMembers(): List<MemberView> {
+        val gid = groupId ?: return emptyList()
+        val pub = ownPub
+        return withContext(Dispatchers.IO) {
+            val group = groupStore.groupById(gid) ?: return@withContext emptyList()
+            val members = groupStore.activeMembers(gid)
+            val contacts = database.contactDao.all()
+            val nameByPub: Map<List<Byte>, String> = contacts
+                .mapNotNull { c ->
+                    c.displayName?.takeIf { it.isNotBlank() }
+                        ?.let { c.peerPub.toList() to it }
+                }
+                .toMap()
+            members.map { m ->
+                MemberView(
+                    pub = PublicKey(m.memberPub),
+                    displayName = nameByPub[m.memberPub.toList()],
+                    isSelf = pub != null && m.memberPub.contentEquals(pub),
+                    isCreator = m.memberPub.contentEquals(group.creatorPub),
+                )
+            }
+        }
+    }
+
+    /** Local nickname for the group; null/blank to clear. */
+    fun renameLocal(nickname: String?) {
+        val gid = groupId ?: return
+        val trimmed = nickname?.trim()?.takeIf { it.isNotBlank() }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                if (!database.isOpen) database.open()
+                database.groupDao.setNickname(gid.bytes, trimmed)
+            }
+        }
+    }
+
     fun send(body: String) {
         val gid = groupId ?: return
         val pub = ownPub ?: return

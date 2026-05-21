@@ -75,6 +75,33 @@ class ConversationListViewModel @Inject constructor(
 
     fun dismissSyncBanner() { _sync.value = null }
 
+    /** Set or clear the local-only nickname for a group thread. */
+    fun renameGroupLocal(groupId: GroupId, nickname: String?) {
+        val trimmed = nickname?.trim()?.takeIf { it.isNotBlank() }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                if (!database.isOpen) database.open()
+                database.groupDao.setNickname(groupId.bytes, trimmed)
+            }
+        }
+    }
+
+    /**
+     * Soft delete a group locally: drops the group_entity row, which
+     * cascades to group_member + group_message. The peer still has
+     * the group; if they push another envelope to us later, our
+     * `ingestGroup` will reject it (no membership cert locally) so
+     * the group stays gone unless we accept a fresh membership cert.
+     */
+    fun leaveGroupLocal(groupId: GroupId) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                if (!database.isOpen) database.open()
+                database.groupDao.delete(groupId.bytes)
+            }
+        }
+    }
+
     sealed interface SyncBanner {
         data object Running : SyncBanner
         data class Done(val pushed: Int, val received: Int) : SyncBanner
