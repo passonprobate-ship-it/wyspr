@@ -96,6 +96,7 @@ class MainActivity : FragmentActivity() {
                         }
                         KeystoneNavHost(
                             unlocker = biometricUnlocker,
+                            biometricSettings = biometricSettings,
                             pendingDeepLink = pendingDeepLink,
                             onDeepLinkConsumed = ::consumeDeepLink,
                         )

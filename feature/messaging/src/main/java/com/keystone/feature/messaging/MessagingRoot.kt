@@ -24,6 +24,11 @@ import com.keystone.feature.messaging.screens.ConversationScreen
 fun MessagingRoot(
     onBack: () -> Unit = {},
     /**
+     * Tapped from the conversation list overflow menu. The app shell
+     * navigates to the top-level Settings route.
+     */
+    onOpenSettings: () -> Unit = {},
+    /**
      * Set by the app shell when the user tapped a message
      * notification — we deep-link straight into that chat instead
      * of stopping at the conversation list.
@@ -48,6 +53,7 @@ fun MessagingRoot(
                     nav.navigate(MessagingRoutes.threadRoute(peer))
                 },
                 onBack = onBack,
+                onOpenSettings = onOpenSettings,
             )
         }
         composable(

@@ -10,6 +10,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.keystone.app.biometric.BiometricUnlocker
 import com.keystone.app.permissions.rememberBlePermissionGate
+import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.coordination.CoordinationRoot
 import com.keystone.feature.directory.DirectoryRoot
 import com.keystone.feature.marketplace.MarketplaceRoot
@@ -30,6 +31,7 @@ import com.keystone.feature.vault.VaultRoot
 @Composable
 fun KeystoneNavHost(
     unlocker: BiometricUnlocker,
+    biometricSettings: BiometricSettings,
     pendingDeepLink: MainActivity.DeepLink? = null,
     onDeepLinkConsumed: () -> Unit = {},
 ) {
@@ -103,7 +105,15 @@ fun KeystoneNavHost(
         composable(Routes.Messaging) {
             MessagingRoot(
                 onBack = { navController.popBackStack() },
+                onOpenSettings = { navController.navigate(Routes.Settings) },
                 initialChatPeerHex = initialChatPeerHex,
+            )
+        }
+        composable(Routes.Settings) {
+            AppSettingsScreen(
+                biometricSettings = biometricSettings,
+                onOpenAdvanced = { navController.navigate(Routes.Marketplace) },
+                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.Coordination) {
@@ -127,4 +137,5 @@ object Routes {
     const val Directory = "directory"
     const val Messaging = "messaging"
     const val Monero = "monero"
+    const val Settings = "settings"
 }

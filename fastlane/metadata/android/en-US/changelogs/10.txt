@@ -1,0 +1,24 @@
+v0.7.2 — UX polish on the proven messaging path.
+
+• Real Material3 top app bar on both messaging screens (back arrow,
+  sync action that animates between icon and spinner, overflow menu
+  with Settings).
+• Top-level Settings screen — biometric gate + identity binding —
+  now reachable from the messaging hub instead of buried in the
+  wallet feature.
+• Pull-to-refresh on the conversation list. Tug down to sync.
+• Long-press any message bubble → Copy menu.
+• Composer: keyboard-aware (imePadding), send button is a filled
+  icon, haptic feedback on send.
+• Asymmetric chat bubbles (small tail on the sender's bottom corner).
+• Status icons replace the old text labels: clock → check → double-
+  check → double-check-teal-for-read.
+• Conversation rows now show a "fingerprint chip" — small monospace
+  2-char tag in the same shape language as TrustBadge — and the
+  long fingerprints truncate to first-4⋯last-4 when no friendly
+  name has been set.
+• Auto-dismissing sync banner after success (failures stay until
+  tapped).
+
+Behind the scenes: no protocol changes since v0.7.1 — same wire
+format, same crypto, same flow control. This is a polish-only build.
