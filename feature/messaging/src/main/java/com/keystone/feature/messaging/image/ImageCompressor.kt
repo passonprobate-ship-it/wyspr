@@ -4,47 +4,60 @@ import android.content.ContentResolver
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Loads an image from a content URI, downscales + JPEG-compresses it
+ * Loads an image from a content URI, downscales + WebP-compresses it
  * until the result fits the [TARGET_MAX_BYTES] budget, and returns
- * the JPEG bytes. Returns null if no combination of scale + quality
- * gets the encoded size under budget (rare — even crowded photos
- * fit at 240px / quality 25).
+ * the encoded bytes. Returns null if no combination of scale +
+ * quality gets the encoded size under budget (rare — even crowded
+ * photos fit at 360 px / quality 50).
  *
  * Budget math: [com.keystone.feature.messaging.MessageEnvelope.MAX_BODY_BYTES]
- * is 16,384. The [ImagePayload.PREFIX] eats 13 bytes; base64 inflates
- * the remaining budget by 4/3. Target ≤ 11,000 raw bytes so the
- * encoded body lands at ≤ ~14,680 — comfortably under cap with room
- * to spare in case Cbor varies overhead by a few bytes between
- * envelope versions.
+ * is 16,384 and this matches the hard
+ * [com.keystone.core.transport.bluetooth.BleLink.MAX_FRAME_BYTES] cap
+ * — bumping the envelope past that breaks single-frame BLE
+ * delivery. [ImagePayload.PREFIX] eats 13 bytes; base64 inflates
+ * the remaining budget by 4/3. Target ≤ 11,500 raw bytes so the
+ * encoded body lands at ≤ ~15,350.
  *
- * The loop is intentionally simple: walk a small ladder of
- * (maxDim, quality) pairs from "good-looking" to "ugly-but-tiny" and
- * take the first one that fits. We're optimising for "always
- * deliverable" over "best looking" — the photo can be re-sent at a
- * different fidelity if the user wants a higher-quality copy.
+ * **Why WebP instead of JPEG (v0.8.2):** WebP-lossy is roughly 25–35%
+ * more efficient than JPEG at similar visual quality, which lets the
+ * same 11.5 KB budget carry either a higher-resolution image or a
+ * higher quality factor. Memes (640 px, text-heavy) used to come out
+ * crunchy at JPEG q≤45; the equivalent WebP at q≈65 looks
+ * substantially cleaner for the same byte count.
+ *
+ * The loop walks a small ladder of (maxDim, quality) pairs from
+ * "best quality" to "ugly-but-tiny" and takes the first that fits.
+ * Optimised for "always deliverable" over "best looking."
  */
 object ImageCompressor {
 
-    /** Raw JPEG byte budget — keeps the encoded body under 16 KB after base64. */
-    const val TARGET_MAX_BYTES = 11_000
+    /** Raw encoded-image byte budget — keeps the body under 16 KB after base64. */
+    const val TARGET_MAX_BYTES = 11_500
 
-    /** Output ladder, walked top-down. (maxDim, quality). */
+    /**
+     * (maxDim, WebP quality). WebP quality scale isn't 1:1 with
+     * JPEG — q=75 WebP roughly matches q=85 JPEG visually but at
+     * ~70% of the bytes. Pinning higher resolutions + mid-high
+     * quality at the top of the ladder gives memes legible text.
+     */
     private val LADDER: List<Pair<Int, Int>> = listOf(
-        640 to 60,
-        640 to 45,
+        720 to 75,
+        720 to 65,
+        640 to 75,
+        640 to 65,
+        640 to 55,
+        480 to 70,
         480 to 60,
-        480 to 45,
-        480 to 30,
+        480 to 50,
+        360 to 60,
         360 to 45,
-        360 to 30,
-        240 to 40,
-        240 to 25,
     )
 
     /**
@@ -60,7 +73,7 @@ object ImageCompressor {
         try {
             for ((maxDim, quality) in LADDER) {
                 val scaled = scaleIfNeeded(original, maxDim)
-                val bytes = encodeJpeg(scaled, quality)
+                val bytes = encodeWebp(scaled, quality)
                 if (scaled !== original) scaled.recycle()
                 if (bytes != null && bytes.size <= TARGET_MAX_BYTES) {
                     Log.d(TAG, "compress: dim=$maxDim q=$quality bytes=${bytes.size}")
@@ -127,9 +140,21 @@ object ImageCompressor {
         return Bitmap.createScaledBitmap(src, newW, newH, /* filter = */ true)
     }
 
-    private fun encodeJpeg(bmp: Bitmap, quality: Int): ByteArray? {
+    /**
+     * Encode [bmp] as WebP. On API 30+ uses the explicit
+     * `WEBP_LOSSY` format; older devices use the legacy `WEBP`
+     * constant which has historically been lossy. Result is
+     * `null` on encode failure (very rare — typically only OOM).
+     */
+    @Suppress("DEPRECATION")
+    private fun encodeWebp(bmp: Bitmap, quality: Int): ByteArray? {
         val out = ByteArrayOutputStream(16_384)
-        val ok = bmp.compress(Bitmap.CompressFormat.JPEG, quality, out)
+        val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Bitmap.CompressFormat.WEBP_LOSSY
+        } else {
+            Bitmap.CompressFormat.WEBP
+        }
+        val ok = bmp.compress(format, quality, out)
         return if (ok) out.toByteArray() else null
     }
 

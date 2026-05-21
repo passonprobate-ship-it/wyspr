@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -445,6 +446,8 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
     val clipboard = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     var menuOpen by remember { mutableStateOf(false) }
+    val isImage = ImagePayload.isImage(msg.body)
+    val isJumboEmoji = !isImage && msg.body.isJumboEmoji()
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (fromSelf) Arrangement.End else Arrangement.Start,
@@ -458,8 +461,14 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                 bottomStart = if (fromSelf) 14.dp else 4.dp,
                 bottomEnd = if (fromSelf) 4.dp else 14.dp,
             ),
+            // Image bubbles wrap to their content so a 280-dp-wide
+            // photo doesn't sit inside a 78%-wide rectangle with
+            // empty space around it. Text bubbles keep the 78% cap.
             modifier = Modifier
-                .fillMaxWidth(0.78f)
+                .then(
+                    if (isImage) Modifier.widthIn(max = 300.dp)
+                    else Modifier.fillMaxWidth(0.78f),
+                )
                 .combinedClickable(
                     onClick = { /* no-op — bubble is read-only on tap */ },
                     onLongClick = {
@@ -484,11 +493,13 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                 )
             }
             Column(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.padding(
+                    horizontal = if (isImage) 4.dp else 14.dp,
+                    vertical = if (isImage) 4.dp else 10.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 val loc = LocationPayload.decode(msg.body)
-                val isImage = ImagePayload.isImage(msg.body)
                 when {
                     isImage -> ImageBubble(body = msg.body, cacheKey = msg.id.toList())
                     loc != null -> LocationCard(
@@ -499,7 +510,8 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                     )
                     else -> Text(
                         msg.body,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = if (isJumboEmoji) MaterialTheme.typography.displaySmall
+                        else MaterialTheme.typography.bodyMedium,
                         color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onSurface,
                     )

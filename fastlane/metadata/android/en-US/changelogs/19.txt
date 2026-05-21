@@ -1,0 +1,22 @@
+v0.8.2 — better-looking photos + tighter bubble + emoji jumbo.
+
+Photos:
+• Encoder switched JPEG → WebP. WebP-lossy is ~25–35% more
+  efficient at the same visual quality, so the same 16 KB body
+  budget now carries either a higher resolution or a higher
+  quality factor. Memes (640 px, text-heavy) used to come out
+  crunchy at JPEG q≤45; the equivalent WebP at q~65 looks
+  substantially cleaner for the same byte count.
+• New compression ladder targets 720 / q75 first, falling back
+  down to 360 / q45 only if the input refuses to compress.
+• Backward-compatible decode: incoming JPEG payloads from v0.8.1
+  still render correctly. ImagePayload accepts both magic-byte
+  signatures (JPEG SOI + WebP "RIFF…WEBP").
+• Photo bubble now wraps tightly to the image instead of sitting
+  inside a 78%-wide rectangle with empty space around portrait
+  photos. Bubble caps at 300 dp wide, image at 280×360 dp.
+
+Emojis:
+• Emoji-only messages (≤ 8 codepoints, no letters/digits) render
+  at displaySmall (~42 sp) — the standard "jumbo emoji" pattern
+  WhatsApp / iMessage use for reaction-shaped messages.

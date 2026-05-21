@@ -32,25 +32,37 @@ object ImagePayload {
         PREFIX + Base64.encodeToString(jpegBytes, Base64.NO_WRAP or Base64.NO_PADDING)
 
     /**
-     * Return the raw JPEG bytes if [body] is a well-formed image
-     * payload, or null otherwise. Never throws on malformed input —
-     * a corrupt body just renders as fallback text.
+     * Return the raw image bytes if [body] is a well-formed image
+     * payload, or null otherwise. Accepts JPEG (v0.8.1) and WebP
+     * (v0.8.2+) — `BitmapFactory.decodeByteArray` handles both
+     * transparently downstream. Never throws on malformed input;
+     * corrupt bodies render as the fallback placeholder.
      */
     fun decode(body: String): ByteArray? {
         if (!body.startsWith(PREFIX)) return null
         val b64 = body.removePrefix(PREFIX)
         return runCatching { Base64.decode(b64, Base64.NO_WRAP or Base64.NO_PADDING) }
             .getOrNull()
-            ?.takeIf { it.isNotEmpty() && looksLikeJpeg(it) }
+            ?.takeIf { it.isNotEmpty() && looksLikeImage(it) }
     }
 
     fun isImage(body: String): Boolean = body.startsWith(PREFIX)
 
     /**
-     * Cheap header check — first two bytes of every JPEG are
-     * 0xFF 0xD8 (SOI marker). Filters obviously-corrupt payloads
-     * before we try to decode into a Bitmap.
+     * Cheap magic-byte check — accepts JPEG (SOI: 0xFF 0xD8) or
+     * WebP ("RIFF…WEBP"). Filters obviously-corrupt payloads before
+     * we try to decode into a Bitmap.
      */
-    private fun looksLikeJpeg(bytes: ByteArray): Boolean =
-        bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()
+    private fun looksLikeImage(b: ByteArray): Boolean {
+        // JPEG: 0xFF 0xD8
+        if (b.size >= 2 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte()) return true
+        // WebP: bytes 0..3 = "RIFF", bytes 8..11 = "WEBP"
+        if (b.size >= 12 &&
+            b[0] == 'R'.code.toByte() && b[1] == 'I'.code.toByte() &&
+            b[2] == 'F'.code.toByte() && b[3] == 'F'.code.toByte() &&
+            b[8] == 'W'.code.toByte() && b[9] == 'E'.code.toByte() &&
+            b[10] == 'B'.code.toByte() && b[11] == 'P'.code.toByte()
+        ) return true
+        return false
+    }
 }

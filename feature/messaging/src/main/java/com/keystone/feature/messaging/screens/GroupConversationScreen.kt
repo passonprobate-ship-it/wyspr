@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -454,6 +455,8 @@ private fun GroupMessageBubble(
                 )
             }
         }
+        val isImage = com.keystone.feature.messaging.image.ImagePayload.isImage(msg.body)
+        val isJumboEmoji = !isImage && msg.body.isJumboEmoji()
         Surface(
             color = if (fromSelf) MaterialTheme.colorScheme.primaryContainer
             else MaterialTheme.colorScheme.surfaceVariant,
@@ -464,7 +467,10 @@ private fun GroupMessageBubble(
                 bottomEnd = if (fromSelf) 4.dp else 14.dp,
             ),
             modifier = Modifier
-                .fillMaxWidth(0.74f)
+                .then(
+                    if (isImage) Modifier.widthIn(max = 300.dp)
+                    else Modifier.fillMaxWidth(0.74f),
+                )
                 .combinedClickable(
                     onClick = { /* read-only */ },
                     onLongClick = {
@@ -486,7 +492,10 @@ private fun GroupMessageBubble(
                 )
             }
             Column(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.padding(
+                    horizontal = if (isImage) 4.dp else 14.dp,
+                    vertical = if (isImage) 4.dp else 10.dp,
+                ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 if (!fromSelf) {
@@ -501,7 +510,6 @@ private fun GroupMessageBubble(
                     )
                 }
                 val loc = LocationPayload.decode(msg.body)
-                val isImage = com.keystone.feature.messaging.image.ImagePayload.isImage(msg.body)
                 when {
                     isImage -> com.keystone.feature.messaging.image.ImageBubble(
                         body = msg.body,
@@ -515,7 +523,8 @@ private fun GroupMessageBubble(
                     )
                     else -> Text(
                         msg.body,
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = if (isJumboEmoji) MaterialTheme.typography.displaySmall
+                        else MaterialTheme.typography.bodyMedium,
                         color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onSurface,
                     )
