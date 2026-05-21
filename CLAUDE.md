@@ -6,22 +6,28 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Keystone has no server component)
-- **Status**: 2026-05-20 — **end-to-end encrypted messaging confirmed
-  working on real hardware for the first time** (commit `5afb67e` on
-  `android`). 22-build session walked every layer of the BLE + Noise
-  + sync stack; landed pairing, then messaging, with hardware proof at
+- **Status**: 2026-05-21 — **v0.8.0 ships async mailbox delivery**
+  (`docs/MAILBOX.md`). A mailbox is a Keystone device that volunteers
+  to hold sealed-box-encrypted envelopes for community peers while
+  the recipient is offline; the host can route but cannot read. Same
+  trust graph, same Noise transport, same crypto — no central
+  server. Five phases landed across one session: schema + envelope
+  codec, host handlers, sender push + binding propagation, recipient
+  pull phase inside the existing sync round, and the in-app UI (one
+  "Mailbox" tile, both roles in the same screen). End-to-end
+  hardware verification is the v0.8.1 sprint. Plus home menu
+  redesign and transport-tolerance fixes — see commit `90ed5e3` on
+  `android`.
+
+  Earlier on 2026-05-20: **end-to-end encrypted messaging confirmed
+  working on real hardware for the first time** (commit `5afb67e`).
+  22-build session walked every layer of the BLE + Noise + sync
+  stack; landed pairing, then messaging, with hardware proof at
   each step. Two paired phones now exchange Push / Ack / Read / End
-  frames over Noise XX over BLE GATT, with friendly contact names and
-  skip-onboarding UX. See [[keystone-messaging-works]] in auto-memory
-  for the full bug list and [[keystone-ble-flow-control]] for the BLE
-  pattern that hid the rest.
-  
-  Earlier shape from 2026-05-19 (v0.6.7): K-paths quorum + peer APK
-  share + embedded Tor with keystore-pinned `.onion` + messaging sync
-  racing BLE/Tor + F-Droid release plumbing. **Next sprint (v0.7.0)**:
-  Monero wallet scaffold — remote-node-over-Tor only, GPL approval
-  gate before adding the monerujo JNI binding. See `docs/FDROID.md`
-  for the release process and `NEXT-STEPS.md` §10 for the Monero plan.
+  frames over Noise XX over BLE GATT, with friendly contact names
+  and skip-onboarding UX. See [[keystone-messaging-works]] in
+  auto-memory for the full bug list and [[keystone-ble-flow-control]]
+  for the BLE pattern that hid the rest.
 
 ## Philosophy (read this before changing anything)
 

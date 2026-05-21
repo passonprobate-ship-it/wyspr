@@ -1,0 +1,51 @@
+v0.8.0 — async mailbox delivery + home menu redesign.
+
+The single biggest feature since messaging itself: a mailbox is a
+Keystone device that volunteers to hold encrypted messages for the
+community when the recipient is offline. Solves the "both peers must
+be online at the same time" failure mode without any central server.
+
+Mailbox highlights:
+
+• New "Mailbox" tile on the home grid. One screen, two roles:
+   - Use a mailbox — scan a host's QR; future outbound messages
+     auto-route via that mailbox when direct delivery doesn't land.
+   - Be a mailbox — toggle Running on; the device starts holding
+     sealed envelopes for community peers. Live storage stats. QR
+     for peers to scan to point their bindings at you.
+
+• Sealed-box at rest. Every envelope held by a mailbox is wrapped
+  with crypto_box_seal to the recipient's X25519 key BEFORE it
+  leaves the sender. The mailbox host CAN'T READ messages even
+  with physical access to their device's disk.
+
+• Auto-propagation. When you set up a mailbox for yourself, the
+  signed binding cert flows to your trust-graph peers via the
+  existing sync engine. They learn where to push asynchronous
+  mail for you without scanning a separate QR per sender.
+
+• Baked defaults: 50 MB storage cap, 14-day retention, community-
+  only senders. No user-facing knobs for v1 — the feature works
+  out of the box for everyone in your trust graph.
+
+Other surface polish:
+
+• Home menu redesign. The post-onboarding landing is a clean
+  tile grid (Messages, My community, My page, Wallet, Find peers,
+  Share app, Mailbox, Settings) — no more wallet-as-front-door.
+  Messages tile shows an unread badge.
+
+• "Share app" now reachable from the home (was a hidden side-trip
+  inside onboarding for returning users).
+
+• My community screen: fixed an invisible-buttons bug where the
+  "View trust graph" + "Back" buttons existed but were squashed to
+  0px because the peer list ate all the vertical space.
+
+• Transport robustness: a single transport failing (e.g. BLE off,
+  Tor still bootstrapping) no longer aborts the whole sync round.
+  Plus richer Tor diagnostic logging.
+
+Two-device proof of the full mailbox round-trip on hardware is the
+first item up for the v0.8.1 sprint. The wire format, crypto, and
+UI are all in place; this release is the protocol + UI surface.
