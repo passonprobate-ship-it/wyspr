@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -65,6 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.keystone.core.database.entities.GroupMessageEntity
 import com.keystone.core.identity.GroupId
 import com.keystone.feature.messaging.GroupConversationViewModel
+import com.keystone.feature.messaging.location.LocationPayload
 import java.text.DateFormat
 import java.util.Date
 
@@ -194,6 +196,9 @@ fun GroupConversationScreen(
                 }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+            val shareLocation = rememberLocationShareController { lat, lng, acc ->
+                viewModel.sendLocation(lat, lng, acc)
+            }
             GroupComposerRow(
                 draft = draft,
                 onDraftChange = { draft = it },
@@ -203,6 +208,7 @@ fun GroupConversationScreen(
                         draft = ""
                     }
                 },
+                onShareLocation = shareLocation,
                 modifier = Modifier.navigationBarsPadding(),
             )
         }
@@ -333,16 +339,24 @@ private fun GroupComposerRow(
     draft: String,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    onShareLocation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        IconButton(onClick = onShareLocation) {
+            Icon(
+                Icons.Filled.LocationOn,
+                contentDescription = "Share my location",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
         OutlinedTextField(
             value = draft,
             onValueChange = onDraftChange,
@@ -473,12 +487,22 @@ private fun GroupMessageBubble(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                Text(
-                    msg.body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurface,
-                )
+                val loc = LocationPayload.decode(msg.body)
+                if (loc != null) {
+                    LocationCard(
+                        lat = loc.lat,
+                        lng = loc.lng,
+                        accuracyMeters = loc.accuracyMeters,
+                        fromSelf = fromSelf,
+                    )
+                } else {
+                    Text(
+                        msg.body,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurface,
+                    )
+                }
                 Text(
                     DateFormat.getTimeInstance(DateFormat.SHORT)
                         .format(Date(msg.createdAt * 1000)),

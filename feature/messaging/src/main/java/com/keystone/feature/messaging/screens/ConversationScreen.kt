@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -55,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -63,9 +65,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.content.Intent
+import android.net.Uri
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.identity.PublicKey
 import com.keystone.feature.messaging.ConversationViewModel
+import com.keystone.feature.messaging.location.LocationPayload
 import java.text.DateFormat
 import java.util.Date
 
@@ -198,6 +203,9 @@ fun ConversationScreen(
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+            val shareLocation = rememberLocationShareController { lat, lng, acc ->
+                viewModel.sendLocation(lat, lng, acc)
+            }
             ComposerRow(
                 draft = draft,
                 onDraftChange = { draft = it },
@@ -207,6 +215,7 @@ fun ConversationScreen(
                         draft = ""
                     }
                 },
+                onShareLocation = shareLocation,
                 modifier = Modifier.navigationBarsPadding(),
             )
         }
@@ -218,16 +227,24 @@ private fun ComposerRow(
     draft: String,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    onShareLocation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        IconButton(onClick = onShareLocation) {
+            Icon(
+                Icons.Filled.LocationOn,
+                contentDescription = "Share my location",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
         OutlinedTextField(
             value = draft,
             onValueChange = onDraftChange,
@@ -319,6 +336,76 @@ private fun EmptyThread() {
 }
 
 /**
+ * Inline card body for messages whose payload is a location.
+ * Tapping fires a geo: intent so the user's maps app takes over.
+ * Falls back gracefully if no app handles the intent (Android shows
+ * its own chooser dialog or nothing — either is acceptable, location
+ * rendering doesn't need to assume Maps is installed).
+ */
+@Composable
+internal fun LocationCard(
+    lat: Double,
+    lng: Double,
+    accuracyMeters: Float,
+    fromSelf: Boolean,
+) {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .clickable {
+                val uri = "geo:%.6f,%.6f?q=%.6f,%.6f(Shared%%20Location)"
+                    .format(lat, lng, lat, lng)
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                runCatching { context.startActivity(intent) }
+            },
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                Icons.Filled.LocationOn,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                else com.keystone.core.ui.KeystoneAccent.Verified,
+            )
+            Text(
+                "Location",
+                style = MaterialTheme.typography.labelLarge,
+                color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Text(
+            "%.5f, %.5f".format(lat, lng),
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+            else MaterialTheme.colorScheme.onSurface,
+        )
+        val acc = accuracyMeters.toInt()
+        if (acc > 0) {
+            Text(
+                "± $acc m · tap to open in maps",
+                style = MaterialTheme.typography.labelSmall,
+                color = (if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.75f),
+            )
+        } else {
+            Text(
+                "tap to open in maps",
+                style = MaterialTheme.typography.labelSmall,
+                color = (if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.75f),
+            )
+        }
+    }
+}
+
+/**
  * Map MessageEntity.status → (icon, contentDescription). Self-only;
  * inbound messages never carry this row.
  */
@@ -380,12 +467,22 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Text(
-                    msg.body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurface,
-                )
+                val loc = LocationPayload.decode(msg.body)
+                if (loc != null) {
+                    LocationCard(
+                        lat = loc.lat,
+                        lng = loc.lng,
+                        accuracyMeters = loc.accuracyMeters,
+                        fromSelf = fromSelf,
+                    )
+                } else {
+                    Text(
+                        msg.body,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurface,
+                    )
+                }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,

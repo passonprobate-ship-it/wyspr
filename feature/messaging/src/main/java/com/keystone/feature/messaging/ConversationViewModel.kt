@@ -145,6 +145,20 @@ class ConversationViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Send the user's current location as a tagged-body message. The
+     * body is encoded via [com.keystone.feature.messaging.location.LocationPayload]
+     * — the wire format is unchanged, the receiver detects the prefix
+     * and renders as a location card.
+     */
+    fun sendLocation(lat: Double, lng: Double, accuracyMeters: Float) {
+        send(
+            com.keystone.feature.messaging.location.LocationPayload.encode(
+                lat, lng, accuracyMeters,
+            ),
+        )
+    }
+
     sealed interface UiState {
         data object Loading : UiState
         data class Ready(

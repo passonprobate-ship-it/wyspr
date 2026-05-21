@@ -144,6 +144,18 @@ class GroupConversationViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Send the user's current location as a tagged-body group message.
+     * Same encoding scheme as 1:1 — see [com.keystone.feature.messaging.location.LocationPayload].
+     */
+    fun sendLocation(lat: Double, lng: Double, accuracyMeters: Float) {
+        send(
+            com.keystone.feature.messaging.location.LocationPayload.encode(
+                lat, lng, accuracyMeters,
+            ),
+        )
+    }
+
     fun send(body: String) {
         val gid = groupId ?: return
         val pub = ownPub ?: return
