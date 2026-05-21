@@ -75,6 +75,7 @@ class MessageSyncService @Inject constructor(
     private val sodium: LazySodiumAndroid,
     private val transports: SyncTransportFacade,
     private val store: MessageStore,
+    private val groupStore: com.keystone.feature.messaging.groups.GroupStore,
     private val transportLifecycle: TransportLifecycle,
     private val notifier: MessagingNotifier,
     private val trustGraphService: TrustGraphService,
@@ -445,6 +446,8 @@ class MessageSyncService @Inject constructor(
                 peerPub = peerPub,
                 ownPub = ownPub,
                 store = store,
+                groupStore = groupStore,
+                sodium = sodium,
             )
             return SessionResult(peerPub = peerPub, engineResult = engine.run())
         } finally {

@@ -1,11 +1,14 @@
 package com.keystone.feature.messaging.sync
 
 import android.util.Log
+import com.goterl.lazysodium.LazySodiumAndroid
 import com.keystone.core.crypto.NoiseSession
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.transport.Link
 import com.keystone.feature.messaging.MessageEnvelope
 import com.keystone.feature.messaging.MessageStore
+import com.keystone.feature.messaging.groups.GroupMessageEnvelope
+import com.keystone.feature.messaging.groups.GroupStore
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -32,6 +35,8 @@ internal class MessageSyncEngine(
     private val peerPub: PublicKey,
     private val ownPub: PublicKey,
     private val store: MessageStore,
+    private val groupStore: GroupStore,
+    private val sodium: LazySodiumAndroid,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
     private val frameTimeoutMs: Long = DEFAULT_FRAME_TIMEOUT_MS,
 ) {
@@ -131,26 +136,44 @@ internal class MessageSyncEngine(
 
     private suspend fun pushPending(): Int {
         val pending = store.pendingOutboundFor(ownPub = ownPub, peerPub = peerPub)
-        if (pending.isEmpty()) {
-            sendFrame(MessageSyncFrame.Push(emptyList()))
-        } else {
-            // Chunk in batches so a misbehaving peer can't claim a
-            // huge array against us; the size cap is mirrored in
-            // MessageSyncFrame.MAX_BATCH on the receive side.
-            sendFrame(MessageSyncFrame.Push(pending.map { it.toEnvelope() }))
+        // Group messages we owe this peer (status=pending, peer is an
+        // active member of the group). See GroupStore for the v1
+        // semantics — best-effort, no per-recipient tracking yet.
+        val pendingGroups = with(groupStore) {
+            groupStore.pendingGroupMessagesForPeer(ownPub, peerPub)
         }
-        // Wait for the matching Ack.
+        val groupEnvelopes = with(groupStore) { pendingGroups.map { it.toEnvelope() } }
+        // Bundle every membership cert the peer might need to verify
+        // the group envelopes above. v1 sends all of them every round;
+        // dedupe happens on the receive side (ingestMembership is
+        // idempotent on (groupId, memberPub)).
+        val membershipCerts = groupStore.membershipCertsForPeer(peerPub)
+        // Even when all lists are empty we still send a Push so the
+        // peer's awaitPushAndAck sees something — the protocol shape
+        // expects exactly one Push from each side per round.
+        sendFrame(
+            MessageSyncFrame.Push(
+                envelopes = pending.map { it.toEnvelope() },
+                groupEnvelopes = groupEnvelopes,
+                membershipCerts = membershipCerts,
+            ),
+        )
         val frame = receiveFrame() ?: return 0
         val ack = (frame as? MessageSyncFrame.Ack)
             ?: error("expected Ack, got ${frame::class.simpleName}")
-        // Mark the acknowledged subset as sent. We don't require
-        // every id to come back — a benign peer might intentionally
-        // skip a duplicate it already has.
+        // Mark the acknowledged subset as sent. Same liberal semantics
+        // as 1:1 — peer may legitimately skip a duplicate id.
         val ackedIds = ack.ids.map { it.toList() }.toSet()
         var count = 0
         for (msg in pending) {
             if (msg.id.toList() in ackedIds) {
                 store.markSent(msg.id)
+                count++
+            }
+        }
+        for (msg in pendingGroups) {
+            if (msg.id.toList() in ackedIds) {
+                groupStore.markGroupSent(msg.id)
                 count++
             }
         }
@@ -161,21 +184,43 @@ internal class MessageSyncEngine(
         val frame = receiveFrame() ?: return 0
         val push = (frame as? MessageSyncFrame.Push)
             ?: error("expected Push, got ${frame::class.simpleName}")
-        if (push.envelopes.isEmpty()) {
+        if (push.envelopes.isEmpty() &&
+            push.groupEnvelopes.isEmpty() &&
+            push.membershipCerts.isEmpty()
+        ) {
             sendFrame(MessageSyncFrame.Ack(emptyList()))
             return 0
         }
-        // Channel binding has authenticated peerPub. Enforce that
-        // every envelope's `fromPub` matches the peer we authenticated
-        // — direct messages only in Sprint 2. Relay forwarding lands
-        // in Sprint 3 with per-envelope signature verification.
-        val accepted = ArrayList<ByteArray>(push.envelopes.size)
+        val accepted = ArrayList<ByteArray>(push.envelopes.size + push.groupEnvelopes.size)
         val received = nowSeconds()
+
+        // Ingest membership certs FIRST so the membership-check on the
+        // group envelopes below sees the freshly-arrived members.
+        // ingestMembership verifies the signature + groupId
+        // consistency; certs from the wrong signer or with a forged
+        // id are rejected.
+        for (cert in push.membershipCerts) {
+            groupStore.ingestMembership(cert, sodium)
+        }
+
+        // 1:1 envelopes. Channel binding has authenticated peerPub, so
+        // every envelope.fromPub MUST equal peerPub and toPub MUST be
+        // ownPub. Anything else is dropped silently (and unacked, so
+        // the peer keeps retrying — they'll see the disagreement).
         for (env in push.envelopes) {
             if (!env.fromPub.bytes.contentEquals(peerPub.bytes)) continue
             if (!env.toPub.bytes.contentEquals(ownPub.bytes)) continue
             store.ingest(env, receivedAtSeconds = received)
             accepted.add(env.id)
+        }
+        // Group envelopes. Same channel-binding rule (sender must be
+        // the authenticated peer) plus a membership check: peerPub must
+        // be an active member of envelope.groupId. The GroupStore
+        // dedupe handles repeated deliveries from multiple members.
+        for (env in push.groupEnvelopes) {
+            if (!env.fromPub.bytes.contentEquals(peerPub.bytes)) continue
+            val ok = groupStore.ingestGroup(env, receivedAtSeconds = received)
+            if (ok) accepted.add(env.id)
         }
         sendFrame(MessageSyncFrame.Ack(accepted))
         return accepted.size

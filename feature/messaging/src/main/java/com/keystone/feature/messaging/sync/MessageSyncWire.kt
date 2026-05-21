@@ -2,6 +2,8 @@ package com.keystone.feature.messaging.sync
 
 import com.keystone.core.crypto.Cbor
 import com.keystone.feature.messaging.MessageEnvelope
+import com.keystone.feature.messaging.groups.GroupMembership
+import com.keystone.feature.messaging.groups.GroupMessageEnvelope
 
 /**
  * Wire format for the message-sync protocol that runs once both
@@ -34,7 +36,28 @@ import com.keystone.feature.messaging.MessageEnvelope
  */
 internal sealed interface MessageSyncFrame {
 
-    data class Push(val envelopes: List<MessageEnvelope>) : MessageSyncFrame
+    /**
+     * The Push frame carries BOTH 1:1 envelopes and group envelopes in
+     * the same round trip. The Ack frame's id list covers both — ids
+     * are 16 bytes either way and the receiver looks each id up by
+     * the table it lives in.
+     *
+     * Wire shape: `[ tag=0, [env_bytes…], [group_env_bytes…] ]`. The
+     * group array is always present, possibly empty, to keep the
+     * structure stable.
+     */
+    data class Push(
+        val envelopes: List<MessageEnvelope>,
+        val groupEnvelopes: List<GroupMessageEnvelope> = emptyList(),
+        /**
+         * `GroupMembership` certs the local device knows that the peer
+         * may not. Propagating these inline with the messages avoids a
+         * separate round-trip: when the peer receives a group message,
+         * the cert proving the sender is a member is already in the
+         * same Push frame.
+         */
+        val membershipCerts: List<GroupMembership> = emptyList(),
+    ) : MessageSyncFrame
     data class Ack(val ids: List<ByteArray>) : MessageSyncFrame
     /**
      * "I have read the messages with these ids." Receiver looks up
@@ -47,10 +70,14 @@ internal sealed interface MessageSyncFrame {
 
     fun wireBytes(): ByteArray = when (this) {
         is Push -> Cbor.encode {
-            arrayHeader(2)
+            arrayHeader(4)
             uint(TAG_PUSH.toLong())
             arrayHeader(envelopes.size)
             for (env in envelopes) bytes(env.wireBytes())
+            arrayHeader(groupEnvelopes.size)
+            for (env in groupEnvelopes) bytes(env.wireBytes())
+            arrayHeader(membershipCerts.size)
+            for (cert in membershipCerts) bytes(cert.wireBytes())
         }
         is Ack -> Cbor.encode {
             arrayHeader(2)
@@ -83,11 +110,18 @@ internal sealed interface MessageSyncFrame {
          */
         fun fromWire(bytes: ByteArray): MessageSyncFrame = Cbor.decode(bytes) {
             val outerLen = arrayHeader()
-            require(outerLen in 1..2) { "frame outer array must be 1 or 2 elements" }
+            require(outerLen in 1..4) { "frame outer array must be 1, 2, 3, or 4 elements" }
             val tag = uint().toInt()
             when (tag) {
                 TAG_PUSH -> {
-                    require(outerLen == 2) { "Push frame missing payload" }
+                    // v0.7.2 sent 2-element Push. v0.8 adds group_envelopes
+                    // (3-element) and membership_certs (4-element). The
+                    // decoder accepts all three forms — old peers gracefully
+                    // have empty group lists. The encoder always writes the
+                    // current 4-element shape.
+                    require(outerLen in 2..4) {
+                        "Push frame must be 2, 3, or 4 elements"
+                    }
                     val count = arrayHeader()
                     require(count in 0..MAX_BATCH) {
                         "Push count $count out of range"
@@ -97,7 +131,35 @@ internal sealed interface MessageSyncFrame {
                         val envBytes = bytes()
                         envelopes.add(MessageEnvelope.fromWire(envBytes))
                     }
-                    Push(envelopes)
+                    val groupEnvelopes: List<GroupMessageEnvelope> = if (outerLen >= 3) {
+                        val groupCount = arrayHeader()
+                        require(groupCount in 0..MAX_BATCH) {
+                            "Group push count $groupCount out of range"
+                        }
+                        ArrayList<GroupMessageEnvelope>(groupCount).also { list ->
+                            repeat(groupCount) {
+                                val envBytes = bytes()
+                                list.add(GroupMessageEnvelope.fromWire(envBytes))
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    val membershipCerts: List<GroupMembership> = if (outerLen >= 4) {
+                        val certCount = arrayHeader()
+                        require(certCount in 0..MAX_BATCH) {
+                            "Membership cert count $certCount out of range"
+                        }
+                        ArrayList<GroupMembership>(certCount).also { list ->
+                            repeat(certCount) {
+                                val certBytes = bytes()
+                                list.add(GroupMembership.fromWire(certBytes))
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    Push(envelopes, groupEnvelopes, membershipCerts)
                 }
                 TAG_ACK -> {
                     require(outerLen == 2) { "Ack frame missing payload" }
