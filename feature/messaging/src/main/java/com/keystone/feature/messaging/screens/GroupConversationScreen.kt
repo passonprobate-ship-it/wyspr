@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -199,6 +200,9 @@ fun GroupConversationScreen(
             val shareLocation = rememberLocationShareController { lat, lng, acc ->
                 viewModel.sendLocation(lat, lng, acc)
             }
+            val sharePhoto = rememberPhotoShareController { jpegBytes ->
+                viewModel.sendImage(jpegBytes)
+            }
             GroupComposerRow(
                 draft = draft,
                 onDraftChange = { draft = it },
@@ -209,6 +213,7 @@ fun GroupConversationScreen(
                     }
                 },
                 onShareLocation = shareLocation,
+                onSharePhoto = sharePhoto,
                 modifier = Modifier.navigationBarsPadding(),
             )
         }
@@ -340,6 +345,7 @@ private fun GroupComposerRow(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onShareLocation: () -> Unit,
+    onSharePhoto: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -350,6 +356,13 @@ private fun GroupComposerRow(
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        IconButton(onClick = onSharePhoto) {
+            Icon(
+                Icons.Filled.Image,
+                contentDescription = "Send a photo",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
         IconButton(onClick = onShareLocation) {
             Icon(
                 Icons.Filled.LocationOn,
@@ -488,15 +501,19 @@ private fun GroupMessageBubble(
                     )
                 }
                 val loc = LocationPayload.decode(msg.body)
-                if (loc != null) {
-                    LocationCard(
+                val isImage = com.keystone.feature.messaging.image.ImagePayload.isImage(msg.body)
+                when {
+                    isImage -> com.keystone.feature.messaging.image.ImageBubble(
+                        body = msg.body,
+                        cacheKey = msg.id.toList(),
+                    )
+                    loc != null -> LocationCard(
                         lat = loc.lat,
                         lng = loc.lng,
                         accuracyMeters = loc.accuracyMeters,
                         fromSelf = fromSelf,
                     )
-                } else {
-                    Text(
+                    else -> Text(
                         msg.body,
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer

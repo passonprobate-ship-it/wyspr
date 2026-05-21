@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Schedule
@@ -71,6 +72,8 @@ import android.net.Uri
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.identity.PublicKey
 import com.keystone.feature.messaging.ConversationViewModel
+import com.keystone.feature.messaging.image.ImageBubble
+import com.keystone.feature.messaging.image.ImagePayload
 import com.keystone.feature.messaging.location.LocationPayload
 import java.text.DateFormat
 import java.util.Date
@@ -211,6 +214,9 @@ fun ConversationScreen(
             val shareLocation = rememberLocationShareController { lat, lng, acc ->
                 viewModel.sendLocation(lat, lng, acc)
             }
+            val sharePhoto = rememberPhotoShareController { jpegBytes ->
+                viewModel.sendImage(jpegBytes)
+            }
             ComposerRow(
                 draft = draft,
                 onDraftChange = { draft = it },
@@ -221,6 +227,7 @@ fun ConversationScreen(
                     }
                 },
                 onShareLocation = shareLocation,
+                onSharePhoto = sharePhoto,
                 modifier = Modifier.navigationBarsPadding(),
             )
         }
@@ -233,6 +240,7 @@ private fun ComposerRow(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onShareLocation: () -> Unit,
+    onSharePhoto: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -243,6 +251,13 @@ private fun ComposerRow(
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        IconButton(onClick = onSharePhoto) {
+            Icon(
+                Icons.Filled.Image,
+                contentDescription = "Send a photo",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
         IconButton(onClick = onShareLocation) {
             Icon(
                 Icons.Filled.LocationOn,
@@ -473,15 +488,16 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 val loc = LocationPayload.decode(msg.body)
-                if (loc != null) {
-                    LocationCard(
+                val isImage = ImagePayload.isImage(msg.body)
+                when {
+                    isImage -> ImageBubble(body = msg.body, cacheKey = msg.id.toList())
+                    loc != null -> LocationCard(
                         lat = loc.lat,
                         lng = loc.lng,
                         accuracyMeters = loc.accuracyMeters,
                         fromSelf = fromSelf,
                     )
-                } else {
-                    Text(
+                    else -> Text(
                         msg.body,
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer

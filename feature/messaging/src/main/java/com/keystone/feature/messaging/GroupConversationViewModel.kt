@@ -156,6 +156,15 @@ class GroupConversationViewModel @Inject constructor(
         )
     }
 
+    /**
+     * Send a compressed JPEG as a tagged-body group message. The
+     * screen runs the URI → bytes compression so this viewmodel
+     * stays Context-free.
+     */
+    fun sendImage(jpegBytes: ByteArray) {
+        send(com.keystone.feature.messaging.image.ImagePayload.encode(jpegBytes))
+    }
+
     fun send(body: String) {
         val gid = groupId ?: return
         val pub = ownPub ?: return

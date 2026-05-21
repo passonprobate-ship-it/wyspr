@@ -1,0 +1,23 @@
+v0.8.1 — tiny photos.
+
+You can now send photos inside Keystone threads — 1:1 and groups.
+
+• New photo button in the composer (next to the location pin).
+  Tap to open the system photo picker (no extra permissions needed
+  on Android 13+; uses the platform photo picker on older versions
+  too).
+• Adaptive compression. Photos shrink through a ladder of
+  (max-dimension, JPEG quality) pairs until the encoded body fits
+  the 16 KB message-envelope cap. The output is tiny — typically
+  a 240–640 px JPEG between 5–11 KB. Hence "tiny photos."
+• Tagged-body encoding (`keystone:img:<base64>`) — same scheme as
+  v0.7.6 location messages. Zero wire-format changes, no schema
+  bump, the receiver detects the prefix and renders inline.
+• Receiver renders the photo as a bubble at max 240 dp tall,
+  contentScale=Fit. Broken/malformed payloads fall back to a
+  placeholder rather than crashing the thread.
+
+Defaults are aggressive on purpose. The goal is "always
+deliverable" over "best looking" — a tiny photo always lands; if
+you want pixel quality, that's a future "files" feature with a
+chunked envelope.

@@ -159,6 +159,16 @@ class ConversationViewModel @Inject constructor(
         )
     }
 
+    /**
+     * Send a compressed JPEG as a tagged-body message. The screen is
+     * responsible for the URI → bytes pipeline ([com.keystone.feature.messaging.image.ImageCompressor.compress])
+     * so this viewmodel stays Context-free. Encoded body is the
+     * standard `keystone:img:<base64>` form.
+     */
+    fun sendImage(jpegBytes: ByteArray) {
+        send(com.keystone.feature.messaging.image.ImagePayload.encode(jpegBytes))
+    }
+
     sealed interface UiState {
         data object Loading : UiState
         data class Ready(
