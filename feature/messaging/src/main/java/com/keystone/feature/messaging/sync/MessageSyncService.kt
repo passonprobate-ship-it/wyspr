@@ -453,6 +453,7 @@ class MessageSyncService @Inject constructor(
                 keystore = keystore,
                 bindingService = mailboxBindingService,
                 mailboxHost = mailboxHost,
+                database = database,
             )
             return SessionResult(peerPub = peerPub, engineResult = engine.run())
         } finally {

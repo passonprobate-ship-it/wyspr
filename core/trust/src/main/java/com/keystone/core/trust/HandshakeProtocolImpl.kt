@@ -126,6 +126,13 @@ class HandshakeProtocolImpl(
         require(localQr.communityId.bytes.contentEquals(peerQr.communityId.bytes)) {
             "peer is from a different community"
         }
+        // A self-pairing would write a TrustEdge(from=self, to=self) into the
+        // graph, which could later masquerade as an independent path in
+        // K-quorum. Channel binding can't catch this — both sides hold the
+        // same identity key.
+        require(!localQr.identityPub.bytes.contentEquals(peerQr.identityPub.bytes)) {
+            "refusing to handshake with self"
+        }
         val now = clock()
         require(localQr.isFresh(now)) { "local QR is stale" }
         require(peerQr.isFresh(now)) { "peer QR is stale (>5min)" }

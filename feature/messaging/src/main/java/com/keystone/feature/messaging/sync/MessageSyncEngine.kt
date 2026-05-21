@@ -4,12 +4,16 @@ import android.util.Log
 import com.goterl.lazysodium.LazySodiumAndroid
 import com.keystone.core.crypto.KeystoreManager
 import com.keystone.core.crypto.NoiseSession
+import com.keystone.core.database.KeystoneDatabase
+import com.keystone.core.database.entities.MailboxPullCursorEntity
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.transport.Link
 import com.keystone.feature.messaging.MessageEnvelope
 import com.keystone.feature.messaging.MessageStore
+import com.keystone.feature.messaging.verify
 import com.keystone.feature.messaging.groups.GroupMessageEnvelope
 import com.keystone.feature.messaging.groups.GroupStore
+import com.keystone.feature.messaging.groups.verify as verifyGroup
 import com.keystone.feature.messaging.mailbox.MailboxBinding
 import com.keystone.feature.messaging.mailbox.MailboxBindingService
 import com.keystone.feature.messaging.mailbox.MailboxEnvelope
@@ -46,6 +50,7 @@ internal class MessageSyncEngine(
     private val keystore: KeystoreManager,
     private val bindingService: MailboxBindingService,
     private val mailboxHost: MailboxHost,
+    private val database: KeystoneDatabase,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
     private val frameTimeoutMs: Long = DEFAULT_FRAME_TIMEOUT_MS,
 ) {
@@ -285,29 +290,40 @@ internal class MessageSyncEngine(
             groupStore.ingestMembership(cert, sodium)
         }
 
-        // Mailbox bindings — the peer's own (or any they've relayed).
-        // ingest verifies signature + expiry; a malformed cert is
-        // dropped and we move on.
+        // Mailbox bindings — only accept ones the Noise-authenticated
+        // peer is themselves the owner of. This prevents the
+        // single-edge-in attacker from broadcasting forged bindings
+        // for third-party owners and redirecting future pushes.
         for (binding in push.mailboxBindings) {
-            bindingService.ingest(binding, sodium, received)
+            bindingService.ingest(binding, peerPub, sodium, received)
         }
 
         // 1:1 envelopes. Channel binding has authenticated peerPub, so
         // every envelope.fromPub MUST equal peerPub and toPub MUST be
-        // ownPub. Anything else is dropped silently (and unacked, so
-        // the peer keeps retrying — they'll see the disagreement).
+        // ownPub. The Ed25519 signature is also re-verified — channel
+        // binding proves the transport peer, the signature proves the
+        // payload wasn't tampered with (defence against a regression of
+        // KeystoreManager.sign — see 2026-05-20 padding bug).
         for (env in push.envelopes) {
             if (!env.fromPub.bytes.contentEquals(peerPub.bytes)) continue
             if (!env.toPub.bytes.contentEquals(ownPub.bytes)) continue
+            if (!env.verify(sodium)) {
+                Log.w(TAG, "envelope ${env.id.take(4)}…: signature verify failed; dropping")
+                continue
+            }
             store.ingest(env, receivedAtSeconds = received)
             accepted.add(env.id)
         }
         // Group envelopes. Same channel-binding rule (sender must be
-        // the authenticated peer) plus a membership check: peerPub must
-        // be an active member of envelope.groupId. The GroupStore
-        // dedupe handles repeated deliveries from multiple members.
+        // the authenticated peer) plus signature verify plus membership
+        // check inside ingestGroup. The GroupStore dedupe handles repeated
+        // deliveries from multiple members.
         for (env in push.groupEnvelopes) {
             if (!env.fromPub.bytes.contentEquals(peerPub.bytes)) continue
+            if (!env.verifyGroup(sodium)) {
+                Log.w(TAG, "group envelope ${env.id.take(4)}…: signature verify failed; dropping")
+                continue
+            }
             val ok = groupStore.ingestGroup(env, receivedAtSeconds = received)
             if (ok) accepted.add(env.id)
         }
@@ -381,7 +397,17 @@ internal class MessageSyncEngine(
      * pub binding to the Noise channel) have no stored mail.
      */
     private suspend fun sendPullAndIngest(iPull: Boolean): Int {
-        sendMailboxFrame(MailboxFrame.Pull(MailboxFrame.EMPTY_CURSOR))
+        // Send the real high-water mark so the host can't replay
+        // already-delivered envelopes. When we're not pulling we
+        // still send an empty Pull (Long.MAX_VALUE cursor) — the
+        // protocol shape stays fixed regardless of role. The host
+        // returns nothing because there's nothing newer.
+        val cursor = if (iPull) {
+            database.mailboxPullCursorDao.getCursor(peerPub.bytes) ?: 0L
+        } else {
+            Long.MAX_VALUE
+        }
+        sendMailboxFrame(MailboxFrame.Pull(MailboxFrame.encodeCursor(cursor)))
         val resp = receiveMailboxFrame() as? MailboxFrame.PullResponse
             ?: run {
                 Log.w(TAG, "mailbox: expected PullResponse, got something else; bailing")
@@ -402,6 +428,21 @@ internal class MessageSyncEngine(
         }
         val ingestedIds = ingestPulledEnvelopes(resp.envelopes)
         sendMailboxFrame(MailboxFrame.Ack(ingestedIds))
+        // Advance the cursor to the max `createdAt` actually accepted
+        // so the next round won't refetch them. We only advance from
+        // ingested envelopes — a host that serves bogus rows we drop
+        // doesn't get to bump the cursor past good rows we still need.
+        val newHighWater = resp.envelopes.asSequence()
+            .filter { env -> ingestedIds.any { it.contentEquals(env.id) } }
+            .maxOfOrNull { it.createdAt }
+        if (newHighWater != null && newHighWater > cursor) {
+            database.mailboxPullCursorDao.upsert(
+                MailboxPullCursorEntity(
+                    mailboxPub = peerPub.bytes,
+                    sinceCursor = newHighWater,
+                ),
+            )
+        }
         return ingestedIds.size
     }
 

@@ -12,6 +12,7 @@ import com.keystone.core.database.dao.GroupDao
 import com.keystone.core.database.dao.GroupMemberDao
 import com.keystone.core.database.dao.GroupMessageDao
 import com.keystone.core.database.dao.MailboxBindingDao
+import com.keystone.core.database.dao.MailboxPullCursorDao
 import com.keystone.core.database.dao.MailboxStoredDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.RevocationDao
@@ -25,6 +26,7 @@ import com.keystone.core.database.entities.GroupEntity
 import com.keystone.core.database.entities.GroupMemberEntity
 import com.keystone.core.database.entities.GroupMessageEntity
 import com.keystone.core.database.entities.MailboxBindingEntity
+import com.keystone.core.database.entities.MailboxPullCursorEntity
 import com.keystone.core.database.entities.MailboxStoredEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.database.entities.RevocationEntity
@@ -81,8 +83,9 @@ import com.keystone.core.database.entities.UserProfileEntity
         UserProfileEntity::class,
         MailboxBindingEntity::class,
         MailboxStoredEntity::class,
+        MailboxPullCursorEntity::class,
     ],
-    version = 10,
+    version = 11,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {
@@ -99,6 +102,7 @@ abstract class KeystoneRoomDatabase : RoomDatabase() {
     abstract fun userProfileDao(): UserProfileDao
     abstract fun mailboxBindingDao(): MailboxBindingDao
     abstract fun mailboxStoredDao(): MailboxStoredDao
+    abstract fun mailboxPullCursorDao(): MailboxPullCursorDao
 }
 
 /**
@@ -237,16 +241,36 @@ internal val MIGRATION_8_9 = object : Migration(8, 9) {
 }
 
 /**
- * v9 → v10: add `signature` column to `mailbox_stored`. Existing
- * rows (there are none in any shipped install — Phase 1's schema is
- * only days old and the host hasn't gone live yet) get a zero-length
- * BLOB default. The host's INSERT path always writes the real
- * signature from v10 onward.
+ * v9 → v10: add `signature` column to `mailbox_stored`. Any rows
+ * from a v9 dev install would survive the ALTER with `x''` defaults,
+ * but `MailboxEnvelope.init` requires SIG_LENGTH bytes — so reading
+ * those rows back would crash the sync coroutine. The Phase-1 host
+ * wasn't on the wire yet, so any rows present are stale dev data
+ * we can safely drop in lieu of fabricating signatures.
  */
 internal val MIGRATION_9_10 = object : Migration(9, 10) {
     override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("DELETE FROM `mailbox_stored`")
         db.execSQL(
             "ALTER TABLE `mailbox_stored` ADD COLUMN `signature` BLOB NOT NULL DEFAULT x''"
+        )
+    }
+}
+
+/**
+ * v10 → v11: add `mailbox_pull_cursor`. Tracks the largest
+ * `created_at` (in seconds) we've successfully pulled from a given
+ * mailbox host. Without this, the recipient sends `since_cursor=0`
+ * every round and a malicious host can replay the entire backlog
+ * forever. Additive — no data changes.
+ */
+internal val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `mailbox_pull_cursor` (" +
+                "`mailbox_pub` BLOB NOT NULL, " +
+                "`since_cursor` INTEGER NOT NULL DEFAULT 0, " +
+                "PRIMARY KEY(`mailbox_pub`))"
         )
     }
 }

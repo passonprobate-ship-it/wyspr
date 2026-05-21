@@ -58,6 +58,7 @@ class KeystoneDatabaseImpl(
     override val userProfileDao get() = requireOpen().userProfileDao()
     override val mailboxBindingDao get() = requireOpen().mailboxBindingDao()
     override val mailboxStoredDao get() = requireOpen().mailboxStoredDao()
+    override val mailboxPullCursorDao get() = requireOpen().mailboxPullCursorDao()
 
     override suspend fun open() = openLock.withLock {
         withContext(Dispatchers.IO) {
@@ -82,7 +83,14 @@ class KeystoneDatabaseImpl(
                 // bumps. Earlier versions still fall back to a
                 // destructive migration since no real install was
                 // ever on those.
-                .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                .addMigrations(
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                    MIGRATION_7_8,
+                    MIGRATION_8_9,
+                    MIGRATION_9_10,
+                    MIGRATION_10_11,
+                )
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
                 .build()
             room = built

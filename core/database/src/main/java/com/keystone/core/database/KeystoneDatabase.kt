@@ -8,6 +8,7 @@ import com.keystone.core.database.dao.GroupDao
 import com.keystone.core.database.dao.GroupMemberDao
 import com.keystone.core.database.dao.GroupMessageDao
 import com.keystone.core.database.dao.MailboxBindingDao
+import com.keystone.core.database.dao.MailboxPullCursorDao
 import com.keystone.core.database.dao.MailboxStoredDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.RevocationDao
@@ -67,4 +68,5 @@ interface KeystoneDatabase {
     val userProfileDao: UserProfileDao
     val mailboxBindingDao: MailboxBindingDao
     val mailboxStoredDao: MailboxStoredDao
+    val mailboxPullCursorDao: MailboxPullCursorDao
 }

@@ -80,6 +80,17 @@ class MailboxHost @Inject constructor(
             Log.w(TAG, "push: sender ${fromPub.shortHex()} not in trust graph")
             return@withContext PushOutcome.Unauthorised
         }
+        // CRITICAL — the recipient must also be in our trust graph.
+        // Without this, any community member can use us as free
+        // storage for arbitrary out-of-community pubs, and a
+        // malicious host that gets bound by a peer can hoover up
+        // who→who/when/size traffic-analysis data for the whole
+        // network. Hosting policy is: we only hold mail for people
+        // we know.
+        if (!isInCommunity(envelope.toPub)) {
+            Log.w(TAG, "push: recipient ${envelope.toPub.shortHex()} not in trust graph")
+            return@withContext PushOutcome.Unauthorised
+        }
 
         ensureOpen()
         val cap = settings.storageCapBytes.value
@@ -91,7 +102,10 @@ class MailboxHost @Inject constructor(
             Log.w(TAG, "push: envelope size $incomingSize > storage cap $cap; rejecting")
             return@withContext PushOutcome.Rejected
         }
-        evictOldestUntilRoom(needed = incomingSize.toLong(), cap = cap)
+        val evictIds = computeEvictionList(needed = incomingSize.toLong(), cap = cap)
+        if (evictIds.isNotEmpty()) {
+            Log.i(TAG, "evict: dropping ${evictIds.size} oldest rows to make room")
+        }
 
         val entity = MailboxStoredEntity(
             envelopeId = envelope.id,
@@ -103,10 +117,11 @@ class MailboxHost @Inject constructor(
             createdAt = envelope.createdAt,
             expiresAt = now + retentionSeconds,
         )
-        // IGNORE on conflict — a re-pushed envelope with the same id is
-        // silently dedup'd. Return Stored either way; the sender's
-        // contract is "the host has it," not "the host had to write it."
-        database.mailboxStoredDao.insert(entity)
+        // Single Room transaction so two concurrent pushes can't both
+        // observe "cap fits, no eviction" and then both insert past
+        // the cap. IGNORE on conflict at the insert level handles the
+        // duplicate-envelope case.
+        database.mailboxStoredDao.evictAndInsert(evictIds, entity)
         PushOutcome.Stored(envelopeId = envelope.id)
     }
 
@@ -126,12 +141,9 @@ class MailboxHost @Inject constructor(
     ): List<MailboxEnvelope> = withContext(Dispatchers.IO) {
         if (!settings.hostEnabled.value) return@withContext emptyList()
         ensureOpen()
-        database.mailboxStoredDao.forRecipient(forPub.bytes)
-            .asSequence()
-            .filter { it.createdAt > sinceCursor }
-            .take(MailboxFrame.MAX_BATCH)
+        database.mailboxStoredDao
+            .forRecipientSince(forPub.bytes, sinceCursor, MailboxFrame.MAX_BATCH)
             .map { row -> row.toEnvelope() }
-            .toList()
     }
 
     private fun MailboxStoredEntity.toEnvelope(): MailboxEnvelope = MailboxEnvelope(
@@ -155,12 +167,11 @@ class MailboxHost @Inject constructor(
         if (!settings.hostEnabled.value) return@withContext 0
         if (ids.isEmpty()) return@withContext 0
         ensureOpen()
-        // Resolve the rows first to enforce the to_pub == forPub check.
-        // The DAO's deleteIds() trusts its caller — we'd never want a
-        // peer to delete rows we're holding for somebody else.
-        val held = database.mailboxStoredDao.forRecipient(forPub.bytes)
-        val heldIds = held.asSequence()
-            .map { it.envelopeId.toList() }
+        // Enforce the to_pub == forPub guard so a peer can only delete
+        // their own mail. Projection-only query avoids loading ciphertext.
+        val heldIds = database.mailboxStoredDao.envelopeIdsForRecipient(forPub.bytes)
+            .asSequence()
+            .map { it.toList() }
             .toHashSet()
         val deletable = ids.filter { it.toList() in heldIds }
         if (deletable.isEmpty()) return@withContext 0
@@ -190,14 +201,13 @@ class MailboxHost @Inject constructor(
 
     // ---- internals ----
 
-    private suspend fun evictOldestUntilRoom(needed: Long, cap: Long) {
-        // Walk every recipient's queue oldest-first until adding
-        // `needed` bytes would still fit under `cap`. The total-size
-        // flow is a reactive accumulator; we sample a fresh snapshot
-        // here via a synchronous query to keep this transaction-local.
+    /** Returns the envelope ids that must be deleted so [needed] bytes
+     *  fit under [cap]. Uses the projection query so we don't load
+     *  ciphertext BLOBs just to make an eviction decision. */
+    private suspend fun computeEvictionList(needed: Long, cap: Long): List<ByteArray> {
         val all = database.mailboxStoredDao.allOldestFirstForEviction()
         var currentTotal = all.sumOf { it.sizeBytes.toLong() }
-        if (currentTotal + needed <= cap) return
+        if (currentTotal + needed <= cap) return emptyList()
 
         val evictIds = ArrayList<ByteArray>()
         for (row in all) {
@@ -205,10 +215,7 @@ class MailboxHost @Inject constructor(
             evictIds.add(row.envelopeId)
             currentTotal -= row.sizeBytes
         }
-        if (evictIds.isNotEmpty()) {
-            Log.i(TAG, "evict: dropping ${evictIds.size} oldest rows to make room")
-            database.mailboxStoredDao.deleteIds(evictIds)
-        }
+        return evictIds
     }
 
     private suspend fun isInCommunity(peerPub: PublicKey): Boolean {

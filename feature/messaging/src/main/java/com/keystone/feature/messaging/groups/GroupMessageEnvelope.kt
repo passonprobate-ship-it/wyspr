@@ -90,7 +90,12 @@ data class GroupMessageEnvelope(
             val fromPub = PublicKey(bytes())
             val groupId = GroupId(bytes())
             val createdAt = uint()
-            val body = bytes().decodeToString()
+            val bodyBytes = bytes()
+            require(bodyBytes.size <= MAX_BODY_BYTES) {
+                "group message body exceeds $MAX_BODY_BYTES bytes"
+            }
+            require(bodyBytes.isNotEmpty()) { "group message body must not be empty" }
+            val body = bodyBytes.decodeToString()
             val signature = bytes()
             GroupMessageEnvelope(
                 id = id,

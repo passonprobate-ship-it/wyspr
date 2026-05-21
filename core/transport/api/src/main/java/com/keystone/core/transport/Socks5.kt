@@ -37,12 +37,22 @@ object Socks5 {
      * failure; caller is expected to catch and surface as a transport
      * error.
      */
+    /**
+     * Default for `postHandoffReadTimeoutMs`. A wedged Tor circuit
+     * would otherwise pin a thread reading nothing forever — the read
+     * would only return on socket close, which has no scheduler.
+     */
+    const val DEFAULT_POST_HANDOFF_READ_TIMEOUT_MS: Int = 60_000
+
     @Throws(IOException::class)
     fun dial(
         torSocksPort: Int,
         host: String,
         port: Int,
         connectTimeoutMs: Int = 30_000,
+        /** Per-read timeout applied to the returned socket. Set to 0 to
+         *  disable (caller takes responsibility for deadlines). */
+        postHandoffReadTimeoutMs: Int = DEFAULT_POST_HANDOFF_READ_TIMEOUT_MS,
     ): Socket {
         val hostBytes = host.toByteArray(Charsets.US_ASCII)
         require(hostBytes.size in 1..255) { "SOCKS5 DOMAINNAME must be 1..255 bytes" }
@@ -108,9 +118,11 @@ object Socks5 {
             val portBuf = ByteArray(2); readFully(ins, portBuf, "BND port")
 
             // Once we're past the reply, the socket is a clean
-            // bidirectional stream to the destination. Reset the
-            // soTimeout so callers can run their own deadline logic.
-            socket.soTimeout = 0
+            // bidirectional stream to the destination. Keep a non-zero
+            // soTimeout by default so a wedged Tor circuit can't pin a
+            // thread on stream reads forever; callers that have their
+            // own deadline machinery can pass 0 to disable.
+            socket.soTimeout = postHandoffReadTimeoutMs.coerceAtLeast(0)
             return socket
         } catch (t: Throwable) {
             runCatching { socket.close() }

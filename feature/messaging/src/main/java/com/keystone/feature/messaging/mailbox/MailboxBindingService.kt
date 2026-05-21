@@ -76,9 +76,16 @@ class MailboxBindingService @Inject constructor(
 
     /**
      * Verify and persist a binding received from a peer. Returns true
-     * iff the cert was authenticated, within its validity window, and
-     * persisted. Returns false on any failure (we never store an
-     * unverified cert).
+     * iff the cert was authenticated, within its validity window, came
+     * from the owner themselves, and persisted. Returns false on any
+     * failure (we never store an unverified cert).
+     *
+     * [peerPub] is the Noise-authenticated transport peer. Only the
+     * owner of a binding can install it — without this check a
+     * member with a single edge into the community could broadcast
+     * forged bindings for any owner pub (with `createdAt = now`,
+     * overwriting the legitimate binding via the newer-wins rule)
+     * and silently redirect future pushes to attacker storage.
      *
      * Idempotent — replaying the same cert is a no-op. Newer certs
      * (later `createdAt`) overwrite older ones for the same owner
@@ -86,10 +93,19 @@ class MailboxBindingService @Inject constructor(
      */
     suspend fun ingest(
         binding: MailboxBinding,
+        peerPub: PublicKey,
         sodium: LazySodiumAndroid,
         nowSeconds: Long,
         clockSkewSeconds: Long = DEFAULT_CLOCK_SKEW_SECONDS,
     ): Boolean = withContext(Dispatchers.IO) {
+        if (!binding.ownerPub.bytes.contentEquals(peerPub.bytes)) {
+            Log.w(
+                TAG,
+                "ingest: peer ${peerPub.shortHex()} pushed a binding for a " +
+                    "different owner ${binding.ownerPub.shortHex()}; refusing",
+            )
+            return@withContext false
+        }
         if (!binding.verify(sodium, nowSeconds, clockSkewSeconds)) {
             Log.w(TAG, "ingest: binding for ${binding.ownerPub.shortHex()} failed verify")
             return@withContext false

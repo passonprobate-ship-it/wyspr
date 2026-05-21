@@ -8,9 +8,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -49,9 +49,14 @@ class TorLink(
     private val sendLock = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val _incoming = MutableSharedFlow<ByteArray>(
-        replay = 0,
-        extraBufferCapacity = 16,
+    // Channel — not SharedFlow — for single-consumer at-most-once
+    // delivery semantics that match BleLink. A SharedFlow with replay=0
+    // would let a later collector subscribe partway through the Noise
+    // session and see zero frames; the reader is already past them.
+    // Channel guarantees each frame goes to exactly one collector and
+    // none are dropped silently.
+    private val _incoming = Channel<ByteArray>(
+        capacity = 16,
         onBufferOverflow = BufferOverflow.SUSPEND,
     )
 
@@ -85,11 +90,12 @@ class TorLink(
         }
     }
 
-    override fun incoming(): Flow<ByteArray> = _incoming.asSharedFlow()
+    override fun incoming(): Flow<ByteArray> = _incoming.receiveAsFlow()
 
     override suspend fun close() {
         if (closed) return
         closed = true
+        _incoming.close()
         withContext(Dispatchers.IO) {
             runCatching { socket.shutdownInput() }
             runCatching { socket.shutdownOutput() }
@@ -128,11 +134,14 @@ class TorLink(
                     if (!closed) Log.w(TAG, "TorLink read: payload error", t)
                     return
                 }
-                _incoming.emit(payload)
+                _incoming.send(payload)
             }
+        } catch (_: kotlinx.coroutines.channels.ClosedSendChannelException) {
+            // close() ran while we were mid-send; benign.
         } finally {
             // Best-effort close — the suspending close() above might
             // have raced us to it; either way the socket ends up shut.
+            runCatching { _incoming.close() }
             runCatching { socket.close() }
         }
     }

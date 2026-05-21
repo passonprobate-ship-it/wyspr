@@ -223,11 +223,18 @@ class TorHiddenServiceTransport(
             )
             val link = TorLink(endpoint, socket)
             acceptedLinks[endpoint.opaqueAddress] = link
-            val sendResult = accepted.trySend(link)
-            if (sendResult.isFailure) {
-                Log.w(TAG, "acceptedLinks channel full, dropping connection")
+            // Suspending send so a stalled consumer applies back-pressure
+            // to the accept loop rather than dropping new circuits on
+            // the floor. The accept channel has finite capacity by
+            // design — losing a real inbound Tor connection silently
+            // (which `trySend` did) is worse than a brief stall here.
+            try {
+                accepted.send(link)
+            } catch (_: kotlinx.coroutines.channels.ClosedSendChannelException) {
+                Log.w(TAG, "accepted channel closed; dropping inbound link")
                 runCatching { link.close() }
                 acceptedLinks.remove(endpoint.opaqueAddress)
+                return
             }
         }
     }

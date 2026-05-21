@@ -1,5 +1,7 @@
 package com.keystone.feature.messaging
 
+import com.goterl.lazysodium.LazySodiumAndroid
+import com.goterl.lazysodium.interfaces.Sign
 import com.keystone.core.crypto.Cbor
 import com.keystone.core.crypto.KeystoreManager
 import com.keystone.core.identity.PublicKey
@@ -58,13 +60,6 @@ data class MessageEnvelope(
         bytes(signature)
     }
 
-    // verify() lives in core:trust where lazysodium is already on
-    // the classpath. Sprint 2 will add an extension function in the
-    // sync layer:
-    //     fun MessageEnvelope.verify(sodium: LazySodiumAndroid): Boolean
-    // For Sprint 1 the signature is constructed but never checked
-    // since no inbound path exists yet.
-
     companion object {
 
         /** Inverse of [wireBytes]. Throws on any malformed input. */
@@ -75,7 +70,14 @@ data class MessageEnvelope(
             val fromPub = PublicKey(bytes())
             val toPub = PublicKey(bytes())
             val createdAt = uint()
-            val body = bytes().decodeToString()
+            val bodyBytes = bytes()
+            // Defence-in-depth: a paired peer that ignores [issue]'s cap can
+            // otherwise write arbitrarily large rows into our SQLCipher store.
+            require(bodyBytes.size <= MAX_BODY_BYTES) {
+                "message body exceeds $MAX_BODY_BYTES bytes"
+            }
+            require(bodyBytes.isNotEmpty()) { "message body must not be empty" }
+            val body = bodyBytes.decodeToString()
             val signature = bytes()
             MessageEnvelope(
                 id = id,
@@ -141,4 +143,16 @@ data class MessageEnvelope(
             bytes(body.encodeToByteArray())
         }
     }
+}
+
+/**
+ * Verify the envelope's Ed25519 signature against [MessageEnvelope.fromPub].
+ * Returns true iff the signature is valid. Channel binding tells us who the
+ * transport peer is, but the signature is what tells us who actually wrote
+ * the message — important once envelopes can hop via the mailbox lane.
+ */
+fun MessageEnvelope.verify(sodium: LazySodiumAndroid): Boolean {
+    if (signature.size != Sign.BYTES) return false
+    val signed = signedBytes()
+    return sodium.cryptoSignVerifyDetached(signature, signed, signed.size, fromPub.bytes)
 }
