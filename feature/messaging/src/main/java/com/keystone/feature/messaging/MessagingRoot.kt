@@ -32,6 +32,11 @@ fun MessagingRoot(
      */
     onOpenSettings: () -> Unit = {},
     /**
+     * Tapped from the 1:1 conversation header. The app shell
+     * navigates to the in-app profile viewer for that peer.
+     */
+    onViewPeerPage: (String) -> Unit = {},
+    /**
      * Set by the app shell when the user tapped a message
      * notification — we deep-link straight into that chat instead
      * of stopping at the conversation list.
@@ -76,6 +81,7 @@ fun MessagingRoot(
             ConversationScreen(
                 peer = peer,
                 onBack = { nav.popBackStack() },
+                onViewPeerPage = { onViewPeerPage(peer.bytes.toHex()) },
             )
         }
         composable(MessagingRoutes.CreateGroup) {

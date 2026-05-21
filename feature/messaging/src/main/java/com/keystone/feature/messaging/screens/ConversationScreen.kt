@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -79,6 +80,7 @@ import java.util.Date
 fun ConversationScreen(
     peer: PublicKey,
     onBack: () -> Unit,
+    onViewPeerPage: () -> Unit = {},
     viewModel: ConversationViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(peer.bytes.toList()) { viewModel.bind(peer) }
@@ -145,6 +147,9 @@ fun ConversationScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onViewPeerPage) {
+                        Icon(Icons.Filled.Public, contentDescription = "View peer's web page")
+                    }
                     IconButton(onClick = { renameDialogOpen = true }) {
                         Icon(Icons.Filled.Edit, contentDescription = "Rename contact")
                     }

@@ -5,12 +5,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.fragment.app.FragmentActivity
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.keystone.app.biometric.BiometricUnlocker
 import com.keystone.app.permissions.rememberBlePermissionGate
 import com.keystone.app.profile.EditProfileScreen
+import com.keystone.app.profile.ViewProfileScreen
+import com.keystone.core.identity.PublicKey
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.coordination.CoordinationRoot
 import com.keystone.feature.directory.DirectoryRoot
@@ -107,8 +111,23 @@ fun KeystoneNavHost(
             MessagingRoot(
                 onBack = { navController.popBackStack() },
                 onOpenSettings = { navController.navigate(Routes.Settings) },
+                onViewPeerPage = { peerHex ->
+                    navController.navigate("${Routes.PeerPage}/$peerHex")
+                },
                 initialChatPeerHex = initialChatPeerHex,
             )
+        }
+        composable(
+            route = "${Routes.PeerPage}/{peerHex}",
+            arguments = listOf(navArgument("peerHex") { type = NavType.StringType }),
+        ) { entry ->
+            val hex = entry.arguments?.getString("peerHex")
+            val bytes = hex?.hexToBytesOrNull()
+            if (bytes == null || bytes.size != 32) {
+                navController.popBackStack()
+                return@composable
+            }
+            ViewProfileScreen(peer = PublicKey(bytes), onBack = { navController.popBackStack() })
         }
         composable(Routes.Settings) {
             AppSettingsScreen(
@@ -144,4 +163,15 @@ object Routes {
     const val Monero = "monero"
     const val Settings = "settings"
     const val MyPage = "my_page"
+    const val PeerPage = "peer_page"
+}
+
+private fun String.hexToBytesOrNull(): ByteArray? {
+    if (length % 2 != 0) return null
+    return ByteArray(length / 2) { i ->
+        val hi = Character.digit(this[2 * i], 16)
+        val lo = Character.digit(this[2 * i + 1], 16)
+        if (hi == -1 || lo == -1) return null
+        ((hi shl 4) or lo).toByte()
+    }
 }
