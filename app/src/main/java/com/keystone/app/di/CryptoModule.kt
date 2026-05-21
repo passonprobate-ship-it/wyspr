@@ -118,4 +118,11 @@ object CryptoModule {
     fun provideBiometricSettings(
         @ApplicationContext context: Context,
     ): BiometricSettings = BiometricSettings(context)
+
+    @Provides
+    @Singleton
+    fun provideMailboxSettings(
+        @ApplicationContext context: Context,
+    ): com.keystone.core.ui.settings.MailboxSettings =
+        com.keystone.core.ui.settings.MailboxSettings(context)
 }

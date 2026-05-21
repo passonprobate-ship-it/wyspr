@@ -5,15 +5,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -78,9 +77,19 @@ fun CommunityScreen(
     val torState by viewModel.torState.collectAsStateWithLifecycle()
     val onionAddress by viewModel.onionAddress.collectAsStateWithLifecycle()
 
+    // Whole screen scrolls as a single surface — previously the
+    // inner peer LazyColumn grabbed all remaining vertical space,
+    // measuring the action buttons below it at 0px so the "View
+    // trust graph" / "Back" buttons were present but invisible
+    // and untappable on devices with more than a handful of peers.
+    // Replacing the LazyColumn with a plain Column inside a
+    // scrolling outer Column resolves it; peer counts here are
+    // bounded by the trust graph (handful of edges, not thousands)
+    // so lazy windowing is not load-bearing.
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -88,16 +97,18 @@ fun CommunityScreen(
 
         TorStatusRow(torState, onionAddress)
 
+        // Promote the graph CTA above the peer list so it stays
+        // visible even before the user scrolls.
+        OutlinedButton(
+            onClick = onOpenGraph,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("View trust graph") }
+
         when (val s = state) {
             CommunityViewModel.UiState.Loading -> LoadingPanel()
             CommunityViewModel.UiState.NoCommunity -> EmptyPanel()
             is CommunityViewModel.UiState.Ready -> ReadyPanel(s)
         }
-
-        OutlinedButton(
-            onClick = onOpenGraph,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("View trust graph") }
 
         OutlinedButton(
             onClick = onBack,
@@ -192,14 +203,13 @@ private fun ReadyPanel(state: CommunityViewModel.UiState.Ready) {
         modifier = Modifier.padding(top = 4.dp),
     )
 
-    LazyColumn(
-        modifier = Modifier.fillMaxWidth(),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(vertical = 4.dp),
     ) {
-        items(state.peers, key = { it.publicKey.bytes.toList() }) { peer ->
-            PeerRow(peer)
-        }
+        for (peer in state.peers) PeerRow(peer)
     }
 }
 

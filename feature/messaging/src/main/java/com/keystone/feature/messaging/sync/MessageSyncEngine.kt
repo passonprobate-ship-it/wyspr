@@ -2,6 +2,7 @@ package com.keystone.feature.messaging.sync
 
 import android.util.Log
 import com.goterl.lazysodium.LazySodiumAndroid
+import com.keystone.core.crypto.KeystoreManager
 import com.keystone.core.crypto.NoiseSession
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.transport.Link
@@ -9,6 +10,11 @@ import com.keystone.feature.messaging.MessageEnvelope
 import com.keystone.feature.messaging.MessageStore
 import com.keystone.feature.messaging.groups.GroupMessageEnvelope
 import com.keystone.feature.messaging.groups.GroupStore
+import com.keystone.feature.messaging.mailbox.MailboxBinding
+import com.keystone.feature.messaging.mailbox.MailboxBindingService
+import com.keystone.feature.messaging.mailbox.MailboxEnvelope
+import com.keystone.feature.messaging.mailbox.MailboxFrame
+import com.keystone.feature.messaging.mailbox.MailboxHost
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -37,6 +43,9 @@ internal class MessageSyncEngine(
     private val store: MessageStore,
     private val groupStore: GroupStore,
     private val sodium: LazySodiumAndroid,
+    private val keystore: KeystoreManager,
+    private val bindingService: MailboxBindingService,
+    private val mailboxHost: MailboxHost,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
     private val frameTimeoutMs: Long = DEFAULT_FRAME_TIMEOUT_MS,
 ) {
@@ -61,6 +70,8 @@ internal class MessageSyncEngine(
                     received += awaitPushAndAck()
                     Log.d(TAG, "engine.run(Initiator): exchangeReadReceipts")
                     exchangeReadReceipts()
+                    Log.d(TAG, "engine.run(Initiator): mailboxPullPhase")
+                    received += mailboxPullPhase()
                     Log.d(TAG, "engine.run(Initiator): sending End")
                     sendFrame(MessageSyncFrame.End)
                     Log.d(TAG, "engine.run(Initiator): awaitEndOrNothing")
@@ -73,6 +84,8 @@ internal class MessageSyncEngine(
                     pushed += pushPending()
                     Log.d(TAG, "engine.run(Responder): exchangeReadReceipts")
                     exchangeReadReceipts()
+                    Log.d(TAG, "engine.run(Responder): mailboxPullPhase")
+                    received += mailboxPullPhase()
                     Log.d(TAG, "engine.run(Responder): awaitEndOrNothing")
                     awaitEndOrNothing()
                     Log.d(TAG, "engine.run(Responder): sending End")
@@ -148,6 +161,25 @@ internal class MessageSyncEngine(
         // dedupe happens on the receive side (ingestMembership is
         // idempotent on (groupId, memberPub)).
         val membershipCerts = groupStore.membershipCertsForPeer(peerPub)
+
+        // Mailbox binding propagation (Phase 3a). Include the local
+        // user's signed binding so this peer learns where to push
+        // asynchronous mail destined for US. Empty list when the user
+        // hasn't configured a mailbox.
+        val mailboxBindings = listOfNotNull(bindingService.myBinding(ownPub))
+
+        // Mailbox push lane (Phase 3b). For every pending direct
+        // outbound where the recipient has a known binding pointing
+        // at THIS peer, seal a copy and stage it. The peer either
+        // stores it (if running as a mailbox) or silently drops it
+        // (the unacked envelope means we keep retrying next round).
+        //
+        // We treat status=pending AND status=sent rows as candidates —
+        // sent rows haven't been acked by the recipient yet, so the
+        // mailbox is still useful insurance. Status=delivered/read
+        // rows are skipped (already confirmed received).
+        val mailboxEnvelopes = sealForMailboxPeer(pending)
+
         // Even when all lists are empty we still send a Push so the
         // peer's awaitPushAndAck sees something — the protocol shape
         // expects exactly one Push from each side per round.
@@ -156,6 +188,8 @@ internal class MessageSyncEngine(
                 envelopes = pending.map { it.toEnvelope() },
                 groupEnvelopes = groupEnvelopes,
                 membershipCerts = membershipCerts,
+                mailboxBindings = mailboxBindings,
+                mailboxEnvelopes = mailboxEnvelopes,
             ),
         )
         val frame = receiveFrame() ?: return 0
@@ -177,17 +211,65 @@ internal class MessageSyncEngine(
                 count++
             }
         }
+        // Mailbox envelopes have their own 16-byte ids (distinct from
+        // the wrapped MessageEnvelope ids), and the host's ack for
+        // them piggybacks on the same Ack frame. We don't currently
+        // persist "this envelope reached its mailbox" state — the
+        // mailbox dedup (INSERT IGNORE on envelope_id) makes
+        // re-pushing idempotent, so we'll keep including the same
+        // sealed copy every round until the direct delivery flips the
+        // underlying message to status=delivered. That's slightly
+        // wasteful but safe and self-healing.
         return count
+    }
+
+    /**
+     * For each pending outbound, if the recipient has a known
+     * MailboxBinding pointing at [peerPub], produce a sealed
+     * [MailboxEnvelope] addressed to that recipient. Empty list
+     * unless the current peer is a mailbox host for one of our
+     * recipients.
+     */
+    private suspend fun sealForMailboxPeer(
+        pending: List<com.keystone.core.database.entities.MessageEntity>,
+    ): List<MailboxEnvelope> {
+        if (pending.isEmpty()) return emptyList()
+        val now = nowSeconds()
+        val sealed = ArrayList<MailboxEnvelope>(pending.size)
+        for (msg in pending) {
+            val recipient = PublicKey(msg.toPub)
+            val binding = bindingService.forOwner(recipient) ?: continue
+            // Only seal when THIS peer is the recipient's mailbox.
+            if (!binding.mailboxPub.bytes.contentEquals(peerPub.bytes)) continue
+            try {
+                sealed.add(
+                    MailboxEnvelope.seal(
+                        keystore = keystore,
+                        sodium = sodium,
+                        inner = msg.toEnvelope(),
+                        recipientPub = recipient,
+                        now = now,
+                    ),
+                )
+            } catch (t: Throwable) {
+                Log.w(TAG, "sealForMailboxPeer: seal failed for ${recipient.bytes.take(4)}…: ${t::class.simpleName}")
+                // Skip this message — direct delivery + future
+                // rounds will keep retrying.
+            }
+        }
+        return sealed
     }
 
     private suspend fun awaitPushAndAck(): Int {
         val frame = receiveFrame() ?: return 0
         val push = (frame as? MessageSyncFrame.Push)
             ?: error("expected Push, got ${frame::class.simpleName}")
-        if (push.envelopes.isEmpty() &&
+        val totallyEmpty = push.envelopes.isEmpty() &&
             push.groupEnvelopes.isEmpty() &&
-            push.membershipCerts.isEmpty()
-        ) {
+            push.membershipCerts.isEmpty() &&
+            push.mailboxBindings.isEmpty() &&
+            push.mailboxEnvelopes.isEmpty()
+        if (totallyEmpty) {
             sendFrame(MessageSyncFrame.Ack(emptyList()))
             return 0
         }
@@ -201,6 +283,13 @@ internal class MessageSyncEngine(
         // id are rejected.
         for (cert in push.membershipCerts) {
             groupStore.ingestMembership(cert, sodium)
+        }
+
+        // Mailbox bindings — the peer's own (or any they've relayed).
+        // ingest verifies signature + expiry; a malformed cert is
+        // dropped and we move on.
+        for (binding in push.mailboxBindings) {
+            bindingService.ingest(binding, sodium, received)
         }
 
         // 1:1 envelopes. Channel binding has authenticated peerPub, so
@@ -222,6 +311,20 @@ internal class MessageSyncEngine(
             val ok = groupStore.ingestGroup(env, receivedAtSeconds = received)
             if (ok) accepted.add(env.id)
         }
+        // Mailbox push lane — only acted on when we're running as a
+        // mailbox. handlePush returns NotHosting silently if the
+        // toggle is off; the envelope id is not acked, so the sender
+        // keeps retrying with other paths.
+        for (mxEnv in push.mailboxEnvelopes) {
+            val outcome = mailboxHost.handlePush(
+                envelope = mxEnv,
+                fromPub = peerPub,
+                now = received,
+            )
+            if (outcome is MailboxHost.PushOutcome.Stored) {
+                accepted.add(outcome.envelopeId)
+            }
+        }
         sendFrame(MessageSyncFrame.Ack(accepted))
         return accepted.size
     }
@@ -231,6 +334,162 @@ internal class MessageSyncEngine(
         // the link early is acceptable — the sync is already done
         // from our side.
         runCatching { receiveFrame() }
+    }
+
+    /**
+     * Mailbox pull/serve phase. Runs after read receipts, before End.
+     *
+     * Both sides exchange Pull frames symmetrically. If the local
+     * user has a binding pointing at THIS peer, we pull. If we're
+     * NOT pulling we still send a Pull with `EMPTY_CURSOR` and a
+     * recipient pubkey of our own — the host returns an empty
+     * PullResponse for a recipient with nothing stored. This
+     * eliminates the "should I send Pull or Skip?" branch and lets
+     * the protocol have a fixed shape regardless of role.
+     *
+     * Serving side checks [MailboxHost.handlePull] which is itself a
+     * no-op when the local user isn't hosting. So a sync round between
+     * two devices where neither is the other's mailbox just shuffles
+     * empty Pulls and empty PullResponses — a few CBOR bytes per
+     * round.
+     *
+     * Returns the number of mailbox envelopes ingested into the
+     * local MessageStore.
+     */
+    private suspend fun mailboxPullPhase(): Int {
+        val myBinding = bindingService.myBinding(ownPub)
+        val iPull = myBinding?.mailboxPub?.bytes?.contentEquals(peerPub.bytes) == true
+        return when (role) {
+            HandshakeRole.Initiator -> {
+                val ingested = sendPullAndIngest(iPull)
+                handlePeerPull()
+                ingested
+            }
+            HandshakeRole.Responder -> {
+                handlePeerPull()
+                val ingested = sendPullAndIngest(iPull)
+                ingested
+            }
+        }
+    }
+
+    /**
+     * Send our Pull frame, await PullResponse, ingest the contents,
+     * and Ack what we accepted. If we're not actually pulling
+     * ([iPull] == false) we send an empty-cursor Pull and ignore the
+     * response. The host returns nothing because we (the recipient
+     * pub binding to the Noise channel) have no stored mail.
+     */
+    private suspend fun sendPullAndIngest(iPull: Boolean): Int {
+        sendMailboxFrame(MailboxFrame.Pull(MailboxFrame.EMPTY_CURSOR))
+        val resp = receiveMailboxFrame() as? MailboxFrame.PullResponse
+            ?: run {
+                Log.w(TAG, "mailbox: expected PullResponse, got something else; bailing")
+                return 0
+            }
+        if (resp.envelopes.isEmpty()) {
+            sendMailboxFrame(MailboxFrame.Ack(emptyList()))
+            return 0
+        }
+        if (!iPull) {
+            // Defence: we didn't ask to pull but the host sent us
+            // envelopes anyway. Don't ingest something we didn't
+            // expect; drop and don't ack so the host knows we
+            // refused.
+            Log.w(TAG, "mailbox: received envelopes despite not pulling; dropping")
+            sendMailboxFrame(MailboxFrame.Ack(emptyList()))
+            return 0
+        }
+        val ingestedIds = ingestPulledEnvelopes(resp.envelopes)
+        sendMailboxFrame(MailboxFrame.Ack(ingestedIds))
+        return ingestedIds.size
+    }
+
+    /**
+     * Receive the peer's Pull frame, serve them via
+     * [MailboxHost.handlePull] (or empty if we're not hosting / they
+     * have nothing stored), then await their Ack.
+     */
+    private suspend fun handlePeerPull() {
+        val peerPull = receiveMailboxFrame() as? MailboxFrame.Pull ?: run {
+            Log.w(TAG, "mailbox: expected Pull, got something else; bailing serve")
+            return
+        }
+        val sinceCursor = if (peerPull.sinceCursor.isEmpty()) 0L
+        else MailboxFrame.decodeCursor(peerPull.sinceCursor)
+        val envs = mailboxHost.handlePull(peerPub, sinceCursor)
+        val maxCursorVal = envs.maxOfOrNull { it.createdAt } ?: sinceCursor
+        sendMailboxFrame(MailboxFrame.PullResponse(envs, MailboxFrame.encodeCursor(maxCursorVal)))
+        val ackFrame = receiveMailboxFrame() as? MailboxFrame.Ack ?: return
+        if (ackFrame.ids.isNotEmpty()) {
+            mailboxHost.handleAck(ackFrame.ids, peerPub)
+        }
+    }
+
+    /**
+     * Unseal + verify each envelope and ingest the inner
+     * [MessageEnvelope] into [MessageStore]. Returns the envelope ids
+     * (mailbox ids, NOT inner message ids) that were successfully
+     * processed and should be acked — those rows will be deleted
+     * from the mailbox.
+     */
+    private suspend fun ingestPulledEnvelopes(
+        envelopes: List<MailboxEnvelope>,
+    ): List<ByteArray> {
+        if (envelopes.isEmpty()) return emptyList()
+        val (xPub, xSec) = keystore.deriveStaticX25519()
+        try {
+            val received = nowSeconds()
+            val acceptedIds = ArrayList<ByteArray>(envelopes.size)
+            for (env in envelopes) {
+                // Envelope's outer toPub should be ours — the host
+                // indexed by it. Drop anything else.
+                if (!env.toPub.bytes.contentEquals(ownPub.bytes)) continue
+                val inner = try {
+                    MailboxEnvelope.open(sodium, env, xPub, xSec)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "mailbox: unseal failed for id=${env.id.take(4)}…: ${t::class.simpleName}")
+                    continue
+                }
+                // Inner MessageEnvelope's signature must verify against
+                // inner.fromPub. The host can't forge this — they
+                // don't have the secret key.
+                val signed = inner.signedBytes()
+                if (!sodium.cryptoSignVerifyDetached(
+                        inner.signature, signed, signed.size, inner.fromPub.bytes,
+                    )
+                ) {
+                    Log.w(TAG, "mailbox: inner signature verify failed for ${env.id.take(4)}…")
+                    continue
+                }
+                if (!inner.toPub.bytes.contentEquals(ownPub.bytes)) continue
+                store.ingest(inner, receivedAtSeconds = received)
+                acceptedIds.add(env.id)
+            }
+            return acceptedIds
+        } finally {
+            xSec.fill(0)
+        }
+    }
+
+    private suspend fun sendMailboxFrame(frame: MailboxFrame) {
+        val bytes = frame.wireBytes()
+        val ct = noise.encrypt(bytes)
+        Log.d(TAG, "sendMailboxFrame: ${frame::class.simpleName} plaintext=${bytes.size} ct=${ct.size}")
+        link.send(ct)
+    }
+
+    private suspend fun receiveMailboxFrame(): MailboxFrame? {
+        val ciphertext = withTimeoutOrNull(frameTimeoutMs) {
+            link.incoming().firstOrNull()
+        } ?: run {
+            Log.w(TAG, "receiveMailboxFrame: timeout / channel closed")
+            return null
+        }
+        val plaintext = noise.decrypt(ciphertext)
+        val frame = MailboxFrame.fromWire(plaintext)
+        Log.d(TAG, "receiveMailboxFrame: decoded ${frame::class.simpleName}")
+        return frame
     }
 
     private suspend fun sendFrame(frame: MessageSyncFrame) {

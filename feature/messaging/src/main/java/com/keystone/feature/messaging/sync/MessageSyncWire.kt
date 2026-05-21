@@ -4,6 +4,8 @@ import com.keystone.core.crypto.Cbor
 import com.keystone.feature.messaging.MessageEnvelope
 import com.keystone.feature.messaging.groups.GroupMembership
 import com.keystone.feature.messaging.groups.GroupMessageEnvelope
+import com.keystone.feature.messaging.mailbox.MailboxBinding
+import com.keystone.feature.messaging.mailbox.MailboxEnvelope
 
 /**
  * Wire format for the message-sync protocol that runs once both
@@ -57,6 +59,22 @@ internal sealed interface MessageSyncFrame {
          * same Push frame.
          */
         val membershipCerts: List<GroupMembership> = emptyList(),
+        /**
+         * Phase 3a — propagate `MailboxBinding` certs through the
+         * sync round so peers learn each other's mailbox without an
+         * out-of-band exchange. Typically a single cert (the local
+         * user's own) but the format admits multiple in case we
+         * relay-forward learned bindings in a future revision.
+         */
+        val mailboxBindings: List<MailboxBinding> = emptyList(),
+        /**
+         * Phase 3b — sealed envelopes the sender wants this peer to
+         * STORE AS A MAILBOX. The peer only does anything with these
+         * if "Be a mailbox" is enabled; otherwise the list is silently
+         * dropped (and unacked, so the sender keeps retrying through
+         * other paths).
+         */
+        val mailboxEnvelopes: List<MailboxEnvelope> = emptyList(),
     ) : MessageSyncFrame
     data class Ack(val ids: List<ByteArray>) : MessageSyncFrame
     /**
@@ -70,7 +88,7 @@ internal sealed interface MessageSyncFrame {
 
     fun wireBytes(): ByteArray = when (this) {
         is Push -> Cbor.encode {
-            arrayHeader(4)
+            arrayHeader(6)
             uint(TAG_PUSH.toLong())
             arrayHeader(envelopes.size)
             for (env in envelopes) bytes(env.wireBytes())
@@ -78,6 +96,10 @@ internal sealed interface MessageSyncFrame {
             for (env in groupEnvelopes) bytes(env.wireBytes())
             arrayHeader(membershipCerts.size)
             for (cert in membershipCerts) bytes(cert.wireBytes())
+            arrayHeader(mailboxBindings.size)
+            for (b in mailboxBindings) bytes(b.wireBytes())
+            arrayHeader(mailboxEnvelopes.size)
+            for (env in mailboxEnvelopes) bytes(env.wireBytes())
         }
         is Ack -> Cbor.encode {
             arrayHeader(2)
@@ -110,17 +132,21 @@ internal sealed interface MessageSyncFrame {
          */
         fun fromWire(bytes: ByteArray): MessageSyncFrame = Cbor.decode(bytes) {
             val outerLen = arrayHeader()
-            require(outerLen in 1..4) { "frame outer array must be 1, 2, 3, or 4 elements" }
+            require(outerLen in 1..6) { "frame outer array must be 1..6 elements" }
             val tag = uint().toInt()
             when (tag) {
                 TAG_PUSH -> {
-                    // v0.7.2 sent 2-element Push. v0.8 adds group_envelopes
-                    // (3-element) and membership_certs (4-element). The
-                    // decoder accepts all three forms — old peers gracefully
-                    // have empty group lists. The encoder always writes the
-                    // current 4-element shape.
-                    require(outerLen in 2..4) {
-                        "Push frame must be 2, 3, or 4 elements"
+                    // Push wire format has grown over time. Decoder accepts
+                    // every prior shape so a sender on an older build
+                    // stays interoperable while the cluster upgrades:
+                    //   v0.7.2  → 2-element  (envelopes)
+                    //   v0.8    → 3-element  (+groupEnvelopes)
+                    //   v0.8    → 4-element  (+membershipCerts)
+                    //   v0.9    → 5-element  (+mailboxBindings)
+                    //   v0.9    → 6-element  (+mailboxEnvelopes)
+                    // Encoder always writes the current 6-element shape.
+                    require(outerLen in 2..6) {
+                        "Push frame must be 2..6 elements"
                     }
                     val count = arrayHeader()
                     require(count in 0..MAX_BATCH) {
@@ -159,7 +185,35 @@ internal sealed interface MessageSyncFrame {
                     } else {
                         emptyList()
                     }
-                    Push(envelopes, groupEnvelopes, membershipCerts)
+                    val mailboxBindings: List<MailboxBinding> = if (outerLen >= 5) {
+                        val bindCount = arrayHeader()
+                        require(bindCount in 0..MAX_BATCH) {
+                            "Mailbox binding count $bindCount out of range"
+                        }
+                        ArrayList<MailboxBinding>(bindCount).also { list ->
+                            repeat(bindCount) {
+                                val certBytes = bytes()
+                                list.add(MailboxBinding.fromWire(certBytes))
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    val mailboxEnvelopes: List<MailboxEnvelope> = if (outerLen >= 6) {
+                        val mxCount = arrayHeader()
+                        require(mxCount in 0..MAX_BATCH) {
+                            "Mailbox envelope count $mxCount out of range"
+                        }
+                        ArrayList<MailboxEnvelope>(mxCount).also { list ->
+                            repeat(mxCount) {
+                                val envBytes = bytes()
+                                list.add(MailboxEnvelope.fromWire(envBytes))
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    Push(envelopes, groupEnvelopes, membershipCerts, mailboxBindings, mailboxEnvelopes)
                 }
                 TAG_ACK -> {
                     require(outerLen == 2) { "Ack frame missing payload" }

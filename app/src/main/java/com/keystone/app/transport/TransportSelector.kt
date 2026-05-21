@@ -10,6 +10,7 @@ import com.keystone.core.transport.TorBackend
 import com.keystone.core.transport.Transport
 import com.keystone.core.transport.bluetooth.BleTransport
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.merge
@@ -48,8 +49,19 @@ class TransportSelector(
         // exploit that to keep the loopback listener bound across sync
         // rounds (see [stopAll]) so we don't fight kernel port-reuse
         // delays on every retry.
-        torTransport.start(communityId)
-        bleTransport.start(communityId)
+        //
+        // Each transport's start is independently fallible — the
+        // common case where one transport is not viable (BLE radio
+        // off; Tor still bootstrapping; permissions denied for one
+        // radio) MUST NOT prevent the other transport from running.
+        // Otherwise a user who's deliberately running over Tor alone
+        // (BLE off for stealth, or just out of BLE range and on the
+        // internet) gets no delivery at all because the BLE start
+        // threw before the Tor leg could be exercised.
+        runCatching { torTransport.start(communityId) }
+            .onFailure { Log.w(TAG, "Tor transport start failed: ${it::class.simpleName}: ${it.message}") }
+        runCatching { bleTransport.start(communityId) }
+            .onFailure { Log.w(TAG, "BLE transport start failed: ${it::class.simpleName}: ${it.message}") }
     }
 
     override suspend fun stopAll() {
@@ -94,6 +106,19 @@ class TransportSelector(
      * we don't.
      */
     override suspend fun bleDiscoverAndConnect(): Link {
+        // When the BLE radio is off (or BleTransport.start() failed for
+        // any reason — permissions, missing adapter), [discovered()]
+        // returns an empty Flow. Calling .first() on an empty Flow
+        // throws NoSuchElementException immediately, which races
+        // ahead of the Tor dial branch in [MessageSyncService.dialOnly]
+        // and propagates out through `select.onAwait`, failing the
+        // whole round before Tor has a chance. Park here instead —
+        // the race naturally picks the Tor branch if Tor succeeds,
+        // and cancels us when it does.
+        if (!bleTransport.isBluetoothReady) {
+            Log.d(TAG, "bleDiscoverAndConnect: BLE radio not ready, parking branch")
+            awaitCancellation()
+        }
         val endpoint = bleTransport.discovered().first()
         Log.d(TAG, "bleDiscoverAndConnect: discovered ${endpoint.opaqueAddress}, dialing")
         return try {
@@ -153,7 +178,7 @@ class TransportSelector(
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
-                Log.d(TAG, "dialFirstKnownOnion: $onion failed (${t.javaClass.simpleName})")
+                Log.d(TAG, "dialFirstKnownOnion: $onion failed (${t.javaClass.simpleName}: ${t.message})")
                 // try the next address
             }
         }

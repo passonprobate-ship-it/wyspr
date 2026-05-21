@@ -46,6 +46,14 @@ interface GroupMessageDao {
     @Query("SELECT * FROM group_message WHERE status = 'pending' AND from_pub = :selfPub ORDER BY created_at ASC")
     suspend fun pendingOutboundFrom(selfPub: ByteArray): List<GroupMessageEntity>
 
+    /**
+     * Reactive total of unviewed inbound group messages across every
+     * group — combines with [MessageDao.totalUnreadFlow] to drive the
+     * single unread badge on the app home Messages tile.
+     */
+    @Query("SELECT COUNT(*) FROM group_message WHERE status = 'received'")
+    fun totalUnreadFlow(): Flow<Int>
+
     @Query("UPDATE group_message SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: ByteArray, status: String)
 

@@ -11,6 +11,8 @@ import com.keystone.core.database.dao.CurrencyEnvelopeDao
 import com.keystone.core.database.dao.GroupDao
 import com.keystone.core.database.dao.GroupMemberDao
 import com.keystone.core.database.dao.GroupMessageDao
+import com.keystone.core.database.dao.MailboxBindingDao
+import com.keystone.core.database.dao.MailboxStoredDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.RevocationDao
 import com.keystone.core.database.dao.TrustEdgeDao
@@ -22,6 +24,8 @@ import com.keystone.core.database.entities.CurrencyEnvelopeEntity
 import com.keystone.core.database.entities.GroupEntity
 import com.keystone.core.database.entities.GroupMemberEntity
 import com.keystone.core.database.entities.GroupMessageEntity
+import com.keystone.core.database.entities.MailboxBindingEntity
+import com.keystone.core.database.entities.MailboxStoredEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.database.entities.RevocationEntity
 import com.keystone.core.database.entities.TrustEdgeEntity
@@ -49,6 +53,14 @@ import com.keystone.core.database.entities.UserProfileEntity
  *        messaging tables untouched.
  *   v8 — adds user_profile (singleton) — backing store for the
  *        user's personal web page served at `http://<onion>:80/`.
+ *   v9 — adds mailbox_binding, mailbox_stored — the user's chosen
+ *        mailbox(es) for async delivery + the sealed envelopes a
+ *        device acting as a mailbox is holding for peers. See
+ *        docs/MAILBOX.md.
+ *   v10 — adds `signature` column on `mailbox_stored`. Phase 1 stored
+ *        only ciphertext + addressing fields; Phase 4's pull lane
+ *        needs the outer Ed25519 signature so the host can re-serve
+ *        the byte-identical envelope to the recipient. Additive.
  *
  * From v6 onward we ship real migrations rather than
  * fallbackToDestructiveMigration(). The first real-world pair landed
@@ -67,8 +79,10 @@ import com.keystone.core.database.entities.UserProfileEntity
         GroupMemberEntity::class,
         GroupMessageEntity::class,
         UserProfileEntity::class,
+        MailboxBindingEntity::class,
+        MailboxStoredEntity::class,
     ],
-    version = 8,
+    version = 10,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {
@@ -83,6 +97,8 @@ abstract class KeystoneRoomDatabase : RoomDatabase() {
     abstract fun groupMemberDao(): GroupMemberDao
     abstract fun groupMessageDao(): GroupMessageDao
     abstract fun userProfileDao(): UserProfileDao
+    abstract fun mailboxBindingDao(): MailboxBindingDao
+    abstract fun mailboxStoredDao(): MailboxStoredDao
 }
 
 /**
@@ -171,6 +187,66 @@ internal val MIGRATION_7_8 = object : Migration(7, 8) {
                 "`avatar_emoji` TEXT, " +
                 "`links` TEXT, " +
                 "PRIMARY KEY(`id`))"
+        )
+    }
+}
+
+/**
+ * v8 → v9: mailbox support. Two new tables, additive only. See
+ * docs/MAILBOX.md.
+ *
+ * - `mailbox_binding` — one row per "peer → their chosen mailbox"
+ *   mapping. The local user's row (owner_pub = own pub) describes
+ *   THEIR mailbox; peers' rows describe MAILBOXES owned by peers.
+ * - `mailbox_stored` — sealed envelopes the local device is holding
+ *   as a mailbox host. Only ever populated when "Be a mailbox" is
+ *   on; empty otherwise.
+ */
+internal val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `mailbox_binding` (" +
+                "`owner_pub` BLOB NOT NULL, " +
+                "`mailbox_pub` BLOB NOT NULL, " +
+                "`mailbox_onion` TEXT, " +
+                "`cert_bytes` BLOB NOT NULL, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "`expires_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`owner_pub`))"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `mailbox_stored` (" +
+                "`envelope_id` BLOB NOT NULL, " +
+                "`to_pub` BLOB NOT NULL, " +
+                "`from_pub` BLOB NOT NULL, " +
+                "`ciphertext` BLOB NOT NULL, " +
+                "`size_bytes` INTEGER NOT NULL, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "`expires_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`envelope_id`))"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_mailbox_stored_to_pub_created_at` " +
+                "ON `mailbox_stored`(`to_pub`, `created_at`)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_mailbox_stored_expires_at` " +
+                "ON `mailbox_stored`(`expires_at`)"
+        )
+    }
+}
+
+/**
+ * v9 → v10: add `signature` column to `mailbox_stored`. Existing
+ * rows (there are none in any shipped install — Phase 1's schema is
+ * only days old and the host hasn't gone live yet) get a zero-length
+ * BLOB default. The host's INSERT path always writes the real
+ * signature from v10 onward.
+ */
+internal val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE `mailbox_stored` ADD COLUMN `signature` BLOB NOT NULL DEFAULT x''"
         )
     }
 }

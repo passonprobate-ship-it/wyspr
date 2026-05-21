@@ -7,6 +7,8 @@ import com.keystone.core.database.dao.CurrencyEnvelopeDao
 import com.keystone.core.database.dao.GroupDao
 import com.keystone.core.database.dao.GroupMemberDao
 import com.keystone.core.database.dao.GroupMessageDao
+import com.keystone.core.database.dao.MailboxBindingDao
+import com.keystone.core.database.dao.MailboxStoredDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.RevocationDao
 import com.keystone.core.database.dao.TrustEdgeDao
@@ -63,4 +65,6 @@ interface KeystoneDatabase {
     val groupMemberDao: GroupMemberDao
     val groupMessageDao: GroupMessageDao
     val userProfileDao: UserProfileDao
+    val mailboxBindingDao: MailboxBindingDao
+    val mailboxStoredDao: MailboxStoredDao
 }

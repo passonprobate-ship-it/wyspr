@@ -39,6 +39,16 @@ interface MessageDao {
     @Query("SELECT COUNT(*) FROM message WHERE thread_pub = :peerPub AND from_pub = :peerPub AND status != 'read'")
     suspend fun unreadCountFor(peerPub: ByteArray): Int
 
+    /**
+     * Reactive total of unviewed inbound 1:1 messages across every
+     * thread — drives the unread badge on the app home tile.
+     * "received" means the row landed locally but the user hasn't
+     * opened the conversation yet; once they do, [MessageStore]
+     * transitions to `received_viewed` and this count drops.
+     */
+    @Query("SELECT COUNT(*) FROM message WHERE status = 'received'")
+    fun totalUnreadFlow(): Flow<Int>
+
     /** Outbound messages still waiting to be pushed to the peer. */
     @Query("SELECT * FROM message WHERE status = 'pending' AND from_pub = :selfPub ORDER BY created_at ASC")
     suspend fun pendingOutboundFrom(selfPub: ByteArray): List<MessageEntity>

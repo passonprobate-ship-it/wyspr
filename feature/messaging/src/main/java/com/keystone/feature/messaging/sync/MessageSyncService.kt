@@ -79,6 +79,8 @@ class MessageSyncService @Inject constructor(
     private val transportLifecycle: TransportLifecycle,
     private val notifier: MessagingNotifier,
     private val trustGraphService: TrustGraphService,
+    private val mailboxBindingService: com.keystone.feature.messaging.mailbox.MailboxBindingService,
+    private val mailboxHost: com.keystone.feature.messaging.mailbox.MailboxHost,
 ) {
 
     private val lock = Mutex()
@@ -448,6 +450,9 @@ class MessageSyncService @Inject constructor(
                 store = store,
                 groupStore = groupStore,
                 sodium = sodium,
+                keystore = keystore,
+                bindingService = mailboxBindingService,
+                mailboxHost = mailboxHost,
             )
             return SessionResult(peerPub = peerPub, engineResult = engine.run())
         } finally {

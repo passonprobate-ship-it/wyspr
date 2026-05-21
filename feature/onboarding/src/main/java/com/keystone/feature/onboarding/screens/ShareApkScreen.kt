@@ -57,6 +57,7 @@ import com.keystone.feature.onboarding.share.ApkSharingViewModel
 @Composable
 fun ShareApkScreen(
     onDone: () -> Unit,
+    onUpdateFromPeer: (() -> Unit)? = null,
     viewModel: ApkSharingViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(Unit) { viewModel.start() }
@@ -93,10 +94,22 @@ fun ShareApkScreen(
             is ApkSharingViewModel.State.Ready -> ReadyPanel(s)
         }
 
+        // The two-way switch: this screen ships the APK out; the
+        // peer side pulls from a peer. Only show the link when the
+        // host supplied a callback (PairScreen still calls
+        // [ShareApkScreen] without it, since the inverse side-trip
+        // is already reachable from there).
+        if (onUpdateFromPeer != null) {
+            androidx.compose.material3.TextButton(
+                onClick = onUpdateFromPeer,
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Receiving an update? Scan a peer's QR instead") }
+        }
+
         OutlinedButton(
             onClick = onDone,
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Done — back to handshake") }
+        ) { Text("Done") }
     }
 }
 

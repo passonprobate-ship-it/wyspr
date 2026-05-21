@@ -13,6 +13,7 @@ import io.matthewnelson.kmp.tor.runtime.TorListeners
 import io.matthewnelson.kmp.tor.runtime.TorRuntime
 import io.matthewnelson.kmp.tor.runtime.TorState
 import io.matthewnelson.kmp.tor.runtime.core.OnEvent
+import io.matthewnelson.kmp.tor.runtime.core.TorEvent
 import io.matthewnelson.kmp.tor.runtime.core.config.TorOption
 import io.matthewnelson.kmp.tor.runtime.core.net.Port.Companion.toPort
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -125,6 +126,10 @@ class EmbeddedTorBackend(
         val hsDir = File(workDir, "keystone_hs")
         val derivedOnion = prepareHsDir(hsDir)
         _onion.value = derivedOnion
+        // Surface the locally-published onion so two-device diagnostics
+        // can confirm whether the stored peer_onion on the other device
+        // matches what THIS device is actually publishing right now.
+        Log.i(TAG, "Local onion: $derivedOnion.onion")
 
         val env = TorRuntime.Environment.Builder(
             workDirectory = workDir,
@@ -150,6 +155,27 @@ class EmbeddedTorBackend(
                 applyListeners(listeners)
             }
 
+            // Surface Tor's own NOTICE / WARN / HS_DESC log lines into
+            // logcat so two-device diagnostics can see what the daemon
+            // says about descriptor publication, intro-point selection,
+            // and rendezvous attempts. NOTICE on its own includes
+            // "Bootstrapped NN%" progress, "Tor has successfully opened
+            // a circuit", and "Hidden service descriptor was uploaded
+            // successfully" — which is exactly the signal we need to
+            // distinguish "Tor: ready" from "HS actually reachable".
+            observerStatic(TorEvent.NOTICE, OnEvent.Executor.Immediate) { line ->
+                Log.i(TAG, "tor NOTICE: $line")
+            }
+            observerStatic(TorEvent.WARN, OnEvent.Executor.Immediate) { line ->
+                Log.w(TAG, "tor WARN: $line")
+            }
+            observerStatic(TorEvent.ERR, OnEvent.Executor.Immediate) { line ->
+                Log.w(TAG, "tor ERR: $line")
+            }
+            observerStatic(TorEvent.HS_DESC, OnEvent.Executor.Immediate) { line ->
+                Log.i(TAG, "tor HS_DESC: $line")
+            }
+
             config { _ ->
                 // Let tor pick the SOCKS port — 9050 may clash with another
                 // app on the device. We read the chosen port via
@@ -161,18 +187,34 @@ class EmbeddedTorBackend(
                 // [com.keystone.app.transport.TorHiddenServiceTransport]
                 // can bind its listener on the same port without
                 // hardcoding the value in two places.
-                TorOption.HiddenServiceDir.tryConfigure {
-                    directory(hsDir)
-                    version(3)
-                    // Messaging sync — Noise transport, encrypted frames.
-                    port(virtual = hsTargetPort.toPort()) { target(port = hsTargetPort.toPort()) }
-                    // Personal web page — plain HTTP, served by
-                    // [com.keystone.app.profile.ProfileHttpServer].
-                    // Anyone with the user's .onion can fetch their
-                    // profile page over Tor.
-                    port(virtual = 80.toPort()) {
-                        target(port = TorBackend.WEB_TARGET_PORT.toPort())
+                //
+                // Build via asSetting + put(), not tryConfigure, because
+                // tryConfigure silently SWALLOWS an IllegalArgumentException
+                // thrown by the builder's build() step (e.g. a port-validation
+                // failure). That leaves Tor running with NO hidden service
+                // and no error anywhere in logs — the daemon bootstraps
+                // fine and never logs "Opening Hidden Service listener",
+                // so SOCKS dials from peers return reply code 1 forever.
+                // asSetting throws the validation error to us; put() then
+                // attaches the built setting to the config explicitly.
+                try {
+                    val hsSetting = TorOption.HiddenServiceDir.asSetting {
+                        directory(hsDir)
+                        version(3)
+                        // Messaging sync — Noise transport, encrypted frames.
+                        port(virtual = hsTargetPort.toPort()) { target(port = hsTargetPort.toPort()) }
+                        // Personal web page — plain HTTP, served by
+                        // [com.keystone.app.profile.ProfileHttpServer].
+                        // Anyone with the user's .onion can fetch their
+                        // profile page over Tor.
+                        port(virtual = 80.toPort()) {
+                            target(port = TorBackend.WEB_TARGET_PORT.toPort())
+                        }
                     }
+                    put(hsSetting)
+                    Log.i(TAG, "HiddenServiceDir setting attached: $hsSetting")
+                } catch (t: Throwable) {
+                    Log.w(TAG, "HiddenServiceDir setting build failed — Tor will run with NO hidden service", t)
                 }
             }
         }

@@ -11,6 +11,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.keystone.app.biometric.BiometricUnlocker
+import com.keystone.app.home.HomeScreen
 import com.keystone.app.permissions.rememberBlePermissionGate
 import com.keystone.app.profile.EditProfileScreen
 import com.keystone.app.profile.ViewProfileScreen
@@ -19,10 +20,17 @@ import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.coordination.CoordinationRoot
 import com.keystone.feature.directory.DirectoryRoot
 import com.keystone.feature.marketplace.MarketplaceRoot
+import com.keystone.feature.marketplace.screens.CommunityGraphScreen
+import com.keystone.feature.marketplace.screens.CommunityScreen
 import com.keystone.feature.messaging.MessagingRoot
+import com.keystone.feature.messaging.mailbox.screens.BeMailboxScreen
+import com.keystone.feature.messaging.mailbox.screens.ScanMailboxQrScreen
+import com.keystone.feature.messaging.mailbox.screens.UseMailboxScreen
 import com.keystone.feature.monero.MoneroWalletRoot
 import com.keystone.feature.onboarding.OnboardingRoot
 import com.keystone.feature.onboarding.screens.DiscoveryScreen
+import com.keystone.feature.onboarding.screens.ShareApkScreen
+import com.keystone.feature.onboarding.screens.UpdateFromPeerScreen
 import com.keystone.feature.vault.VaultRoot
 
 /**
@@ -77,8 +85,13 @@ fun KeystoneNavHost(
         composable(Routes.Onboarding) {
             val blePermissionGate = rememberBlePermissionGate()
             OnboardingRoot(
+                // The onboarding flow still calls this hook
+                // `onContinueToWallet` by its old name; we now land on
+                // the app home menu instead, which is the front door
+                // for every working surface (messages, my community,
+                // my page, wallet, settings).
                 onContinueToWallet = {
-                    navController.navigate(Routes.Marketplace) {
+                    navController.navigate(Routes.Home) {
                         popUpTo(Routes.Onboarding) { inclusive = false }
                     }
                 },
@@ -86,6 +99,49 @@ fun KeystoneNavHost(
                 biometricPrompt = biometricPrompt,
                 blePermissionGate = blePermissionGate,
             )
+        }
+        composable(Routes.Home) {
+            HomeScreen(
+                onOpenMessages = { navController.navigate(Routes.Messaging) },
+                onOpenCommunity = { navController.navigate(Routes.MyCommunity) },
+                onOpenMyPage = { navController.navigate(Routes.MyPage) },
+                onOpenWallet = { navController.navigate(Routes.Marketplace) },
+                onOpenFindPeers = { navController.navigate(Routes.Discovery) },
+                onOpenShareApp = { navController.navigate(Routes.ShareApp) },
+                onOpenUseMailbox = { navController.navigate(Routes.MailboxUse) },
+                onOpenBeMailbox = { navController.navigate(Routes.MailboxBe) },
+                onOpenSettings = { navController.navigate(Routes.Settings) },
+            )
+        }
+        composable(Routes.MailboxUse) {
+            UseMailboxScreen(
+                onBack = { navController.popBackStack() },
+                onScan = { navController.navigate(Routes.MailboxScan) },
+            )
+        }
+        composable(Routes.MailboxBe) {
+            BeMailboxScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.MailboxScan) {
+            ScanMailboxQrScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.ShareApp) {
+            ShareApkScreen(
+                onDone = { navController.popBackStack() },
+                onUpdateFromPeer = { navController.navigate(Routes.UpdateFromPeer) },
+            )
+        }
+        composable(Routes.UpdateFromPeer) {
+            UpdateFromPeerScreen(onDone = { navController.popBackStack() })
+        }
+        composable(Routes.MyCommunity) {
+            CommunityScreen(
+                onBack = { navController.popBackStack() },
+                onOpenGraph = { navController.navigate(Routes.MyCommunityGraph) },
+            )
+        }
+        composable(Routes.MyCommunityGraph) {
+            CommunityGraphScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.Discovery) {
             DiscoveryScreen(onBack = { navController.popBackStack() })
@@ -154,9 +210,12 @@ fun KeystoneNavHost(
 
 object Routes {
     const val Onboarding = "onboarding"
+    const val Home = "home"
     const val Discovery = "discovery"
     const val Vault = "vault"
     const val Marketplace = "marketplace"
+    const val MyCommunity = "my_community"
+    const val MyCommunityGraph = "my_community_graph"
     const val Coordination = "coordination"
     const val Directory = "directory"
     const val Messaging = "messaging"
@@ -164,6 +223,11 @@ object Routes {
     const val Settings = "settings"
     const val MyPage = "my_page"
     const val PeerPage = "peer_page"
+    const val ShareApp = "share_app"
+    const val UpdateFromPeer = "update_from_peer"
+    const val MailboxUse = "mailbox_use"
+    const val MailboxBe = "mailbox_be"
+    const val MailboxScan = "mailbox_scan"
 }
 
 private fun String.hexToBytesOrNull(): ByteArray? {
