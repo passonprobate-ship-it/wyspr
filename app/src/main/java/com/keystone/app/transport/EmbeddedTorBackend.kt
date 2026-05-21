@@ -164,7 +164,15 @@ class EmbeddedTorBackend(
                 TorOption.HiddenServiceDir.tryConfigure {
                     directory(hsDir)
                     version(3)
+                    // Messaging sync — Noise transport, encrypted frames.
                     port(virtual = hsTargetPort.toPort()) { target(port = hsTargetPort.toPort()) }
+                    // Personal web page — plain HTTP, served by
+                    // [com.keystone.app.profile.ProfileHttpServer].
+                    // Anyone with the user's .onion can fetch their
+                    // profile page over Tor.
+                    port(virtual = 80.toPort()) {
+                        target(port = TorBackend.WEB_TARGET_PORT.toPort())
+                    }
                 }
             }
         }

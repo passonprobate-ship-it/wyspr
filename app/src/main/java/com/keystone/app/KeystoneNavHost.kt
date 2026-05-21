@@ -10,6 +10,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.keystone.app.biometric.BiometricUnlocker
 import com.keystone.app.permissions.rememberBlePermissionGate
+import com.keystone.app.profile.EditProfileScreen
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.coordination.CoordinationRoot
 import com.keystone.feature.directory.DirectoryRoot
@@ -113,8 +114,12 @@ fun KeystoneNavHost(
             AppSettingsScreen(
                 biometricSettings = biometricSettings,
                 onOpenAdvanced = { navController.navigate(Routes.Marketplace) },
+                onOpenMyPage = { navController.navigate(Routes.MyPage) },
                 onBack = { navController.popBackStack() },
             )
+        }
+        composable(Routes.MyPage) {
+            EditProfileScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.Coordination) {
             CoordinationRoot()
@@ -138,4 +143,5 @@ object Routes {
     const val Messaging = "messaging"
     const val Monero = "monero"
     const val Settings = "settings"
+    const val MyPage = "my_page"
 }

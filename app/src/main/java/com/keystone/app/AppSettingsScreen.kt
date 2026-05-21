@@ -38,6 +38,7 @@ import com.keystone.core.ui.settings.BiometricSettings
 fun AppSettingsScreen(
     biometricSettings: BiometricSettings,
     onOpenAdvanced: () -> Unit,
+    onOpenMyPage: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     val gate by biometricSettings.gateEnabled.collectAsStateWithLifecycle()
@@ -79,6 +80,36 @@ fun AppSettingsScreen(
                 checked = bind,
                 onCheckedChange = biometricSettings::setBindToBiometric,
             )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        "My web page",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        "Your device hosts a static personal page over Tor at " +
+                            "`http://<your-onion>:80/`. Anyone with your address " +
+                            "can read it. Edit your name, bio, avatar, and links.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    androidx.compose.material3.TextButton(
+                        onClick = onOpenMyPage,
+                        modifier = Modifier.padding(top = 4.dp),
+                    ) { Text("Edit my page") }
+                }
+            }
 
             // Advanced settings (community switch, identity reset, etc.)
             // still live in the wallet module — link there for users who

@@ -10,6 +10,7 @@ import com.keystone.core.database.dao.GroupMessageDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.RevocationDao
 import com.keystone.core.database.dao.TrustEdgeDao
+import com.keystone.core.database.dao.UserProfileDao
 
 /**
  * The on-device persistent store.
@@ -61,4 +62,5 @@ interface KeystoneDatabase {
     val groupDao: GroupDao
     val groupMemberDao: GroupMemberDao
     val groupMessageDao: GroupMessageDao
+    val userProfileDao: UserProfileDao
 }

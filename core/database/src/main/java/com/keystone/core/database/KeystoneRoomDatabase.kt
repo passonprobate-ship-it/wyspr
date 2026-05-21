@@ -14,6 +14,7 @@ import com.keystone.core.database.dao.GroupMessageDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.RevocationDao
 import com.keystone.core.database.dao.TrustEdgeDao
+import com.keystone.core.database.dao.UserProfileDao
 import com.keystone.core.database.entities.AccountEntity
 import com.keystone.core.database.entities.CommunityMembershipEntity
 import com.keystone.core.database.entities.ContactEntity
@@ -24,6 +25,7 @@ import com.keystone.core.database.entities.GroupMessageEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.database.entities.RevocationEntity
 import com.keystone.core.database.entities.TrustEdgeEntity
+import com.keystone.core.database.entities.UserProfileEntity
 
 /**
  * Room subclass. Use [KeystoneDatabaseImpl] to construct and open — it
@@ -45,6 +47,8 @@ import com.keystone.core.database.entities.TrustEdgeEntity
  *   v7 — adds group_entity, group_member, group_message — private
  *        groups support (docs/GROUPS.md). Additive only; 1:1
  *        messaging tables untouched.
+ *   v8 — adds user_profile (singleton) — backing store for the
+ *        user's personal web page served at `http://<onion>:80/`.
  *
  * From v6 onward we ship real migrations rather than
  * fallbackToDestructiveMigration(). The first real-world pair landed
@@ -62,8 +66,9 @@ import com.keystone.core.database.entities.TrustEdgeEntity
         GroupEntity::class,
         GroupMemberEntity::class,
         GroupMessageEntity::class,
+        UserProfileEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {
@@ -77,6 +82,7 @@ abstract class KeystoneRoomDatabase : RoomDatabase() {
     abstract fun groupDao(): GroupDao
     abstract fun groupMemberDao(): GroupMemberDao
     abstract fun groupMessageDao(): GroupMessageDao
+    abstract fun userProfileDao(): UserProfileDao
 }
 
 /**
@@ -146,6 +152,25 @@ internal val MIGRATION_6_7 = object : Migration(6, 7) {
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_group_message_status` " +
                 "ON `group_message`(`status`)"
+        )
+    }
+}
+
+/**
+ * v7 → v8: add the `user_profile` singleton table. Backing store for
+ * the user's `http://<onion>:80/` page. Additive — nothing else
+ * changes.
+ */
+internal val MIGRATION_7_8 = object : Migration(7, 8) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `user_profile` (" +
+                "`id` INTEGER NOT NULL, " +
+                "`display_name` TEXT, " +
+                "`bio` TEXT, " +
+                "`avatar_emoji` TEXT, " +
+                "`links` TEXT, " +
+                "PRIMARY KEY(`id`))"
         )
     }
 }

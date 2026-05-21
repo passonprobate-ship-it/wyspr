@@ -2,6 +2,7 @@ package com.keystone.app
 
 import android.app.Application
 import android.util.Log
+import com.keystone.app.profile.ProfileHttpServer
 import com.keystone.core.transport.TorBackend
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +15,7 @@ import javax.inject.Inject
 class KeystoneApplication : Application() {
 
     @Inject lateinit var torBackend: TorBackend
+    @Inject lateinit var profileHttpServer: ProfileHttpServer
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -36,6 +38,18 @@ class KeystoneApplication : Application() {
                 torBackend.start()
             } catch (t: Throwable) {
                 Log.w(TAG, "torBackend.start() threw", t)
+            }
+        }
+        // The personal-page HTTP server binds on loopback only; Tor
+        // forwards `<onion>:80` to it. Start eagerly — no key access
+        // here, just a TCP listener. The page renderer reads the DB
+        // lazily on each request and serves a placeholder when the
+        // DB hasn't been unlocked yet.
+        appScope.launch {
+            try {
+                profileHttpServer.start()
+            } catch (t: Throwable) {
+                Log.w(TAG, "profileHttpServer.start() threw", t)
             }
         }
     }

@@ -108,5 +108,14 @@ interface TorBackend {
          * configures on the kmp-tor `HiddenServiceDir` builder.
          */
         const val DEFAULT_HS_TARGET_PORT = 9091
+
+        /**
+         * Loopback port for the user's personal web page server. The
+         * HiddenService also maps onion:80 → 127.0.0.1:WEB_TARGET_PORT,
+         * so any Tor-aware browser can fetch
+         * `http://<user>.onion/` and see the user's profile page.
+         * See [com.keystone.app.profile.ProfileHttpServer].
+         */
+        const val WEB_TARGET_PORT = 9092
     }
 }

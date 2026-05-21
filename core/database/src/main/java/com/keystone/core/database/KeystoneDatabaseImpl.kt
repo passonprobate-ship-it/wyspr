@@ -55,6 +55,7 @@ class KeystoneDatabaseImpl(
     override val groupDao get() = requireOpen().groupDao()
     override val groupMemberDao get() = requireOpen().groupMemberDao()
     override val groupMessageDao get() = requireOpen().groupMessageDao()
+    override val userProfileDao get() = requireOpen().userProfileDao()
 
     override suspend fun open() = openLock.withLock {
         withContext(Dispatchers.IO) {
@@ -79,7 +80,7 @@ class KeystoneDatabaseImpl(
                 // bumps. Earlier versions still fall back to a
                 // destructive migration since no real install was
                 // ever on those.
-                .addMigrations(MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
                 .build()
             room = built
