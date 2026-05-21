@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
@@ -50,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.keystone.core.identity.GroupId
 import com.keystone.core.identity.PublicKey
 import com.keystone.feature.messaging.ConversationListViewModel
 import kotlinx.coroutines.delay
@@ -60,6 +62,8 @@ import java.util.Date
 @Composable
 fun ConversationListScreen(
     onOpenThread: (PublicKey) -> Unit,
+    onOpenGroup: (GroupId) -> Unit = {},
+    onCreateGroup: () -> Unit = {},
     onBack: () -> Unit,
     onOpenSettings: () -> Unit = {},
     viewModel: ConversationListViewModel = hiltViewModel(),
@@ -128,6 +132,14 @@ fun ConversationListScreen(
                         onDismissRequest = { overflowOpen = false },
                     ) {
                         DropdownMenuItem(
+                            text = { Text("New group") },
+                            leadingIcon = { Icon(Icons.Filled.GroupAdd, contentDescription = null) },
+                            onClick = {
+                                overflowOpen = false
+                                onCreateGroup()
+                            },
+                        )
+                        DropdownMenuItem(
                             text = { Text("Settings") },
                             leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) },
                             onClick = {
@@ -166,8 +178,36 @@ fun ConversationListScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             contentPadding = PaddingValues(vertical = 8.dp),
                         ) {
-                            items(s.rows, key = { it.peer.bytes.toList() }) { row ->
-                                ThreadRowView(row = row, onClick = { onOpenThread(row.peer) })
+                            if (s.groupRows.isNotEmpty()) {
+                                item {
+                                    Text(
+                                        "Groups",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 2.dp, bottom = 2.dp),
+                                    )
+                                }
+                                items(
+                                    s.groupRows,
+                                    key = { it.groupId.bytes.toList() },
+                                ) { row ->
+                                    GroupRowView(row = row, onClick = { onOpenGroup(row.groupId) })
+                                }
+                            }
+                            if (s.rows.isNotEmpty()) {
+                                if (s.groupRows.isNotEmpty()) {
+                                    item {
+                                        Text(
+                                            "Direct",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+                                        )
+                                    }
+                                }
+                                items(s.rows, key = { it.peer.bytes.toList() }) { row ->
+                                    ThreadRowView(row = row, onClick = { onOpenThread(row.peer) })
+                                }
                             }
                         }
                     }
@@ -322,6 +362,87 @@ private fun FingerprintChip(fingerprint: String) {
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
+    }
+}
+
+@Composable
+private fun GroupRowView(
+    row: ConversationListViewModel.GroupRow,
+    onClick: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(
+                        MaterialTheme.colorScheme.tertiaryContainer,
+                        RoundedCornerShape(8.dp),
+                    )
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.outline,
+                        shape = RoundedCornerShape(8.dp),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    row.name.take(1).uppercase().ifEmpty { "ɢ" },
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        row.name,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                    row.lastAt?.let {
+                        Text(
+                            DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it * 1000)),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                val preview = row.lastBodyPreview
+                if (preview != null) {
+                    val prefix = if (row.lastFromSelf == true) "You: " else ""
+                    Text(
+                        prefix + preview,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                } else {
+                    Text(
+                        "No messages yet",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
     }
 }
 

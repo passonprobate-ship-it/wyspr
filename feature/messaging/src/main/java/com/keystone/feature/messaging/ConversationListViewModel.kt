@@ -5,8 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.keystone.core.crypto.KeystoreManager
 import com.keystone.core.database.KeystoneDatabase
 import com.keystone.core.database.entities.ContactEntity
+import com.keystone.core.database.entities.GroupEntity
+import com.keystone.core.database.entities.GroupMessageEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.identity.Fingerprint
+import com.keystone.core.identity.GroupId
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.trust.TrustGraph
 import com.keystone.core.trust.TrustGraphService
@@ -85,16 +88,25 @@ class ConversationListViewModel @Inject constructor(
                 val ownPub = PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
                 ownPub to loadPeers(ownPub)
             }
-            // Combine latest-per-thread with the contact rename feed
-            // so renaming a peer immediately re-renders without
-            // waiting for the next message.
-            messageStore.latestPerThreadFlow()
-                .combine(database.contactDao.allFlow()) { latest, contacts -> latest to contacts }
-                .collectLatest { (latest, contacts) ->
-                    _state.value = project(own, peers, latest, contacts)
-                }
+            // Compose four reactive feeds:
+            //   - latest 1:1 message per peer thread
+            //   - latest group message per group
+            //   - contact-rename feed (so renames re-render immediately)
+            //   - group list (so a freshly-created group appears)
+            kotlinx.coroutines.flow.combine(
+                messageStore.latestPerThreadFlow(),
+                database.groupMessageDao.latestPerGroupFlow(),
+                database.contactDao.allFlow(),
+                database.groupDao.allFlow(),
+            ) { latest1to1, latestGroup, contacts, groups ->
+                Quad(latest1to1, latestGroup, contacts, groups)
+            }.collectLatest { (latest1to1, latestGroup, contacts, groups) ->
+                _state.value = project(own, peers, latest1to1, latestGroup, contacts, groups)
+            }
         }
     }
+
+    private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
     private suspend fun loadPeers(ownPub: PublicKey): List<PublicKey> {
         val graph: TrustGraph = trustGraphService.snapshot() ?: return emptyList()
@@ -116,15 +128,16 @@ class ConversationListViewModel @Inject constructor(
         ownPub: PublicKey,
         peers: List<PublicKey>,
         latest: List<MessageEntity>,
+        latestGroup: List<GroupMessageEntity>,
         contacts: List<ContactEntity>,
+        groups: List<GroupEntity>,
     ): UiState {
         val latestByPeer: Map<List<Byte>, MessageEntity> =
             latest.associateBy { it.threadPub.toList() }
         val nameByPeer: Map<List<Byte>, String> = contacts
             .mapNotNull { c -> c.displayName?.takeIf { it.isNotBlank() }?.let { c.peerPub.toList() to it } }
             .toMap()
-        if (peers.isEmpty()) return UiState.NoPeers
-        val rows = peers.map { peer ->
+        val threadRows = peers.map { peer ->
             val last = latestByPeer[peer.bytes.toList()]
             ThreadRow(
                 peer = peer,
@@ -135,23 +148,47 @@ class ConversationListViewModel @Inject constructor(
                 lastFromSelf = last?.fromPub?.contentEquals(ownPub.bytes),
             )
         }.sortedByDescending { it.lastAt ?: 0L }
-        return UiState.Ready(rows)
+
+        val latestByGroup: Map<List<Byte>, GroupMessageEntity> =
+            latestGroup.associateBy { it.groupId.toList() }
+        val groupRows = groups.map { g ->
+            val last = latestByGroup[g.groupId.toList()]
+            GroupRow(
+                groupId = GroupId(g.groupId),
+                name = g.localNickname?.takeIf { it.isNotBlank() } ?: g.name,
+                lastBodyPreview = last?.body?.take(BODY_PREVIEW_CHARS),
+                lastAt = last?.createdAt,
+                lastFromSelf = last?.fromPub?.contentEquals(ownPub.bytes),
+            )
+        }.sortedByDescending { it.lastAt ?: 0L }
+
+        if (peers.isEmpty() && groupRows.isEmpty()) return UiState.NoPeers
+        return UiState.Ready(threadRows, groupRows)
     }
 
     sealed interface UiState {
         data object Loading : UiState
         data object NoPeers : UiState
-        data class Ready(val rows: List<ThreadRow>) : UiState
+        data class Ready(
+            val rows: List<ThreadRow>,
+            val groupRows: List<GroupRow> = emptyList(),
+        ) : UiState
     }
 
     data class ThreadRow(
         val peer: PublicKey,
         val fingerprint: Fingerprint,
-        /** User-set friendly name; null/blank means fall back to [fingerprint]. */
         val displayName: String?,
         val lastBodyPreview: String?,
         val lastAt: Long?,
-        /** True when the last message was from us, false from them, null when there are no messages. */
+        val lastFromSelf: Boolean?,
+    )
+
+    data class GroupRow(
+        val groupId: GroupId,
+        val name: String,
+        val lastBodyPreview: String?,
+        val lastAt: Long?,
         val lastFromSelf: Boolean?,
     )
 

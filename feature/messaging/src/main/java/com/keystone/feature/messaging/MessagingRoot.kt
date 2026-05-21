@@ -7,8 +7,11 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.keystone.core.identity.PublicKey
+import com.keystone.core.identity.GroupId
 import com.keystone.feature.messaging.screens.ConversationListScreen
 import com.keystone.feature.messaging.screens.ConversationScreen
+import com.keystone.feature.messaging.screens.CreateGroupScreen
+import com.keystone.feature.messaging.screens.GroupConversationScreen
 
 /**
  * Messaging entry composable with its own internal NavController.
@@ -52,6 +55,10 @@ fun MessagingRoot(
                 onOpenThread = { peer ->
                     nav.navigate(MessagingRoutes.threadRoute(peer))
                 },
+                onOpenGroup = { gid ->
+                    nav.navigate(MessagingRoutes.groupRoute(gid))
+                },
+                onCreateGroup = { nav.navigate(MessagingRoutes.CreateGroup) },
                 onBack = onBack,
                 onOpenSettings = onOpenSettings,
             )
@@ -63,13 +70,38 @@ fun MessagingRoot(
             val peerHex = entry.arguments?.getString("peerHex")
             val peer = peerHex?.let { runCatching { PublicKey(it.hexToBytes()) }.getOrNull() }
             if (peer == null) {
-                // Bad arg — pop back to the list instead of rendering
-                // a broken screen.
                 nav.popBackStack(MessagingRoutes.List, inclusive = false)
                 return@composable
             }
             ConversationScreen(
                 peer = peer,
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(MessagingRoutes.CreateGroup) {
+            CreateGroupScreen(
+                onBack = { nav.popBackStack() },
+                onCreated = { gid ->
+                    nav.navigate(MessagingRoutes.groupRoute(gid)) {
+                        // Drop the create-group screen from the back
+                        // stack — the user finished that flow.
+                        popUpTo(MessagingRoutes.List) { inclusive = false }
+                    }
+                },
+            )
+        }
+        composable(
+            MessagingRoutes.GroupPattern,
+            arguments = listOf(navArgument("groupIdHex") { type = NavType.StringType }),
+        ) { entry ->
+            val hex = entry.arguments?.getString("groupIdHex")
+            val groupId = hex?.let { runCatching { GroupId(it.hexToBytes()) }.getOrNull() }
+            if (groupId == null) {
+                nav.popBackStack(MessagingRoutes.List, inclusive = false)
+                return@composable
+            }
+            GroupConversationScreen(
+                groupId = groupId,
                 onBack = { nav.popBackStack() },
             )
         }
@@ -79,8 +111,12 @@ fun MessagingRoot(
 private object MessagingRoutes {
     const val List = "messages_list"
     const val ThreadPattern = "messages_thread/{peerHex}"
+    const val CreateGroup = "messages_create_group"
+    const val GroupPattern = "messages_group/{groupIdHex}"
     fun threadRoute(peer: PublicKey): String =
         "messages_thread/${peer.bytes.toHex()}"
+    fun groupRoute(group: GroupId): String =
+        "messages_group/${group.bytes.toHex()}"
 }
 
 private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
