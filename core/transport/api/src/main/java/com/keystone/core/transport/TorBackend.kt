@@ -117,5 +117,16 @@ interface TorBackend {
          * See [com.keystone.app.profile.ProfileHttpServer].
          */
         const val WEB_TARGET_PORT = 9092
+
+        /**
+         * Loopback port for the mailbox push-notify channel
+         * ([com.keystone.feature.messaging.mailbox.MailboxNotifyHost]).
+         * The HiddenService maps `onion:9093 → 127.0.0.1:9093`. Mailbox
+         * recipients open a long-lived TCP-over-Tor connection to this
+         * port and receive 1-byte notifications when a new envelope is
+         * stored for them — driving cross-internet message latency
+         * below the 8s auto-sync floor.
+         */
+        const val MAILBOX_NOTIFY_TARGET_PORT = 9093
     }
 }

@@ -8,7 +8,11 @@ import com.keystone.core.identity.PublicKey
 import com.keystone.core.trust.TrustGraphService
 import com.keystone.core.ui.settings.MailboxSettings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -47,6 +51,26 @@ class MailboxHost @Inject constructor(
 
     /** Single source of truth on whether the host is enabled. UI subscribes. */
     val hostEnabled: StateFlow<Boolean> = settings.hostEnabled
+
+    /**
+     * Fires the recipient `toPub` of every envelope this host has
+     * just successfully stored. Sprint 3's [MailboxNotifyHost]
+     * collects this to push 1-byte pokes to active subscribers so
+     * they pull immediately instead of waiting for the 8s auto-sync
+     * tick.
+     *
+     * `extraBufferCapacity = 64` so a burst of pushes doesn't suspend
+     * the storing path on a slow notify collector; if the buffer
+     * overflows we drop oldest events — a missed notify just means
+     * the recipient waits for the next auto-sync. `DROP_OLDEST` over
+     * `SUSPEND` because storing must never block on UI-layer state.
+     */
+    private val _storedEvents = MutableSharedFlow<PublicKey>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    val storedEvents: SharedFlow<PublicKey> = _storedEvents.asSharedFlow()
 
     /**
      * Verify the push, check community membership, enforce the storage
@@ -131,6 +155,11 @@ class MailboxHost @Inject constructor(
         // the cap. IGNORE on conflict at the insert level handles the
         // duplicate-envelope case.
         database.mailboxStoredDao.evictAndInsert(evictIds, entity)
+        // Sprint 3: fan out a push-notify to any subscribers waiting
+        // on this recipient. tryEmit doesn't suspend; on overflow
+        // (DROP_OLDEST policy) the recipient just falls back to the
+        // next auto-sync round.
+        _storedEvents.tryEmit(envelope.toPub)
         PushOutcome.Stored(envelopeId = envelope.id)
     }
 

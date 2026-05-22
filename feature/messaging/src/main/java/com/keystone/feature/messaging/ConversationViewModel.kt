@@ -8,6 +8,8 @@ import com.keystone.core.database.entities.ContactEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.transport.MessagingNotifier
+import com.keystone.feature.messaging.mailbox.MailboxBindingService
+import com.keystone.feature.messaging.mailbox.MailboxNotifyClient
 import com.keystone.feature.messaging.sync.MessageSyncService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -36,6 +38,8 @@ class ConversationViewModel @Inject constructor(
     private val messageStore: MessageStore,
     private val syncService: MessageSyncService,
     private val notifier: MessagingNotifier,
+    private val mailboxNotifyClient: MailboxNotifyClient,
+    private val bindingService: MailboxBindingService,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState>(UiState.Loading)
@@ -106,6 +110,15 @@ class ConversationViewModel @Inject constructor(
     @Volatile private var peerPub: ByteArray? = null
     @Volatile private var autoSyncJob: Job? = null
 
+    /**
+     * Sprint 3 mailbox push-notify driver. Started on bind(); torn
+     * down on onCleared() or re-bind. Holds N child jobs internally —
+     * one [MailboxNotifyClient.subscribe] loop per known own mailbox
+     * binding (multi-host means N>=1). Each child re-dials with
+     * backoff when the subscription drops.
+     */
+    @Volatile private var mailboxNotifyJob: Job? = null
+
     fun bind(peer: PublicKey) {
         peerPub = peer.bytes
         // The user is now actively looking at this peer's thread —
@@ -116,6 +129,7 @@ class ConversationViewModel @Inject constructor(
         // or when bind() is called with a different peer.
         notifier.clearForPeer(peer.bytes)
         startAutoSync()
+        startMailboxNotify()
 
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
@@ -213,9 +227,75 @@ class ConversationViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Sprint 3: subscribe to push-notify on every mailbox host the
+     * local user has delegated to. When a host writes a Notify, we
+     * fire an immediate [MessageSyncService.runOnce] instead of
+     * waiting for the next [AUTO_SYNC_INTERVAL_MS] tick — cross-
+     * internet message latency drops from ~8s to ~circuit RTT.
+     *
+     * One child coroutine per binding; each re-dials with backoff
+     * when the subscription drops (peer reboots, Tor circuit dies,
+     * etc.). The 8s auto-sync stays running as a safety net so a
+     * stuck subscription can't strand messages.
+     */
+    private fun startMailboxNotify() {
+        mailboxNotifyJob?.cancel()
+        mailboxNotifyJob = viewModelScope.launch {
+            // Brief settle — gives Tor a chance to bootstrap on a
+            // cold launch before we start hammering its SOCKS port.
+            delay(INITIAL_SYNC_DELAY_MS)
+            val ownIdentity = withContext(Dispatchers.IO) {
+                runCatching { keystore.loadOrCreateIdentityKey() }.getOrNull()
+            } ?: return@launch
+            val ownPubKey = PublicKey(ownIdentity.publicKey)
+            val bindings = withContext(Dispatchers.IO) {
+                runCatching { bindingService.myBindings(ownPubKey) }.getOrElse { emptyList() }
+            }
+            if (bindings.isEmpty()) return@launch
+            // Spawn one subscriber loop per binding. Each loop owns
+            // its retry/backoff state. Structured-concurrency child
+            // of mailboxNotifyJob — cancelling the parent stops all.
+            for (binding in bindings) {
+                launch { subscribeLoop(binding) }
+            }
+        }
+    }
+
+    private suspend fun subscribeLoop(binding: com.keystone.feature.messaging.mailbox.MailboxBinding) {
+        var backoffMs = NOTIFY_BACKOFF_INITIAL_MS
+        // No isActive check needed — delay() throws CancellationException
+        // when the parent job cancels, which exits the loop naturally
+        // via structured concurrency.
+        while (true) {
+            val notifies = try {
+                mailboxNotifyClient.subscribe(binding) {
+                    // Trigger an immediate sync round against whichever
+                    // peer is currently active. runOnce is mutex-
+                    // serialized so a notify-driven and auto-sync-
+                    // driven round can't collide.
+                    runCatching { syncService.runOnce(timeoutMs = AUTO_SYNC_TIMEOUT_MS) }
+                }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                0
+            }
+            // If the connection lived long enough to deliver pokes,
+            // reset backoff — the host is healthy. A short-lived
+            // connection (dial failed or peer disconnected
+            // immediately) gets the full backoff to avoid hammering
+            // a downed host.
+            if (notifies > 0) backoffMs = NOTIFY_BACKOFF_INITIAL_MS
+            delay(backoffMs)
+            backoffMs = (backoffMs * 2).coerceAtMost(NOTIFY_BACKOFF_MAX_MS)
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
         autoSyncJob?.cancel()
+        mailboxNotifyJob?.cancel()
     }
 
     fun send(body: String) {
@@ -292,5 +372,11 @@ class ConversationViewModel @Inject constructor(
         const val AUTO_SYNC_TIMEOUT_MS = 12_000L
         /** Idle time between attempts. */
         const val AUTO_SYNC_INTERVAL_MS = 8_000L
+
+        /** First reconnect delay after a mailbox-notify subscription ends. */
+        const val NOTIFY_BACKOFF_INITIAL_MS = 3_000L
+
+        /** Ceiling for the exponential backoff between notify-subscribe retries. */
+        const val NOTIFY_BACKOFF_MAX_MS = 60_000L
     }
 }

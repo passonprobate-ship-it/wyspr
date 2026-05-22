@@ -217,6 +217,15 @@ class EmbeddedTorBackend(
                         port(virtual = 80.toPort()) {
                             target(port = TorBackend.WEB_TARGET_PORT.toPort())
                         }
+                        // Sprint 3: mailbox push-notify. Long-lived TCP
+                        // connection; the mailbox host writes 1-byte pokes
+                        // when an envelope is stored for a subscribed
+                        // recipient so they can pull immediately rather
+                        // than waiting for the 8s auto-sync tick. See
+                        // com.keystone.feature.messaging.mailbox.MailboxNotifyHost.
+                        port(virtual = TorBackend.MAILBOX_NOTIFY_TARGET_PORT.toPort()) {
+                            target(port = TorBackend.MAILBOX_NOTIFY_TARGET_PORT.toPort())
+                        }
                     }
                     put(hsSetting)
                     Log.i(TAG, "HiddenServiceDir setting attached: $hsSetting")
