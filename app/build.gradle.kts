@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.dagger.hilt.android")
     id("com.google.devtools.ksp")
 }
@@ -82,10 +83,9 @@ android {
         compose = true
         buildConfig = true
     }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.10"
-    }
+    // composeOptions.kotlinCompilerExtensionVersion is gone — the
+    // Compose Compiler is configured by the
+    // org.jetbrains.kotlin.plugin.compose plugin in the plugins block.
 
     packaging {
         resources {
@@ -140,8 +140,8 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
     // ──── DI ────────────────────────────────────────────────────────────
-    implementation("com.google.dagger:hilt-android:2.50")
-    ksp("com.google.dagger:hilt-android-compiler:2.50")
+    implementation("com.google.dagger:hilt-android:2.55")
+    ksp("com.google.dagger:hilt-android-compiler:2.55")
     implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
 
     // ──── Core ──────────────────────────────────────────────────────────

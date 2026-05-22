@@ -32,5 +32,5 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
 
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlin:kotlin-test:1.9.22")
+    testImplementation("org.jetbrains.kotlin:kotlin-test:2.1.20")
 }

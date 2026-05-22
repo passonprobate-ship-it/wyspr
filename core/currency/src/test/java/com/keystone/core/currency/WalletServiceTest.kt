@@ -370,10 +370,136 @@ class WalletServiceTest {
                 override suspend fun threadSnapshot(peerPub: ByteArray) = throw NotImplementedError()
                 override fun latestPerThreadFlow() = throw NotImplementedError()
                 override suspend fun unreadCountFor(peerPub: ByteArray) = throw NotImplementedError()
+                override fun totalUnreadFlow() = throw NotImplementedError()
                 override suspend fun pendingOutboundFrom(selfPub: ByteArray) = throw NotImplementedError()
+                override suspend fun pendingOutboundFromTo(selfPub: ByteArray, peerPub: ByteArray) =
+                    throw NotImplementedError()
+                override suspend fun pendingReadAckFor(peerPub: ByteArray) = throw NotImplementedError()
                 override suspend fun updateStatus(id: ByteArray, status: String) = throw NotImplementedError()
+                override suspend fun bulkTransitionStatus(
+                    ids: List<ByteArray>,
+                    fromStatus: String,
+                    newStatus: String,
+                ): Int = throw NotImplementedError()
+                override suspend fun bulkTransitionStatus2(
+                    ids: List<ByteArray>,
+                    fromStatusA: String,
+                    fromStatusB: String,
+                    newStatus: String,
+                ): Int = throw NotImplementedError()
+                override suspend fun idsWithStatus(ids: List<ByteArray>, status: String): List<ByteArray> =
+                    throw NotImplementedError()
                 override suspend fun delete(id: ByteArray) = throw NotImplementedError()
                 override suspend fun byId(id: ByteArray) = throw NotImplementedError()
+            }
+
+        // The remaining DAOs aren't touched by WalletServiceTest but
+        // the KeystoneDatabase interface requires them. All methods
+        // throw — a stray test that reaches in fails loudly.
+        override val contactDao: com.keystone.core.database.dao.ContactDao =
+            object : com.keystone.core.database.dao.ContactDao {
+                override suspend fun upsert(contact: com.keystone.core.database.entities.ContactEntity) =
+                    throw NotImplementedError()
+                override suspend fun byPub(peerPub: ByteArray) = throw NotImplementedError()
+                override suspend fun all() = throw NotImplementedError()
+                override fun allFlow() = throw NotImplementedError()
+                override suspend fun clear(peerPub: ByteArray) = throw NotImplementedError()
+            }
+        override val groupDao: com.keystone.core.database.dao.GroupDao =
+            object : com.keystone.core.database.dao.GroupDao {
+                override suspend fun upsert(group: com.keystone.core.database.entities.GroupEntity) =
+                    throw NotImplementedError()
+                override suspend fun byId(groupId: ByteArray) = throw NotImplementedError()
+                override suspend fun all() = throw NotImplementedError()
+                override fun allFlow() = throw NotImplementedError()
+                override suspend fun setNickname(groupId: ByteArray, nickname: String?) =
+                    throw NotImplementedError()
+                override suspend fun delete(groupId: ByteArray) = throw NotImplementedError()
+            }
+        override val groupMemberDao: com.keystone.core.database.dao.GroupMemberDao =
+            object : com.keystone.core.database.dao.GroupMemberDao {
+                override suspend fun upsert(member: com.keystone.core.database.entities.GroupMemberEntity) =
+                    throw NotImplementedError()
+                override suspend fun upsertAll(members: List<com.keystone.core.database.entities.GroupMemberEntity>) =
+                    throw NotImplementedError()
+                override suspend fun activeForGroup(groupId: ByteArray) = throw NotImplementedError()
+                override suspend fun allForGroup(groupId: ByteArray) = throw NotImplementedError()
+                override fun allForGroupFlow(groupId: ByteArray) = throw NotImplementedError()
+                override suspend fun groupsForMember(memberPub: ByteArray) = throw NotImplementedError()
+                override suspend fun setStatus(groupId: ByteArray, memberPub: ByteArray, status: String) =
+                    throw NotImplementedError()
+                override suspend fun delete(groupId: ByteArray, memberPub: ByteArray) =
+                    throw NotImplementedError()
+            }
+        override val groupMessageDao: com.keystone.core.database.dao.GroupMessageDao =
+            object : com.keystone.core.database.dao.GroupMessageDao {
+                override suspend fun upsert(message: com.keystone.core.database.entities.GroupMessageEntity) =
+                    throw NotImplementedError()
+                override fun threadFlow(groupId: ByteArray) = throw NotImplementedError()
+                override suspend fun threadSnapshot(groupId: ByteArray) = throw NotImplementedError()
+                override fun latestPerGroupFlow() = throw NotImplementedError()
+                override suspend fun pendingOutboundFrom(selfPub: ByteArray) = throw NotImplementedError()
+                override fun totalUnreadFlow() = throw NotImplementedError()
+                override suspend fun updateStatus(id: ByteArray, status: String) = throw NotImplementedError()
+                override suspend fun exists(id: ByteArray): Boolean = throw NotImplementedError()
+                override suspend fun delete(id: ByteArray) = throw NotImplementedError()
+            }
+        override val userProfileDao: com.keystone.core.database.dao.UserProfileDao =
+            object : com.keystone.core.database.dao.UserProfileDao {
+                override suspend fun upsert(profile: com.keystone.core.database.entities.UserProfileEntity) =
+                    throw NotImplementedError()
+                override suspend fun get() = throw NotImplementedError()
+                override fun getFlow() = throw NotImplementedError()
+            }
+        override val mailboxBindingDao: com.keystone.core.database.dao.MailboxBindingDao =
+            object : com.keystone.core.database.dao.MailboxBindingDao {
+                override suspend fun upsert(binding: com.keystone.core.database.entities.MailboxBindingEntity) =
+                    throw NotImplementedError()
+                override suspend fun forOwner(ownerPub: ByteArray) = throw NotImplementedError()
+                override fun forOwnerFlow(ownerPub: ByteArray) = throw NotImplementedError()
+                override suspend fun all() = throw NotImplementedError()
+                override suspend fun deleteForOwner(ownerPub: ByteArray) = throw NotImplementedError()
+                override suspend fun deleteForOwnerHost(ownerPub: ByteArray, mailboxPub: ByteArray) =
+                    throw NotImplementedError()
+                override suspend fun deleteAll() = throw NotImplementedError()
+            }
+        override val mailboxStoredDao: com.keystone.core.database.dao.MailboxStoredDao =
+            object : com.keystone.core.database.dao.MailboxStoredDao {
+                override suspend fun insert(stored: com.keystone.core.database.entities.MailboxStoredEntity): Long =
+                    throw NotImplementedError()
+                override suspend fun forRecipientSince(toPub: ByteArray, sinceCursor: Long, limit: Int) =
+                    throw NotImplementedError()
+                override suspend fun envelopeIdsForRecipient(toPub: ByteArray) = throw NotImplementedError()
+                override suspend fun deleteIds(ids: List<ByteArray>) = throw NotImplementedError()
+                override suspend fun expireBefore(nowSeconds: Long): Int = throw NotImplementedError()
+                override suspend fun allOldestFirstForEviction() = throw NotImplementedError()
+                override fun totalSizeBytesFlow() = throw NotImplementedError()
+                override fun totalCountFlow() = throw NotImplementedError()
+                override fun uniqueRecipientsFlow() = throw NotImplementedError()
+                override suspend fun purgeAll() = throw NotImplementedError()
+            }
+        override val mailboxPullCursorDao: com.keystone.core.database.dao.MailboxPullCursorDao =
+            object : com.keystone.core.database.dao.MailboxPullCursorDao {
+                override suspend fun getCursor(mailboxPub: ByteArray) = throw NotImplementedError()
+                override suspend fun upsert(entity: com.keystone.core.database.entities.MailboxPullCursorEntity) =
+                    throw NotImplementedError()
+                override suspend fun clear(mailboxPub: ByteArray) = throw NotImplementedError()
+            }
+        override val handshakeQuarantineDao: com.keystone.core.database.dao.HandshakeQuarantineDao =
+            object : com.keystone.core.database.dao.HandshakeQuarantineDao {
+                override suspend fun forPeer(peerPub: ByteArray) = throw NotImplementedError()
+                override suspend fun isQuarantined(peerPub: ByteArray, nowSeconds: Long) =
+                    throw NotImplementedError()
+                override suspend fun upsert(entity: com.keystone.core.database.entities.HandshakeQuarantineEntity) =
+                    throw NotImplementedError()
+                override suspend fun sweepExpired(nowSeconds: Long): Int = throw NotImplementedError()
+            }
+        override val seenCertNonceDao: com.keystone.core.database.dao.SeenCertNonceDao =
+            object : com.keystone.core.database.dao.SeenCertNonceDao {
+                override suspend fun isSeen(nonce: ByteArray) = throw NotImplementedError()
+                override suspend fun mark(entity: com.keystone.core.database.entities.SeenCertNonceEntity): Long =
+                    throw NotImplementedError()
+                override suspend fun sweepBefore(cutoffSeconds: Long): Int = throw NotImplementedError()
             }
     }
 
