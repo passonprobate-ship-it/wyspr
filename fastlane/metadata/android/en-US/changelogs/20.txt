@@ -1,0 +1,56 @@
+v0.8.3 — the WhatsApp-shaped overhaul.
+
+Chats screen:
+• Three-tab bottom navigation (Chats / Community / Settings)
+  replaces the old tile-grid home. One thumb to switch surfaces.
+• Conversations are full-screen now — bottom nav hides while
+  you're in a thread.
+• "+" FAB on the Chats tab opens a sheet with "New group" /
+  "Pair a new peer".
+• Sync banner and pull-to-refresh removed. Background auto-sync
+  is silent; a hairline indicator at the top shows when it's
+  actively running.
+
+Reply quoting:
+• Long-press any message → "Reply". The composer shows a
+  "Replying" card with the quoted snippet. Send → the recipient's
+  bubble has a quote pill above showing what you replied to.
+• Tap a quote pill → list scrolls to the original message.
+• Works in 1:1 and group conversations.
+
+Pair a new peer:
+• The QR-handshake flow is reachable again post-onboarding.
+  Find it from the Chats FAB, the empty-Chats CTA, or
+  Settings → Pair a new peer.
+
+Peer details:
+• Tap the conversation title → bottom sheet with the peer's full
+  fingerprint, Rename, Notes (free-form local notes about the
+  peer — never synced), and View web page.
+
+Onion profile page:
+• New look: card-on-glow layout, gradient headline, pill-shaped
+  link buttons with hover-lift. Still pure HTML+CSS, no
+  JavaScript, no fonts loaded, CSP unchanged.
+
+Update banner:
+• When a paired peer is running a newer Keystone, a banner
+  appears on the Chats tab. Tap → walk-through for asking the
+  peer to share their build.
+
+Community tab:
+• Flattened into a single searchable list of paired peers with
+  trust-level dots. Tap the trust-graph icon (top right) for the
+  visualization.
+
+Settings:
+• One scrollable list: biometric toggles, My page, Mailbox,
+  Pair a new peer, Wallet, Share Keystone, and Reset identity
+  (with biometric prompt). No more dead-end "Advanced" link.
+
+Mailbox:
+• Purge held messages now requires confirmation.
+
+Behind the scenes:
+• Dozens of crypto/transport/messaging bug fixes from the audit
+  sweep — see git log for the gory details.

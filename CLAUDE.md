@@ -6,18 +6,30 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Keystone has no server component)
-- **Status**: 2026-05-21 — **v0.8.0 ships async mailbox delivery**
-  (`docs/MAILBOX.md`). A mailbox is a Keystone device that volunteers
-  to hold sealed-box-encrypted envelopes for community peers while
-  the recipient is offline; the host can route but cannot read. Same
-  trust graph, same Noise transport, same crypto — no central
-  server. Five phases landed across one session: schema + envelope
-  codec, host handlers, sender push + binding propagation, recipient
-  pull phase inside the existing sync round, and the in-app UI (one
-  "Mailbox" tile, both roles in the same screen). End-to-end
-  hardware verification is the v0.8.1 sprint. Plus home menu
-  redesign and transport-tolerance fixes — see commit `90ed5e3` on
-  `android`.
+- **Status**: 2026-05-21 — **v0.8.3 is the WhatsApp-shaped UX
+  overhaul.** Three-tab bottom navigation (Chats / Community /
+  Settings) replaces the tile-grid home; conversations are
+  full-screen pushed on top of the shell; "+" FAB opens a sheet
+  with New group / Pair a new peer; the sync banner + pull-to-
+  refresh are gone (silent background auto-sync + a hairline top
+  indicator). Reply quoting landed (long-press → Reply →
+  composer shows quote card → bubble shows pill, tap pill scrolls
+  to original) — encoded inline as `keystone:reply:<id>:<body>`
+  so no protocol bump. Contact notes (local-only free-form text
+  per peer), pair-a-new-peer re-entry into the QR handshake, a
+  peer-has-newer-version banner that polls `/version.json` over
+  Tor every 15min, a glow-up of the onion profile page (gradient
+  headline, card-on-glow, pill links). Plus the v0.8.0 → v0.8.3
+  audit/fix sweep: 8 CRITICAL bugs + ~20 HIGH + perf + build
+  improvements landed across 5 commits. Two-device hardware
+  verification of the latest UI is the v0.8.4 sprint.
+
+  Earlier (2026-05-21): **v0.8.0 shipped async mailbox delivery**
+  (`docs/MAILBOX.md`). A mailbox is a Keystone device that
+  volunteers to hold sealed-box-encrypted envelopes for community
+  peers while the recipient is offline; the host can route but
+  cannot read. Same trust graph, same Noise transport, same
+  crypto — no central server.
 
   Earlier on 2026-05-20: **end-to-end encrypted messaging confirmed
   working on real hardware for the first time** (commit `5afb67e`).
