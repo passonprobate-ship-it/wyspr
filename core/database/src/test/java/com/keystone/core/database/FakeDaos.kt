@@ -297,6 +297,74 @@ class FakeMessageDao : MessageDao {
             store.values.count { it.status != "read" }
         }
 
+    override suspend fun pendingOutboundFromTo(
+        selfPub: ByteArray,
+        peerPub: ByteArray,
+    ): List<MessageEntity> =
+        store.values
+            .filter {
+                it.status == "pending" &&
+                    it.fromPub.contentEquals(selfPub) &&
+                    it.toPub.contentEquals(peerPub)
+            }
+            .sortedBy { it.createdAt }
+
+    override suspend fun pendingReadAckFor(peerPub: ByteArray): List<MessageEntity> =
+        store.values
+            .filter {
+                it.threadPub.contentEquals(peerPub) &&
+                    it.fromPub.contentEquals(peerPub) &&
+                    it.status == "received_viewed"
+            }
+            .sortedBy { it.createdAt }
+
+    override suspend fun bulkTransitionStatus(
+        ids: List<ByteArray>,
+        fromStatus: String,
+        newStatus: String,
+    ): Int {
+        val keys = ids.map { IdKey(it) }
+        var n = 0
+        for (k in keys) {
+            val cur = store[k] ?: continue
+            if (cur.status == fromStatus) {
+                store[k] = cur.copy(status = newStatus)
+                n++
+            }
+        }
+        if (n > 0) changeCounter.value++
+        return n
+    }
+
+    override suspend fun bulkTransitionStatus2(
+        ids: List<ByteArray>,
+        fromStatusA: String,
+        fromStatusB: String,
+        newStatus: String,
+    ): Int {
+        val keys = ids.map { IdKey(it) }
+        var n = 0
+        for (k in keys) {
+            val cur = store[k] ?: continue
+            if (cur.status == fromStatusA || cur.status == fromStatusB) {
+                store[k] = cur.copy(status = newStatus)
+                n++
+            }
+        }
+        if (n > 0) changeCounter.value++
+        return n
+    }
+
+    override suspend fun idsWithStatus(
+        ids: List<ByteArray>,
+        status: String,
+    ): List<ByteArray> {
+        val keys = ids.map { IdKey(it) }.toHashSet()
+        return store.entries
+            .filter { it.key in keys && it.value.status == status }
+            .map { it.value.id }
+    }
+
     fun clear() { store.clear(); changeCounter.value = 0 }
 
     private data class PubKey(val pub: ByteArray) {

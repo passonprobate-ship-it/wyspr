@@ -79,6 +79,11 @@ import com.keystone.feature.messaging.location.LocationPayload
 import java.text.DateFormat
 import java.util.Date
 
+// Cached once at class-load time. DateFormat is thread-safe enough for
+// read-only `format()` usage here; previously this allocated a fresh
+// SimpleDateFormat on every bubble recomposition.
+private val bubbleTimeFormatter: DateFormat = DateFormat.getTimeInstance(DateFormat.SHORT)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConversationScreen(
@@ -87,7 +92,7 @@ fun ConversationScreen(
     onViewPeerPage: () -> Unit = {},
     viewModel: ConversationViewModel = hiltViewModel(),
 ) {
-    LaunchedEffect(peer.bytes.toList()) { viewModel.bind(peer) }
+    LaunchedEffect(peer.bytes.contentHashCode()) { viewModel.bind(peer) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     var draft by remember { mutableStateOf("") }
     var renameDialogOpen by remember { mutableStateOf(false) }
@@ -199,7 +204,7 @@ fun ConversationScreen(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                                 contentPadding = PaddingValues(vertical = 8.dp),
                             ) {
-                                items(s.messages, key = { it.id.toList() }) { msg ->
+                                items(s.messages, key = { it.id.contentHashCode() }) { msg ->
                                     MessageBubble(
                                         msg = msg,
                                         fromSelf = ownBytes?.contentEquals(msg.fromPub) == true,
@@ -501,7 +506,7 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
             ) {
                 val loc = LocationPayload.decode(msg.body)
                 when {
-                    isImage -> ImageBubble(body = msg.body, cacheKey = msg.id.toList())
+                    isImage -> ImageBubble(body = msg.body, cacheKey = msg.id.contentHashCode())
                     loc != null -> LocationCard(
                         lat = loc.lat,
                         lng = loc.lng,
@@ -522,7 +527,7 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                     modifier = Modifier.align(Alignment.End),
                 ) {
                     Text(
-                        DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(msg.createdAt * 1000)),
+                        bubbleTimeFormatter.format(Date(msg.createdAt * 1000)),
                         style = MaterialTheme.typography.labelSmall,
                         color = (if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
                         else MaterialTheme.colorScheme.onSurfaceVariant)

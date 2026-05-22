@@ -421,10 +421,24 @@ class AndroidKeystoreManager(
                 "android.hardware.strongbox_keystore",
             )
 
+    @Volatile private var cachedWrappingKey: SecretKey? = null
+
     private fun wrappingKey(): SecretKey {
+        // Memoize. KeyStore.getEntry hits the OS keystore, which can
+        // run ~1ms each call — across wrap+unwrap on every seed access
+        // that added up to a measurable fraction of handshake startup.
+        cachedWrappingKey?.let { return it }
         val ks = keystoreInstance()
         val entry = ks.getEntry(WRAPPING_ALIAS, null) as KeyStore.SecretKeyEntry
-        return entry.secretKey
+        return entry.secretKey.also { cachedWrappingKey = it }
+    }
+
+    /** Invalidate the cached wrapping key. Called when the keystore
+     *  identity is rotated/reset, so subsequent ops fetch the new
+     *  binding rather than the stale reference. */
+    @Synchronized
+    internal fun invalidateWrappingKeyCache() {
+        cachedWrappingKey = null
     }
 
     private fun loadOrCreateSeed(): ByteArray {

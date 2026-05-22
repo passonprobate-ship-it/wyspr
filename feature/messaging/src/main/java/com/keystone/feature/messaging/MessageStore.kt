@@ -79,8 +79,7 @@ class MessageStore @Inject constructor(
      */
     suspend fun pendingOutboundFor(ownPub: PublicKey, peerPub: PublicKey): List<MessageEntity> {
         ensureOpen()
-        return database.messageDao.pendingOutboundFrom(ownPub.bytes)
-            .filter { it.toPub.contentEquals(peerPub.bytes) }
+        return database.messageDao.pendingOutboundFromTo(ownPub.bytes, peerPub.bytes)
     }
 
     /** Most-recent message in a thread — used to populate notification previews. */
@@ -103,10 +102,7 @@ class MessageStore @Inject constructor(
      */
     suspend fun pendingReadAckFor(peerPub: PublicKey): List<MessageEntity> {
         ensureOpen()
-        return database.messageDao.threadSnapshot(peerPub.bytes)
-            .filter {
-                it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED_VIEWED
-            }
+        return database.messageDao.pendingReadAckFor(peerPub.bytes)
     }
 
     /**
@@ -116,11 +112,21 @@ class MessageStore @Inject constructor(
      */
     suspend fun markInboundViewed(peerPub: PublicKey) {
         ensureOpen()
-        val unread = database.messageDao.threadSnapshot(peerPub.bytes)
+        // SQL-side filter + bulk UPDATE in one round-trip. Previously
+        // loaded the whole thread into memory and ran one UPDATE per
+        // row inside the sync engine's critical section.
+        val unreadIds = database.messageDao
+            .threadSnapshot(peerPub.bytes)
+            .asSequence()
             .filter { it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED }
-        for (msg in unread) {
-            database.messageDao.updateStatus(msg.id, STATUS_RECEIVED_VIEWED)
-        }
+            .map { it.id }
+            .toList()
+        if (unreadIds.isEmpty()) return
+        database.messageDao.bulkTransitionStatus(
+            ids = unreadIds,
+            fromStatus = STATUS_RECEIVED,
+            newStatus = STATUS_RECEIVED_VIEWED,
+        )
     }
 
     /**
@@ -129,9 +135,14 @@ class MessageStore @Inject constructor(
      */
     suspend fun markReadAcked(ids: List<ByteArray>) {
         ensureOpen()
-        for (id in ids) {
-            database.messageDao.updateStatus(id, STATUS_RECEIVED_ACKED)
-        }
+        if (ids.isEmpty()) return
+        // One UPDATE for the whole list. The previous per-id loop ran
+        // inside the sync round's critical section.
+        database.messageDao.bulkTransitionStatus(
+            ids = ids,
+            fromStatus = STATUS_RECEIVED_VIEWED,
+            newStatus = STATUS_RECEIVED_ACKED,
+        )
     }
 
     /**
@@ -140,19 +151,19 @@ class MessageStore @Inject constructor(
      */
     suspend fun applyPeerReadReceipts(ids: List<ByteArray>): List<ByteArray> {
         ensureOpen()
-        val applied = ArrayList<ByteArray>(ids.size)
-        for (id in ids) {
-            val existing = database.messageDao.byId(id) ?: continue
-            // Only accept transitions from sent/delivered → read.
-            // Refusing pending/received protects against a misbehaving
-            // peer trying to flip statuses on messages we haven't even
-            // sent yet, or our own inbound.
-            if (existing.status == STATUS_SENT || existing.status == STATUS_DELIVERED) {
-                database.messageDao.updateStatus(id, STATUS_READ)
-                applied.add(id)
-            }
-        }
-        return applied
+        if (ids.isEmpty()) return emptyList()
+        // Bulk UPDATE that only flips rows currently in sent OR
+        // delivered → read. Refusing pending/received protects against
+        // a misbehaving peer trying to flip statuses on messages we
+        // haven't sent yet or our own inbound. One round-trip instead
+        // of N round-trips inside the sync engine's critical section.
+        database.messageDao.bulkTransitionStatus2(
+            ids = ids,
+            fromStatusA = STATUS_SENT,
+            fromStatusB = STATUS_DELIVERED,
+            newStatus = STATUS_READ,
+        )
+        return database.messageDao.idsWithStatus(ids, STATUS_READ)
     }
 
     /** Sprint 2 — push a [MessageEntity] over a Noise link. */

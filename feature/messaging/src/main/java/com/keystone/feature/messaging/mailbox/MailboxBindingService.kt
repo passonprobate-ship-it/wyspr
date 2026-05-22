@@ -68,10 +68,20 @@ class MailboxBindingService @Inject constructor(
     fun myBindingFlow(ownPub: PublicKey): Flow<MailboxBinding?> =
         database.mailboxBindingDao.forOwnerFlow(ownPub.bytes).map { it?.toBinding() }
 
-    /** Look up a peer's binding (learned via sync). Null if not known. */
-    suspend fun forOwner(ownerPub: PublicKey): MailboxBinding? = withContext(Dispatchers.IO) {
+    /**
+     * Look up a peer's binding (learned via sync). Null if not known
+     * OR the cert has expired — senders shouldn't push to a 90-day-
+     * expired mailbox just because the row is still on disk. [nowSeconds]
+     * defaults to the wall clock; tests override.
+     */
+    suspend fun forOwner(
+        ownerPub: PublicKey,
+        nowSeconds: Long = System.currentTimeMillis() / 1000,
+    ): MailboxBinding? = withContext(Dispatchers.IO) {
         ensureOpen()
-        database.mailboxBindingDao.forOwner(ownerPub.bytes)?.toBinding()
+        val row = database.mailboxBindingDao.forOwner(ownerPub.bytes) ?: return@withContext null
+        if (row.expiresAt <= nowSeconds) return@withContext null
+        row.toBinding()
     }
 
     /**

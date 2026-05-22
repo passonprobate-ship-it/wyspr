@@ -120,6 +120,12 @@ class MessageSyncService @Inject constructor(
     /**
      * Attempt a single sync round. Idempotent under concurrent
      * callers — only one round runs at a time, others suspend.
+     *
+     * NOTE: the round mutex is currently held through the post-round
+     * transport teardown (1-3s on BLE). Lifting teardown outside the
+     * mutex is a worthwhile MEDIUM but the refactor is non-trivial
+     * (multiple early-return paths plus the transport lifecycle ref
+     * count must stay consistent). Deferred to a separate change.
      */
     suspend fun runOnce(timeoutMs: Long = DEFAULT_TIMEOUT_MS): Result = lock.withLock {
         withContext(Dispatchers.IO) { runOnceInternal(timeoutMs) }
@@ -395,7 +401,7 @@ class MessageSyncService @Inject constructor(
         link: Link,
         communityId: CommunityId,
         ownPub: PublicKey,
-        peerLookup: Map<List<Byte>, PublicKey>,
+        peerLookup: Map<com.keystone.core.identity.PeerKey, PublicKey>,
     ): SessionResult? {
         val noiseRole = when (role) {
             MessageSyncEngine.HandshakeRole.Initiator -> NoiseSession.Role.Initiator
@@ -439,7 +445,7 @@ class MessageSyncService @Inject constructor(
             }
             // Channel binding: who did we actually talk to?
             val peerX25519 = noise.remoteStaticPublicKey
-            val peerPub = peerLookup[peerX25519.toList()] ?: return null
+            val peerPub = peerLookup[com.keystone.core.identity.PeerKey(peerX25519)] ?: return null
 
             val engine = MessageSyncEngine(
                 role = role,
@@ -493,17 +499,17 @@ class MessageSyncService @Inject constructor(
      * Ed25519 form. Built once per sync attempt; the local Ed25519
      * pub is skipped so we don't accidentally accept ourselves.
      */
-    private suspend fun buildPeerLookup(ownPub: PublicKey): Map<List<Byte>, PublicKey> {
-        val out = HashMap<List<Byte>, PublicKey>()
+    private suspend fun buildPeerLookup(ownPub: PublicKey): Map<com.keystone.core.identity.PeerKey, PublicKey> {
+        val out = HashMap<com.keystone.core.identity.PeerKey, PublicKey>()
         val edges = database.trustEdgeDao.all()
-        val seen = HashSet<List<Byte>>()
+        val seen = HashSet<com.keystone.core.identity.PeerKey>()
         for (edge in edges) {
             val candidates = listOf(edge.fromPub, edge.toPub)
             for (pubBytes in candidates) {
                 if (pubBytes.contentEquals(ownPub.bytes)) continue
-                if (!seen.add(pubBytes.toList())) continue
+                if (!seen.add(com.keystone.core.identity.PeerKey(pubBytes))) continue
                 val x25519 = ed25519ToX25519(pubBytes) ?: continue
-                out[x25519.toList()] = PublicKey(pubBytes)
+                out[com.keystone.core.identity.PeerKey(x25519)] = PublicKey(pubBytes)
             }
         }
         return out

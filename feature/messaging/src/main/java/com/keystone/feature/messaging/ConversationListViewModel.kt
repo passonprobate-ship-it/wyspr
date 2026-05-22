@@ -10,7 +10,9 @@ import com.keystone.core.database.entities.GroupMessageEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.identity.Fingerprint
 import com.keystone.core.identity.GroupId
+import com.keystone.core.identity.PeerKey
 import com.keystone.core.identity.PublicKey
+import com.keystone.core.identity.asPeerKey
 import com.keystone.core.trust.TrustGraph
 import com.keystone.core.trust.TrustGraphService
 import com.keystone.feature.messaging.sync.MessageSyncService
@@ -147,7 +149,7 @@ class ConversationListViewModel @Inject constructor(
     private suspend fun loadPeers(ownPub: PublicKey): List<PublicKey> {
         val graph: TrustGraph = trustGraphService.snapshot() ?: return emptyList()
         val edges = graph.snapshot().edges
-        val seen = HashSet<List<Byte>>()
+        val seen = HashSet<PeerKey>()
         return buildList {
             for (edge in edges) {
                 val other = when {
@@ -155,7 +157,7 @@ class ConversationListViewModel @Inject constructor(
                     edge.to.bytes.contentEquals(ownPub.bytes) -> edge.from
                     else -> continue
                 }
-                if (seen.add(other.bytes.toList())) add(other)
+                if (seen.add(other.bytes.asPeerKey())) add(other)
             }
         }
     }
@@ -168,27 +170,28 @@ class ConversationListViewModel @Inject constructor(
         contacts: List<ContactEntity>,
         groups: List<GroupEntity>,
     ): UiState {
-        val latestByPeer: Map<List<Byte>, MessageEntity> =
-            latest.associateBy { it.threadPub.toList() }
-        val nameByPeer: Map<List<Byte>, String> = contacts
-            .mapNotNull { c -> c.displayName?.takeIf { it.isNotBlank() }?.let { c.peerPub.toList() to it } }
+        val latestByPeer: Map<PeerKey, MessageEntity> =
+            latest.associateBy { it.threadPub.asPeerKey() }
+        val nameByPeer: Map<PeerKey, String> = contacts
+            .mapNotNull { c -> c.displayName?.takeIf { it.isNotBlank() }?.let { c.peerPub.asPeerKey() to it } }
             .toMap()
         val threadRows = peers.map { peer ->
-            val last = latestByPeer[peer.bytes.toList()]
+            val key = peer.bytes.asPeerKey()
+            val last = latestByPeer[key]
             ThreadRow(
                 peer = peer,
                 fingerprint = peer.fingerprint,
-                displayName = nameByPeer[peer.bytes.toList()],
+                displayName = nameByPeer[key],
                 lastBodyPreview = last?.body?.take(BODY_PREVIEW_CHARS),
                 lastAt = last?.createdAt,
                 lastFromSelf = last?.fromPub?.contentEquals(ownPub.bytes),
             )
         }.sortedByDescending { it.lastAt ?: 0L }
 
-        val latestByGroup: Map<List<Byte>, GroupMessageEntity> =
-            latestGroup.associateBy { it.groupId.toList() }
+        val latestByGroup: Map<PeerKey, GroupMessageEntity> =
+            latestGroup.associateBy { it.groupId.asPeerKey() }
         val groupRows = groups.map { g ->
-            val last = latestByGroup[g.groupId.toList()]
+            val last = latestByGroup[g.groupId.asPeerKey()]
             GroupRow(
                 groupId = GroupId(g.groupId),
                 name = g.localNickname?.takeIf { it.isNotBlank() } ?: g.name,

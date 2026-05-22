@@ -69,6 +69,16 @@ class MailboxClientViewModel @Inject constructor(
                 _scanFeedback.value = "identity not ready"
                 return@launch
             }
+            // Refuse a binding that lacks an onion address. If the host's
+            // Tor is still bootstrapping at QR mint time, the QR carries
+            // a null onion and the binding becomes BLE-only for its full
+            // 90-day validity — silently breaking async delivery whenever
+            // the recipient and host aren't co-located. Better to fail
+            // loud so the user re-scans once Tor is up.
+            if (qr.onionAddress.isNullOrBlank()) {
+                _scanFeedback.value = "Mailbox host's Tor hasn't started yet. Wait a moment and re-scan."
+                return@launch
+            }
             val now = System.currentTimeMillis() / 1000
             val binding = withContext(Dispatchers.IO) {
                 MailboxBinding.issue(

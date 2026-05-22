@@ -79,7 +79,7 @@ fun GroupConversationScreen(
     onBack: () -> Unit,
     viewModel: GroupConversationViewModel = hiltViewModel(),
 ) {
-    LaunchedEffect(groupId.bytes.toList()) { viewModel.bind(groupId) }
+    LaunchedEffect(groupId.bytes.contentHashCode()) { viewModel.bind(groupId) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     var draft by remember { mutableStateOf("") }
     var memberDialogOpen by remember { mutableStateOf(false) }
@@ -185,11 +185,11 @@ fun GroupConversationScreen(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                                 contentPadding = PaddingValues(vertical = 8.dp),
                             ) {
-                                items(s.messages, key = { it.id.toList() }) { msg ->
+                                items(s.messages, key = { it.id.contentHashCode() }) { msg ->
                                     GroupMessageBubble(
                                         msg = msg,
                                         fromSelf = ownBytes?.contentEquals(msg.fromPub) == true,
-                                        senderDisplayName = s.displayNames[msg.fromPub.toList()],
+                                        senderDisplayName = s.displayNames[com.keystone.core.identity.PeerKey(msg.fromPub)],
                                     )
                                 }
                             }
@@ -513,7 +513,7 @@ private fun GroupMessageBubble(
                 when {
                     isImage -> com.keystone.feature.messaging.image.ImageBubble(
                         body = msg.body,
-                        cacheKey = msg.id.toList(),
+                        cacheKey = msg.id.contentHashCode(),
                     )
                     loc != null -> LocationCard(
                         lat = loc.lat,

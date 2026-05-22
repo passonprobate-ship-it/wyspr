@@ -272,13 +272,18 @@ class EmbeddedTorBackend(
         hsDir.setExecutable(false, false); hsDir.setExecutable(true, true)
 
         val seed = keystoreManager.deriveSubkey(SUBKEY_INFO)
+        var mat: TorHsKey.Material? = null
         try {
-            val mat = TorHsKey.derive(seed)
+            mat = TorHsKey.derive(seed)
             File(hsDir, "hs_ed25519_secret_key").writeBytes(mat.secretKeyFile)
             File(hsDir, "hs_ed25519_public_key").writeBytes(mat.publicKeyFile)
             return mat.onionAddress
         } finally {
             seed.fill(0)
+            // The expanded HSv3 secret is on heap after writeBytes(); the
+            // GC will eventually reclaim it but a memory dump in the
+            // interim could surface it. Zero before letting go.
+            mat?.secretKeyFile?.fill(0)
         }
     }
 

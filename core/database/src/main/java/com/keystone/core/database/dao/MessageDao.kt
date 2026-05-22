@@ -53,8 +53,58 @@ interface MessageDao {
     @Query("SELECT * FROM message WHERE status = 'pending' AND from_pub = :selfPub ORDER BY created_at ASC")
     suspend fun pendingOutboundFrom(selfPub: ByteArray): List<MessageEntity>
 
+    /**
+     * Pending outbound to a specific peer. SQL-side filter so the sync
+     * engine doesn't load every pending row in the database just to
+     * pick out one peer's queue.
+     */
+    @Query(
+        "SELECT * FROM message WHERE status = 'pending' " +
+            "AND from_pub = :selfPub AND to_pub = :peerPub " +
+            "ORDER BY created_at ASC",
+    )
+    suspend fun pendingOutboundFromTo(selfPub: ByteArray, peerPub: ByteArray): List<MessageEntity>
+
+    /**
+     * Inbound rows from [peerPub] currently in `received_viewed` — i.e.
+     * the user has opened the chat but we haven't yet sent the read
+     * receipt. Used by the read-receipt sync phase.
+     */
+    @Query(
+        "SELECT * FROM message WHERE thread_pub = :peerPub " +
+            "AND from_pub = :peerPub AND status = 'received_viewed' " +
+            "ORDER BY created_at ASC",
+    )
+    suspend fun pendingReadAckFor(peerPub: ByteArray): List<MessageEntity>
+
     @Query("UPDATE message SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: ByteArray, status: String)
+
+    /** Single bulk transition. Returns the number of affected rows so
+     *  callers can identify how many of [ids] were eligible. */
+    @Query("UPDATE message SET status = :newStatus WHERE id IN (:ids) AND status = :fromStatus")
+    suspend fun bulkTransitionStatus(
+        ids: List<ByteArray>,
+        fromStatus: String,
+        newStatus: String,
+    ): Int
+
+    /** Bulk variant that accepts two old statuses (e.g., sent OR delivered → read). */
+    @Query(
+        "UPDATE message SET status = :newStatus WHERE id IN (:ids) " +
+            "AND status IN (:fromStatusA, :fromStatusB)",
+    )
+    suspend fun bulkTransitionStatus2(
+        ids: List<ByteArray>,
+        fromStatusA: String,
+        fromStatusB: String,
+        newStatus: String,
+    ): Int
+
+    /** Fetch only ids whose status is in one of the given values. Used
+     *  after a bulk transition to return the actually-affected ids. */
+    @Query("SELECT id FROM message WHERE id IN (:ids) AND status = :status")
+    suspend fun idsWithStatus(ids: List<ByteArray>, status: String): List<ByteArray>
 
     @Query("DELETE FROM message WHERE id = :id")
     suspend fun delete(id: ByteArray)

@@ -47,7 +47,7 @@ class GroupConversationViewModel @Inject constructor(
             val memberCount: Int,
             val messages: List<GroupMessageEntity>,
             /** Map memberPub → displayName for inbound bubble labelling. */
-            val displayNames: Map<List<Byte>, String>,
+            val displayNames: Map<com.keystone.core.identity.PeerKey, String>,
         ) : UiState
     }
 
@@ -78,10 +78,10 @@ class GroupConversationViewModel @Inject constructor(
                         groupStore.activeMembers(id)
                     }
                     val contacts = withContext(Dispatchers.IO) { database.contactDao.all() }
-                    val nameByPub: Map<List<Byte>, String> = contacts
+                    val nameByPub: Map<com.keystone.core.identity.PeerKey, String> = contacts
                         .mapNotNull { c ->
                             c.displayName?.takeIf { it.isNotBlank() }
-                                ?.let { c.peerPub.toList() to it }
+                                ?.let { com.keystone.core.identity.PeerKey(c.peerPub) to it }
                         }
                         .toMap()
                     _state.value = UiState.Ready(
@@ -115,16 +115,16 @@ class GroupConversationViewModel @Inject constructor(
             val group = groupStore.groupById(gid) ?: return@withContext emptyList()
             val members = groupStore.activeMembers(gid)
             val contacts = database.contactDao.all()
-            val nameByPub: Map<List<Byte>, String> = contacts
+            val nameByPub: Map<com.keystone.core.identity.PeerKey, String> = contacts
                 .mapNotNull { c ->
                     c.displayName?.takeIf { it.isNotBlank() }
-                        ?.let { c.peerPub.toList() to it }
+                        ?.let { com.keystone.core.identity.PeerKey(c.peerPub) to it }
                 }
                 .toMap()
             members.map { m ->
                 MemberView(
                     pub = PublicKey(m.memberPub),
-                    displayName = nameByPub[m.memberPub.toList()],
+                    displayName = nameByPub[com.keystone.core.identity.PeerKey(m.memberPub)],
                     isSelf = pub != null && m.memberPub.contentEquals(pub),
                     isCreator = m.memberPub.contentEquals(group.creatorPub),
                 )

@@ -195,7 +195,7 @@ fun ConversationListScreen(
                                 }
                                 items(
                                     s.groupRows,
-                                    key = { it.groupId.bytes.toList() },
+                                    key = { it.groupId.bytes.contentHashCode() },
                                 ) { row ->
                                     GroupRowView(
                                         row = row,
@@ -220,7 +220,7 @@ fun ConversationListScreen(
                                         )
                                     }
                                 }
-                                items(s.rows, key = { it.peer.bytes.toList() }) { row ->
+                                items(s.rows, key = { it.peer.bytes.contentHashCode() }) { row ->
                                     ThreadRowView(row = row, onClick = { onOpenThread(row.peer) })
                                 }
                             }
