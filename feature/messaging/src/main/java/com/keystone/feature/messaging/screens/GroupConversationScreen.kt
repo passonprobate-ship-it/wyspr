@@ -68,9 +68,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.keystone.core.database.entities.GroupMessageEntity
 import com.keystone.core.identity.GroupId
 import com.keystone.feature.messaging.GroupConversationViewModel
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.filled.Close
 import com.keystone.feature.messaging.location.LocationPayload
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -80,6 +86,7 @@ fun GroupConversationScreen(
     viewModel: GroupConversationViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(groupId.bytes.contentHashCode()) { viewModel.bind(groupId) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val state by viewModel.state.collectAsStateWithLifecycle()
     // Draft + modal state on the VM so they survive configuration
     // changes and navigation away.
@@ -174,6 +181,11 @@ fun GroupConversationScreen(
                             EmptyGroupThread()
                         } else {
                             val ownBytes = s.ownPub?.bytes
+                            val byId = remember(s.messages) {
+                                s.messages.associateBy {
+                                    com.keystone.core.identity.PeerKey(it.id)
+                                }
+                            }
                             LazyColumn(
                                 state = listState,
                                 modifier = Modifier
@@ -183,10 +195,27 @@ fun GroupConversationScreen(
                                 contentPadding = PaddingValues(vertical = 8.dp),
                             ) {
                                 items(s.messages, key = { it.id.contentHashCode() }) { msg ->
+                                    val decoded = com.keystone.feature.messaging.reply.ReplyPayload.decode(msg.body)
+                                    val quoted = decoded?.replyToId?.let { id ->
+                                        byId[com.keystone.core.identity.PeerKey(id)]
+                                    }
                                     GroupMessageBubble(
                                         msg = msg,
                                         fromSelf = ownBytes?.contentEquals(msg.fromPub) == true,
                                         senderDisplayName = s.displayNames[com.keystone.core.identity.PeerKey(msg.fromPub)],
+                                        quoted = quoted,
+                                        quotedSenderName = quoted?.let { q ->
+                                            s.displayNames[com.keystone.core.identity.PeerKey(q.fromPub)]
+                                        },
+                                        quotedFromSelf = quoted != null && ownBytes != null &&
+                                            quoted.fromPub.contentEquals(ownBytes),
+                                        onReply = { viewModel.pickReply(msg) },
+                                        onScrollToQuoted = { id ->
+                                            val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
+                                            if (idx >= 0) {
+                                                scope.launch { listState.animateScrollToItem(idx) }
+                                            }
+                                        },
                                     )
                                 }
                             }
@@ -200,6 +229,21 @@ fun GroupConversationScreen(
             }
             val sharePhoto = rememberPhotoShareController { jpegBytes ->
                 viewModel.sendImage(jpegBytes)
+            }
+            val replyingTo by viewModel.replyingTo.collectAsStateWithLifecycle()
+            replyingTo?.let { target ->
+                val ownB = (state as? GroupConversationViewModel.UiState.Ready)?.ownPub?.bytes
+                val senderName = (state as? GroupConversationViewModel.UiState.Ready)
+                    ?.displayNames?.get(com.keystone.core.identity.PeerKey(target.fromPub))
+                GroupReplyComposerCard(
+                    target = target,
+                    senderLabel = when {
+                        ownB?.contentEquals(target.fromPub) == true -> "Replying to yourself"
+                        senderName != null -> "Replying to $senderName"
+                        else -> "Replying"
+                    },
+                    onCancel = viewModel::cancelReply,
+                )
             }
             GroupComposerRow(
                 draft = draft,
@@ -416,10 +460,18 @@ private fun GroupMessageBubble(
     msg: GroupMessageEntity,
     fromSelf: Boolean,
     senderDisplayName: String?,
+    quoted: GroupMessageEntity? = null,
+    quotedSenderName: String? = null,
+    quotedFromSelf: Boolean = false,
+    onReply: () -> Unit = {},
+    onScrollToQuoted: (ByteArray) -> Unit = {},
 ) {
     val clipboard = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     var menuOpen by remember { mutableStateOf(false) }
+    val displayBody = remember(msg.body) {
+        com.keystone.feature.messaging.reply.ReplyPayload.decode(msg.body)?.body ?: msg.body
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (fromSelf) Arrangement.End else Arrangement.Start,
@@ -451,8 +503,8 @@ private fun GroupMessageBubble(
                 )
             }
         }
-        val isImage = com.keystone.feature.messaging.image.ImagePayload.isImage(msg.body)
-        val isJumboEmoji = !isImage && msg.body.isJumboEmoji()
+        val isImage = com.keystone.feature.messaging.image.ImagePayload.isImage(displayBody)
+        val isJumboEmoji = !isImage && displayBody.isJumboEmoji()
         Surface(
             color = if (fromSelf) MaterialTheme.colorScheme.primaryContainer
             else MaterialTheme.colorScheme.surfaceVariant,
@@ -480,9 +532,22 @@ private fun GroupMessageBubble(
                 onDismissRequest = { menuOpen = false },
             ) {
                 DropdownMenuItem(
+                    text = { Text("Reply") },
+                    leadingIcon = {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Reply,
+                            contentDescription = null,
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onReply()
+                    },
+                )
+                DropdownMenuItem(
                     text = { Text("Copy") },
                     onClick = {
-                        clipboard.setText(AnnotatedString(msg.body))
+                        clipboard.setText(AnnotatedString(displayBody))
                         menuOpen = false
                     },
                 )
@@ -505,10 +570,19 @@ private fun GroupMessageBubble(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                val loc = LocationPayload.decode(msg.body)
+                if (quoted != null) {
+                    GroupQuotedSnippet(
+                        quoted = quoted,
+                        quotedSenderName = quotedSenderName,
+                        quotedFromSelf = quotedFromSelf,
+                        bubbleFromSelf = fromSelf,
+                        onTap = { onScrollToQuoted(quoted.id) },
+                    )
+                }
+                val loc = LocationPayload.decode(displayBody)
                 when {
                     isImage -> com.keystone.feature.messaging.image.ImageBubble(
-                        body = msg.body,
+                        body = displayBody,
                         cacheKey = msg.id.contentHashCode(),
                     )
                     loc != null -> LocationCard(
@@ -518,7 +592,7 @@ private fun GroupMessageBubble(
                         fromSelf = fromSelf,
                     )
                     else -> Text(
-                        msg.body,
+                        displayBody,
                         style = if (isJumboEmoji) MaterialTheme.typography.displaySmall
                         else MaterialTheme.typography.bodyMedium,
                         color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
@@ -534,6 +608,119 @@ private fun GroupMessageBubble(
                     modifier = Modifier.align(Alignment.End),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun GroupQuotedSnippet(
+    quoted: GroupMessageEntity,
+    quotedSenderName: String?,
+    quotedFromSelf: Boolean,
+    bubbleFromSelf: Boolean,
+    onTap: () -> Unit,
+) {
+    val accent = if (bubbleFromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+    else MaterialTheme.colorScheme.primary
+    val container = if (bubbleFromSelf)
+        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.10f)
+    else MaterialTheme.colorScheme.surface
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(container)
+            .clickable(onClick = onTap),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .background(accent)
+                .width(3.dp)
+                .heightIn(min = 32.dp),
+        )
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .weight(1f),
+        ) {
+            val senderLabel = when {
+                quotedFromSelf -> "You"
+                quotedSenderName != null -> quotedSenderName
+                else -> "Member"
+            }
+            Text(
+                senderLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = accent,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Text(
+                groupQuotedPreview(quoted.body),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (bubbleFromSelf) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private fun groupQuotedPreview(body: String): String {
+    val unwrapped = com.keystone.feature.messaging.reply.ReplyPayload.decode(body)?.body ?: body
+    return when {
+        unwrapped.startsWith("keystone:loc:") -> "📍 Location"
+        com.keystone.feature.messaging.image.ImagePayload.isImage(unwrapped) -> "📷 Photo"
+        else -> unwrapped.take(80)
+    }
+}
+
+@Composable
+private fun GroupReplyComposerCard(
+    target: GroupMessageEntity,
+    senderLabel: String,
+    onCancel: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.primary)
+                .width(3.dp)
+                .heightIn(min = 32.dp),
+        )
+        Column(
+            modifier = Modifier
+                .padding(start = 10.dp)
+                .weight(1f),
+        ) {
+            Text(
+                senderLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Text(
+                groupQuotedPreview(target.body),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onCancel) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = "Cancel reply",
+            )
         }
     }
 }

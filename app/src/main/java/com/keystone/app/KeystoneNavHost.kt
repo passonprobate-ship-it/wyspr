@@ -14,12 +14,16 @@ import com.keystone.app.biometric.BiometricUnlocker
 import com.keystone.app.permissions.rememberBlePermissionGate
 import com.keystone.app.profile.EditProfileScreen
 import com.keystone.app.profile.ViewProfileScreen
+import com.keystone.core.identity.GroupId
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.marketplace.MarketplaceRoot
 import com.keystone.feature.marketplace.screens.CommunityGraphScreen
 import com.keystone.feature.messaging.mailbox.screens.MailboxScreen
 import com.keystone.feature.messaging.mailbox.screens.ScanMailboxQrScreen
+import com.keystone.feature.messaging.screens.ConversationScreen
+import com.keystone.feature.messaging.screens.CreateGroupScreen
+import com.keystone.feature.messaging.screens.GroupConversationScreen
 import com.keystone.feature.onboarding.OnboardingRoot
 import com.keystone.feature.onboarding.screens.DiscoveryScreen
 import com.keystone.feature.onboarding.screens.ShareApkScreen
@@ -50,13 +54,12 @@ fun KeystoneNavHost(
     // (the launching intent) and onNewIntent. After navigating we tell
     // the activity the link was consumed so a rotation doesn't
     // re-trigger.
-    var initialChatPeerHex: String? = null
-    if (pendingDeepLink is MainActivity.DeepLink.OpenChat) {
-        initialChatPeerHex = pendingDeepLink.peerHex
-    }
     LaunchedEffect(pendingDeepLink) {
         if (pendingDeepLink is MainActivity.DeepLink.OpenChat) {
-            navController.navigate(Routes.Main) {
+            // Deep-links open the conversation directly as a full-screen
+            // route (covers the bottom nav), matching WhatsApp-style
+            // notification-tap navigation. Back lands on the Chats tab.
+            navController.navigate("${Routes.Conversation}/${pendingDeepLink.peerHex}") {
                 launchSingleTop = true
             }
             onDeepLinkConsumed()
@@ -100,15 +103,60 @@ fun KeystoneNavHost(
                 onOpenFindPeers = { navController.navigate(Routes.Discovery) },
                 onOpenShareApp = { navController.navigate(Routes.ShareApp) },
                 onOpenCommunityGraph = { navController.navigate(Routes.MyCommunityGraph) },
-                onViewPeerPage = { peerHex ->
-                    navController.navigate("${Routes.PeerPage}/$peerHex")
+                onOpenThread = { peer ->
+                    navController.navigate("${Routes.Conversation}/${peer.bytes.toHex()}")
                 },
+                onOpenGroup = { groupId ->
+                    navController.navigate("${Routes.Group}/${groupId.bytes.toHex()}")
+                },
+                onCreateGroup = { navController.navigate(Routes.CreateGroup) },
                 onIdentityReset = {
                     navController.navigate(Routes.Onboarding) {
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                initialChatPeerHex = initialChatPeerHex,
+            )
+        }
+        composable(
+            route = "${Routes.Conversation}/{peerHex}",
+            arguments = listOf(navArgument("peerHex") { type = NavType.StringType }),
+        ) { entry ->
+            val hex = entry.arguments?.getString("peerHex")
+            val bytes = hex?.hexToBytesOrNull()
+            if (bytes == null || bytes.size != 32) {
+                navController.popBackStack()
+                return@composable
+            }
+            ConversationScreen(
+                peer = PublicKey(bytes),
+                onBack = { navController.popBackStack() },
+                onViewPeerPage = { navController.navigate("${Routes.PeerPage}/${hex}") },
+            )
+        }
+        composable(
+            route = "${Routes.Group}/{groupIdHex}",
+            arguments = listOf(navArgument("groupIdHex") { type = NavType.StringType }),
+        ) { entry ->
+            val hex = entry.arguments?.getString("groupIdHex")
+            val bytes = hex?.hexToBytesOrNull()
+            if (bytes == null) {
+                navController.popBackStack()
+                return@composable
+            }
+            GroupConversationScreen(
+                groupId = GroupId(bytes),
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(Routes.CreateGroup) {
+            CreateGroupScreen(
+                onBack = { navController.popBackStack() },
+                onCreated = { groupId ->
+                    navController.navigate("${Routes.Group}/${groupId.bytes.toHex()}") {
+                        // Don't keep create-group on the back stack.
+                        popUpTo(Routes.Main) { inclusive = false }
+                    }
+                },
             )
         }
         composable(Routes.Mailbox) {
@@ -180,6 +228,11 @@ object Routes {
     const val UpdateFromPeer = "update_from_peer"
     const val Mailbox = "mailbox"
     const val MailboxScan = "mailbox_scan"
+    /** Full-screen conversation routes — pushed on top of the
+     *  bottom-nav shell so the nav bar is hidden during chat. */
+    const val Conversation = "conversation"
+    const val Group = "group"
+    const val CreateGroup = "create_group"
 }
 
 private fun String.hexToBytesOrNull(): ByteArray? {
@@ -191,3 +244,5 @@ private fun String.hexToBytesOrNull(): ByteArray? {
         ((hi shl 4) or lo).toByte()
     }
 }
+
+private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }

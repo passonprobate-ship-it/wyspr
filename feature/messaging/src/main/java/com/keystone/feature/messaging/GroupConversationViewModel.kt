@@ -59,6 +59,12 @@ class GroupConversationViewModel @Inject constructor(
     private val _draft = MutableStateFlow("")
     val draft: StateFlow<String> = _draft.asStateFlow()
 
+    /** Group message the user picked to reply to, or null. */
+    private val _replyingTo = MutableStateFlow<GroupMessageEntity?>(null)
+    val replyingTo: StateFlow<GroupMessageEntity?> = _replyingTo.asStateFlow()
+    fun pickReply(message: GroupMessageEntity?) { _replyingTo.value = message }
+    fun cancelReply() { _replyingTo.value = null }
+
     private val _memberListOpen = MutableStateFlow(false)
     val memberListOpen: StateFlow<Boolean> = _memberListOpen.asStateFlow()
 
@@ -188,7 +194,15 @@ class GroupConversationViewModel @Inject constructor(
         val pub = ownPub ?: return
         val trimmed = body.trim()
         if (trimmed.isEmpty()) return
+        val replyTarget = _replyingTo.value
+        val outgoing = if (replyTarget != null) {
+            com.keystone.feature.messaging.reply.ReplyPayload.encode(
+                replyToId = replyTarget.id,
+                body = trimmed,
+            )
+        } else trimmed
         clearDraft()
+        cancelReply()
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -196,7 +210,7 @@ class GroupConversationViewModel @Inject constructor(
                         keystore = keystore,
                         fromPub = PublicKey(pub),
                         groupId = gid,
-                        body = trimmed,
+                        body = outgoing,
                         now = System.currentTimeMillis() / 1000,
                     )
                     database.groupMessageDao.upsert(

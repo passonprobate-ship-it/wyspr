@@ -20,12 +20,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import com.keystone.app.profile.EditProfileScreen
-import com.keystone.app.profile.ViewProfileScreen
+import com.keystone.core.identity.GroupId
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.marketplace.screens.CommunityScreen
-import com.keystone.feature.messaging.MessagingRoot
+import com.keystone.feature.messaging.screens.ConversationListScreen
 
 /**
  * Top-level UI shell with bottom navigation. Replaces the prior tile-
@@ -48,9 +47,13 @@ fun MainShell(
     onOpenFindPeers: () -> Unit,
     onOpenShareApp: () -> Unit,
     onOpenCommunityGraph: () -> Unit,
-    onViewPeerPage: (String) -> Unit,
+    /** Open a 1:1 thread as a full-screen route (covers the bottom nav). */
+    onOpenThread: (PublicKey) -> Unit,
+    /** Open a group thread as a full-screen route. */
+    onOpenGroup: (GroupId) -> Unit,
+    /** Open the create-group screen as a full-screen route. */
+    onCreateGroup: () -> Unit,
     onIdentityReset: () -> Unit,
-    initialChatPeerHex: String? = null,
 ) {
     // rememberSaveable so the tab persists across process death.
     var tab by rememberSaveable { mutableStateOf(Tab.Chats) }
@@ -71,12 +74,14 @@ fun MainShell(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when (tab) {
-                Tab.Chats -> MessagingRoot(
-                    onBack = { /* root tab — no back exit */ },
+                Tab.Chats -> ConversationListScreen(
+                    onOpenThread = onOpenThread,
+                    onOpenGroup = onOpenGroup,
+                    onCreateGroup = onCreateGroup,
+                    // Bottom-nav tab is its own root; no Back button here.
+                    onBack = {},
                     onOpenSettings = { tab = Tab.Settings },
-                    onViewPeerPage = onViewPeerPage,
                     onOpenFindPeers = onOpenFindPeers,
-                    initialChatPeerHex = initialChatPeerHex,
                 )
                 Tab.Community -> CommunityScreen(
                     onBack = { /* root tab */ },

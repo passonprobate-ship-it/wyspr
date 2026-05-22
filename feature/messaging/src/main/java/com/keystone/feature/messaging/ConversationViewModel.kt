@@ -46,6 +46,14 @@ class ConversationViewModel @Inject constructor(
     private val _draft = MutableStateFlow("")
     val draft: StateFlow<String> = _draft.asStateFlow()
 
+    /** Message the user picked to reply to, or null. While non-null the
+     *  composer shows a "quoting X" card and the next send() prepends the
+     *  reply marker so the recipient renders the quote pill. */
+    private val _replyingTo = MutableStateFlow<MessageEntity?>(null)
+    val replyingTo: StateFlow<MessageEntity?> = _replyingTo.asStateFlow()
+    fun pickReply(message: MessageEntity?) { _replyingTo.value = message }
+    fun cancelReply() { _replyingTo.value = null }
+
     /** Modal state — title-bar tap shows the peer-detail sheet, rename
      *  shows the rename dialog. Both moved off Composable-local
      *  `remember` so they survive screen rotation. */
@@ -176,13 +184,27 @@ class ConversationViewModel @Inject constructor(
         val peer = peerPub ?: return
         val trimmed = body.trim()
         if (trimmed.isEmpty()) return
-        // Clear the draft before the suspending DB write so a slow
-        // backend can't show stale text in the composer.
+        // If the user picked a message to reply to, wrap the body in
+        // the reply marker. Receivers detect the prefix and render a
+        // quote pill above the bubble (degrades to plain text on old
+        // clients — the marker is part of the signed body, so wire
+        // integrity is preserved either way).
+        val replyTarget = _replyingTo.value
+        val outgoing = if (replyTarget != null) {
+            com.keystone.feature.messaging.reply.ReplyPayload.encode(
+                replyToId = replyTarget.id,
+                body = trimmed,
+            )
+        } else trimmed
+        // Clear the draft + reply-target before the suspending DB
+        // write so a slow backend can't show stale state in the
+        // composer.
         clearDraft()
+        cancelReply()
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 runCatching {
-                    messageStore.send(toPub = PublicKey(peer), body = trimmed)
+                    messageStore.send(toPub = PublicKey(peer), body = outgoing)
                 }
             }
         }

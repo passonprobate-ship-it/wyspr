@@ -75,9 +75,16 @@ import com.keystone.core.identity.PublicKey
 import com.keystone.feature.messaging.ConversationViewModel
 import com.keystone.feature.messaging.image.ImageBubble
 import com.keystone.feature.messaging.image.ImagePayload
+import androidx.compose.foundation.background
+import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clip
 import com.keystone.feature.messaging.location.LocationPayload
 import java.text.DateFormat
 import java.util.Date
+import kotlinx.coroutines.launch
 
 // Cached once at class-load time. DateFormat is thread-safe enough for
 // read-only `format()` usage here; previously this allocated a fresh
@@ -93,6 +100,7 @@ fun ConversationScreen(
     viewModel: ConversationViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(peer.bytes.contentHashCode()) { viewModel.bind(peer) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val state by viewModel.state.collectAsStateWithLifecycle()
     // Draft + rename modal state live on the VM so they survive
     // configuration changes and navigation away (e.g., tap-to-rename
@@ -172,6 +180,15 @@ fun ConversationScreen(
                             EmptyThread()
                         } else {
                             val ownBytes = s.own?.bytes
+                            // Build a lookup once per emission so each
+                            // bubble can resolve the message it's replying
+                            // to in O(1). Hoisted OUT of LazyColumn because
+                            // LazyListScope content isn't a Composable scope.
+                            val byId = remember(s.messages) {
+                                s.messages.associateBy {
+                                    com.keystone.core.identity.PeerKey(it.id)
+                                }
+                            }
                             LazyColumn(
                                 state = listState,
                                 modifier = Modifier
@@ -181,9 +198,25 @@ fun ConversationScreen(
                                 contentPadding = PaddingValues(vertical = 8.dp),
                             ) {
                                 items(s.messages, key = { it.id.contentHashCode() }) { msg ->
+                                    val decoded = com.keystone.feature.messaging.reply.ReplyPayload.decode(msg.body)
+                                    val quoted = decoded?.replyToId?.let { id ->
+                                        byId[com.keystone.core.identity.PeerKey(id)]
+                                    }
+                                    val ownBytesNN = ownBytes
                                     MessageBubble(
                                         msg = msg,
-                                        fromSelf = ownBytes?.contentEquals(msg.fromPub) == true,
+                                        fromSelf = ownBytesNN?.contentEquals(msg.fromPub) == true,
+                                        quoted = quoted,
+                                        quotedFromSelf = quoted != null
+                                            && ownBytesNN != null
+                                            && quoted.fromPub.contentEquals(ownBytesNN),
+                                        onReply = { viewModel.pickReply(msg) },
+                                        onScrollToQuoted = { id ->
+                                            val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
+                                            if (idx >= 0) {
+                                                scope.launch { listState.animateScrollToItem(idx) }
+                                            }
+                                        },
                                     )
                                 }
                             }
@@ -198,6 +231,15 @@ fun ConversationScreen(
             }
             val sharePhoto = rememberPhotoShareController { jpegBytes ->
                 viewModel.sendImage(jpegBytes)
+            }
+            val replyingTo by viewModel.replyingTo.collectAsStateWithLifecycle()
+            replyingTo?.let { target ->
+                val ownBytes = (state as? ConversationViewModel.UiState.Ready)?.own?.bytes
+                ReplyComposerCard(
+                    target = target,
+                    targetFromSelf = ownBytes?.contentEquals(target.fromPub) == true,
+                    onCancel = viewModel::cancelReply,
+                )
             }
             ComposerRow(
                 draft = draft,
@@ -487,12 +529,24 @@ private fun statusFor(status: String): StatusGlyph = when (status) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
+private fun MessageBubble(
+    msg: MessageEntity,
+    fromSelf: Boolean,
+    quoted: MessageEntity? = null,
+    quotedFromSelf: Boolean = false,
+    onReply: () -> Unit = {},
+    onScrollToQuoted: (ByteArray) -> Unit = {},
+) {
     val clipboard = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     var menuOpen by remember { mutableStateOf(false) }
-    val isImage = ImagePayload.isImage(msg.body)
-    val isJumboEmoji = !isImage && msg.body.isJumboEmoji()
+    // If the body carries a reply marker, peel it off so the bubble
+    // renders the inner text only — the quoted snippet shows above.
+    val displayBody = remember(msg.body) {
+        com.keystone.feature.messaging.reply.ReplyPayload.decode(msg.body)?.body ?: msg.body
+    }
+    val isImage = ImagePayload.isImage(displayBody)
+    val isJumboEmoji = !isImage && displayBody.isJumboEmoji()
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (fromSelf) Arrangement.End else Arrangement.Start,
@@ -527,12 +581,22 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                 onDismissRequest = { menuOpen = false },
             ) {
                 DropdownMenuItem(
+                    text = { Text("Reply") },
+                    leadingIcon = {
+                        Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = null)
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onReply()
+                    },
+                )
+                DropdownMenuItem(
                     text = { Text("Copy") },
                     leadingIcon = {
                         Icon(Icons.Filled.ContentCopy, contentDescription = null)
                     },
                     onClick = {
-                        clipboard.setText(AnnotatedString(msg.body))
+                        clipboard.setText(AnnotatedString(displayBody))
                         menuOpen = false
                     },
                 )
@@ -544,9 +608,17 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                 ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                val loc = LocationPayload.decode(msg.body)
+                if (quoted != null) {
+                    QuotedSnippet(
+                        quoted = quoted,
+                        quotedFromSelf = quotedFromSelf,
+                        onTap = { onScrollToQuoted(quoted.id) },
+                        bubbleFromSelf = fromSelf,
+                    )
+                }
+                val loc = LocationPayload.decode(displayBody)
                 when {
-                    isImage -> ImageBubble(body = msg.body, cacheKey = msg.id.contentHashCode())
+                    isImage -> ImageBubble(body = displayBody, cacheKey = msg.id.contentHashCode())
                     loc != null -> LocationCard(
                         lat = loc.lat,
                         lng = loc.lng,
@@ -554,7 +626,7 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                         fromSelf = fromSelf,
                     )
                     else -> Text(
-                        msg.body,
+                        displayBody,
                         style = if (isJumboEmoji) MaterialTheme.typography.displaySmall
                         else MaterialTheme.typography.bodyMedium,
                         color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
@@ -586,6 +658,124 @@ private fun MessageBubble(msg: MessageEntity, fromSelf: Boolean) {
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Quoted-snippet pill rendered at the top of a reply bubble. WhatsApp's
+ * signature pattern: an accent bar on the left, a small sender label,
+ * and a single-line preview of the quoted message. Tapping scrolls the
+ * list to the original message.
+ */
+@Composable
+private fun QuotedSnippet(
+    quoted: MessageEntity,
+    quotedFromSelf: Boolean,
+    onTap: () -> Unit,
+    bubbleFromSelf: Boolean,
+) {
+    val accent = if (bubbleFromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+    else MaterialTheme.colorScheme.primary
+    val container = if (bubbleFromSelf)
+        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.10f)
+    else MaterialTheme.colorScheme.surface
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(container)
+            .clickable(onClick = onTap),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .background(accent)
+                .width(3.dp)
+                .heightIn(min = 32.dp),
+        )
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .weight(1f),
+        ) {
+            Text(
+                if (quotedFromSelf) "You" else "Reply",
+                style = MaterialTheme.typography.labelSmall,
+                color = accent,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Text(
+                quotedPreview(quoted.body),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (bubbleFromSelf) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** Short single-line preview of [body] for the quote pill. Strips
+ *  reply markers (nested replies just show the inner text) and
+ *  substitutes friendly labels for tagged-body markers. */
+private fun quotedPreview(body: String): String {
+    val unwrapped = com.keystone.feature.messaging.reply.ReplyPayload.decode(body)?.body ?: body
+    return when {
+        unwrapped.startsWith("keystone:loc:") -> "📍 Location"
+        ImagePayload.isImage(unwrapped) -> "📷 Photo"
+        else -> unwrapped.take(80)
+    }
+}
+
+/**
+ * "Replying to X" card pinned above the composer. Shown while the
+ * user has a reply target selected. The X button cancels the
+ * reply and returns the composer to plain mode.
+ */
+@Composable
+private fun ReplyComposerCard(
+    target: MessageEntity,
+    targetFromSelf: Boolean,
+    onCancel: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.primary)
+                .width(3.dp)
+                .heightIn(min = 32.dp),
+        )
+        Column(
+            modifier = Modifier
+                .padding(start = 10.dp)
+                .weight(1f),
+        ) {
+            Text(
+                if (targetFromSelf) "Replying to yourself" else "Replying",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            Text(
+                quotedPreview(target.body),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onCancel) {
+            Icon(Icons.Filled.Close, contentDescription = "Cancel reply")
         }
     }
 }
