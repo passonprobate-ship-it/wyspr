@@ -141,10 +141,28 @@ class BleTransport(private val context: Context) : Transport {
             acceptedLinks = acceptedLinks,
         )
 
+        // Dedup advertisements so a single nearby peer doesn't flood
+        // the discovered SharedFlow buffer with ~10 emissions/sec.
+        // Pre-fix, ALL_MATCHES mode emitted on every advert; the
+        // buffer of 64 saturated within seconds of a single peer
+        // showing up.
+        val seenAddresses = java.util.Collections.newSetFromMap(
+            ConcurrentHashMap<String, Boolean>(),
+        )
         val scanCallback = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
+                // MATCH_LOST is the only callback type that means
+                // "previously seen, now gone." We don't act on it but
+                // we do want to forget the address so a re-arrival
+                // emits a fresh discovery.
+                if (callbackType == ScanSettings.CALLBACK_TYPE_MATCH_LOST) {
+                    val addr = result.device?.address
+                    if (addr != null) seenAddresses.remove(addr)
+                    return
+                }
                 val device = result.device ?: return
                 val address = device.address ?: return
+                if (!seenAddresses.add(address)) return  // already emitted
                 Log.d(TAG, "scan: discovered peer $address")
                 discovered.tryEmit(PeerEndpoint(Transport.Kind.BluetoothLe, address))
             }

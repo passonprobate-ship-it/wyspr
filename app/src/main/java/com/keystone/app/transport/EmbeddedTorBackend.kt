@@ -74,7 +74,14 @@ class EmbeddedTorBackend(
     private var runtime: TorRuntime? = null
 
     override suspend fun start(): Unit = startMutex.withLock {
-        if (runtime != null) return
+        // If a previous start() set runtime but then failed (state ==
+        // Failed), allow a retry to rebuild the runtime — otherwise
+        // the UI's manual "try again" sat permanently no-opped because
+        // `runtime != null` short-circuited.
+        if (runtime != null && _state.value !is TorBackend.State.Failed) return
+        if (_state.value is TorBackend.State.Failed) {
+            runtime = null
+        }
 
         // The HS-key derivation reads the keystore-wrapped seed. If the
         // wrapping key is biometric-bound and the user hasn't unlocked

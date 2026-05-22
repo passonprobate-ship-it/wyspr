@@ -107,6 +107,15 @@ class MailboxHost @Inject constructor(
             Log.i(TAG, "evict: dropping ${evictIds.size} oldest rows to make room")
         }
 
+        // Clamp the sender-supplied createdAt to a sane window around
+        // host-now. Without this clamp a malicious sender could set
+        // `createdAt = Long.MAX_VALUE`, polluting the recipient's pull
+        // cursor so subsequent legitimate envelopes are skipped (we
+        // index by created_at). The clamp keeps the ordering invariant
+        // intact while accepting normal clock drift.
+        val clampedCreatedAt = envelope.createdAt
+            .coerceAtLeast(now - CREATED_AT_MAX_PAST_SECONDS)
+            .coerceAtMost(now + CREATED_AT_MAX_FUTURE_SECONDS)
         val entity = MailboxStoredEntity(
             envelopeId = envelope.id,
             toPub = envelope.toPub.bytes,
@@ -114,7 +123,7 @@ class MailboxHost @Inject constructor(
             ciphertext = envelope.ciphertext,
             signature = envelope.signature,
             sizeBytes = incomingSize,
-            createdAt = envelope.createdAt,
+            createdAt = clampedCreatedAt,
             expiresAt = now + retentionSeconds,
         )
         // Single Room transaction so two concurrent pushes can't both
@@ -220,6 +229,15 @@ class MailboxHost @Inject constructor(
 
     private suspend fun isInCommunity(peerPub: PublicKey): Boolean {
         val graph = trustGraphService.snapshot() ?: return false
+        // A revoked peer's edges still exist on disk; only their
+        // TrustLevel changes. Pass them through the level check so a
+        // quarantined identity can't push/pull mail.
+        val level = graph.trustLevel(peerPub)
+        if (level == com.keystone.core.trust.TrustLevel.Unknown ||
+            level == com.keystone.core.trust.TrustLevel.Quarantined
+        ) {
+            return false
+        }
         return graph.snapshot().edges.any { edge ->
             edge.from.bytes.contentEquals(peerPub.bytes) ||
                 edge.to.bytes.contentEquals(peerPub.bytes)
@@ -246,6 +264,10 @@ class MailboxHost @Inject constructor(
 
     private companion object {
         const val TAG = "MailboxHost"
+        /** How far in the past the sender's clock may be vs ours. */
+        const val CREATED_AT_MAX_PAST_SECONDS: Long = 365L * 24 * 60 * 60
+        /** How far in the future the sender's clock may be vs ours. */
+        const val CREATED_AT_MAX_FUTURE_SECONDS: Long = 60L * 60
         fun PublicKey.shortHex(): String =
             bytes.take(4).joinToString("") { "%02x".format(it) } + "…"
     }

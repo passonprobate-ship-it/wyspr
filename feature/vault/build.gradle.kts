@@ -1,8 +1,6 @@
 plugins {
     id("com.android.library")
     id("org.jetbrains.kotlin.android")
-    id("com.google.dagger.hilt.android")
-    id("com.google.devtools.ksp")
 }
 
 android {
@@ -20,12 +18,8 @@ android {
 
 dependencies {
     implementation(project(":core:ui"))
-    implementation(project(":core:trust"))
-    implementation(project(":core:sync"))
-    implementation(project(":core:database"))
-
-    implementation("androidx.navigation:navigation-compose:2.7.7")
-    implementation("androidx.hilt:hilt-navigation-compose:1.1.0")
-    implementation("com.google.dagger:hilt-android:2.50")
-    ksp("com.google.dagger:hilt-android-compiler:2.50")
+    // Hilt + KSP intentionally absent — this module is a placeholder
+    // with no @Inject sites. Wire them back in alongside the first
+    // real DI client. Until then, skipping KSP saves a full annotation-
+    // processing round per build.
 }

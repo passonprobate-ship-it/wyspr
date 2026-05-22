@@ -2,6 +2,9 @@ package com.keystone.core.ui.settings
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,8 +25,31 @@ import kotlinx.coroutines.flow.asStateFlow
  */
 class MailboxSettings(context: Context) {
 
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = openPrefs(context)
+
+    private fun openPrefs(context: Context): SharedPreferences {
+        // Encrypted prefs back the mailbox settings so the
+        // "I am a mailbox host" flag isn't forensically discoverable
+        // on plain disk. Falls back to plaintext only if the security
+        // library can't initialise (e.g. keystore corruption on a
+        // factory-reset device) — preference data is non-secret in
+        // the worst case, just opportunistically encrypted.
+        return runCatching {
+            val masterKey = MasterKey.Builder(context, MasterKey.DEFAULT_MASTER_KEY_ALIAS)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                context,
+                PREFS_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            )
+        }.getOrElse { t ->
+            Log.w(TAG, "encrypted prefs unavailable; falling back to plain", t)
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        }
+    }
 
     private val _hostEnabled = MutableStateFlow(prefs.getBoolean(KEY_HOST, false))
     val hostEnabled: StateFlow<Boolean> = _hostEnabled.asStateFlow()
@@ -51,5 +77,6 @@ class MailboxSettings(context: Context) {
         private const val PREFS_NAME = "keystone.mailbox.v1"
         private const val KEY_HOST = "host_enabled"
         private const val KEY_CAP = "storage_cap_bytes"
+        private const val TAG = "MailboxSettings"
     }
 }

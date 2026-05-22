@@ -170,29 +170,71 @@ internal class BleLink(
  * [BleLink]'s drainer coroutine.
  */
 internal class BleLinkAssembler {
-    private val buffer = ArrayDeque<Byte>()
+    // Primitive byte buffer — boxed `Byte` in an ArrayDeque allocated
+    // box objects per incoming byte, which dominated reassembly cost
+    // on the 13KB Push frames the photo path generates.
+    //
+    // Layout: [readPos, writePos) holds unread bytes. We compact when
+    // readPos > 0 and the tail is at capacity. Sized to one peer's
+    // worst-case in-flight (one 16KB frame + chunk overhead).
+    private var buf = ByteArray(MAX_FRAME_BYTES + 256)
+    private var readPos = 0
+    private var writePos = 0
     private val pending = mutableListOf<ByteArray>()
+
+    private fun ensureRoom(addBytes: Int) {
+        val needed = writePos + addBytes
+        if (needed <= buf.size) return
+        // Try compaction first.
+        if (readPos > 0) {
+            val live = writePos - readPos
+            System.arraycopy(buf, readPos, buf, 0, live)
+            writePos = live
+            readPos = 0
+            if (writePos + addBytes <= buf.size) return
+        }
+        // Grow up to MAX_FRAME_BYTES * 2 — anything past that is a
+        // peer misbehaving, the frame-length require() below will
+        // catch it.
+        val newSize = (buf.size * 2).coerceAtMost(MAX_FRAME_BYTES * 2 + 256)
+        require(newSize >= writePos + addBytes) {
+            "reassembly buffer exhausted: writing $addBytes into ${buf.size - writePos}"
+        }
+        buf = buf.copyOf(newSize)
+    }
 
     fun feed(chunk: ByteArray): List<ByteArray> {
         pending.clear()
-        for (b in chunk) buffer.addLast(b)
+        ensureRoom(chunk.size)
+        System.arraycopy(chunk, 0, buf, writePos, chunk.size)
+        writePos += chunk.size
 
         while (true) {
-            if (buffer.size < 2) break
-            val hi = (buffer[0].toInt() and 0xFF)
-            val lo = (buffer[1].toInt() and 0xFF)
+            val live = writePos - readPos
+            if (live < 2) break
+            val hi = buf[readPos].toInt() and 0xFF
+            val lo = buf[readPos + 1].toInt() and 0xFF
             val frameLen = (hi shl 8) or lo
-            require(frameLen <= BleLink.MAX_FRAME_BYTES) {
+            require(frameLen <= MAX_FRAME_BYTES) {
                 "incoming frame length $frameLen exceeds MAX_FRAME_BYTES"
             }
-            if (buffer.size < 2 + frameLen) break
-            // pull off header + frame
-            buffer.removeFirst(); buffer.removeFirst()
+            if (live < 2 + frameLen) break
             val frame = ByteArray(frameLen)
-            for (i in 0 until frameLen) frame[i] = buffer.removeFirst()
+            System.arraycopy(buf, readPos + 2, frame, 0, frameLen)
+            readPos += 2 + frameLen
             pending.add(frame)
         }
+        // Once everything is consumed, reset to the start so we don't
+        // grow the buffer indefinitely under steady traffic.
+        if (readPos == writePos) {
+            readPos = 0
+            writePos = 0
+        }
         return pending.toList()
+    }
+
+    private companion object {
+        const val MAX_FRAME_BYTES: Int = BleLink.MAX_FRAME_BYTES
     }
 }
 

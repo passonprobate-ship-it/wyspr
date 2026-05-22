@@ -30,4 +30,8 @@ dependencies {
     // modules don't each pull it in. Scanning needs zxing-android-embedded;
     // that lives in feature:onboarding because it pulls in camera deps.
     api("com.google.zxing:core:3.5.3")
+    // Encrypted SharedPreferences — used by MailboxSettings so the
+    // "I am a mailbox host" flag isn't forensically discoverable on
+    // plain disk.
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 }

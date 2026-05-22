@@ -475,9 +475,17 @@ class MessageSyncService @Inject constructor(
                 peerPub = peerPub.bytes,
                 senderFingerprint = peerPub.fingerprint.toString(),
                 count = unread.coerceAtLeast(1),
-                preview = recent.body.take(NOTIFICATION_PREVIEW_CHARS),
+                preview = formatPreview(recent.body),
             )
         }
+    }
+
+    /** Substitute friendly labels for tagged-body markers so a lock-
+     *  screen preview doesn't show raw `keystone:loc:...` / `keystone:img:...`. */
+    private fun formatPreview(body: String): String {
+        if (body.startsWith("keystone:loc:")) return "Location shared"
+        if (body.startsWith("keystone:img:")) return "Photo"
+        return body.take(NOTIFICATION_PREVIEW_CHARS)
     }
 
     /**

@@ -99,8 +99,18 @@ class HandshakeQr(
 
     val fingerprint: Fingerprint get() = identityPub.fingerprint
 
-    fun isFresh(nowSeconds: Long, maxAgeSeconds: Long = MAX_AGE_SECONDS): Boolean =
-        nowSeconds - mintedAt in 0..maxAgeSeconds
+    fun isFresh(
+        nowSeconds: Long,
+        maxAgeSeconds: Long = MAX_AGE_SECONDS,
+        clockSkewSeconds: Long = DEFAULT_CLOCK_SKEW_SECONDS,
+    ): Boolean {
+        // Two-sided tolerance: the peer's clock can be a bit ahead of
+        // ours and their fresh QR will still verify. Cert verification
+        // already does this; without it here, a peer 1s ahead of NTP
+        // produces a "stale" QR on first scan.
+        val age = nowSeconds - mintedAt
+        return age in -clockSkewSeconds..maxAgeSeconds
+    }
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

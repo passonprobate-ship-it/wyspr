@@ -41,8 +41,6 @@ object Cbor {
     private const val AI_FOLLOW_4: Int = 26
     private const val AI_FOLLOW_8: Int = 27
     private const val SIMPLE_NULL: Int = 22
-    private const val SIMPLE_FALSE: Int = 20
-    private const val SIMPLE_TRUE: Int = 21
 
     // --------------------------------------------------------------------
     // Encoder
@@ -68,10 +66,6 @@ object Cbor {
 
         fun nullValue(): Writer = apply {
             out.write((MT_PRIMITIVE shl 5) or SIMPLE_NULL)
-        }
-
-        fun bool(value: Boolean): Writer = apply {
-            out.write((MT_PRIMITIVE shl 5) or if (value) SIMPLE_TRUE else SIMPLE_FALSE)
         }
 
         fun toByteArray(): ByteArray = out.toByteArray()
@@ -149,17 +143,6 @@ object Cbor {
             val len = readLength(head and 0x1F)
             require(len in 0..Int.MAX_VALUE.toLong()) { "array length out of range" }
             return len.toInt()
-        }
-
-        fun bool(): Boolean {
-            val head = readByte()
-            val majorType = (head ushr 5) and 0x7
-            require(majorType == MT_PRIMITIVE) { "Expected primitive, got major type $majorType" }
-            return when (head and 0x1F) {
-                SIMPLE_TRUE -> true
-                SIMPLE_FALSE -> false
-                else -> error("Expected bool, got simple value ${head and 0x1F}")
-            }
         }
 
         private fun readByte(): Int {
