@@ -124,10 +124,7 @@ dependencies {
     implementation(project(":core:currency"))
 
     implementation(project(":feature:onboarding"))
-    implementation(project(":feature:vault"))
     implementation(project(":feature:marketplace"))
-    implementation(project(":feature:coordination"))
-    implementation(project(":feature:directory"))
     implementation(project(":feature:messaging"))
     implementation(project(":feature:monero-wallet"))
 

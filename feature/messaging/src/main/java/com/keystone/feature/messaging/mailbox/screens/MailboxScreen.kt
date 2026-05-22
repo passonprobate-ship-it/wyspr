@@ -32,7 +32,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -346,6 +348,7 @@ private fun QrCard(payload: String) {
 
 @Composable
 private fun PurgeCard(running: Boolean, onPurge: () -> Unit) {
+    var confirmOpen by remember { mutableStateOf(false) }
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -354,10 +357,37 @@ private fun PurgeCard(running: Boolean, onPurge: () -> Unit) {
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Stored messages will be deleted permanently.", style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = onPurge, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { confirmOpen = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Text(if (running) "Purge held messages" else "Clear remaining storage")
             }
         }
+    }
+    if (confirmOpen) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmOpen = false },
+            title = { Text("Purge held messages?") },
+            text = {
+                Text(
+                    "Every sealed envelope this device is holding for community " +
+                        "members will be deleted. Recipients who haven't fetched " +
+                        "yet will need senders to re-send. This cannot be undone.",
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    confirmOpen = false
+                    onPurge()
+                }) { Text("Purge") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmOpen = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 
