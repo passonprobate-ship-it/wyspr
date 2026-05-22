@@ -121,8 +121,8 @@ fun AppSettingsScreen(
             HorizontalDivider()
             LinkRow(
                 icon = Icons.Filled.Bluetooth,
-                title = "Find peers",
-                subtitle = "Scan for nearby Keystone devices over BLE",
+                title = "Pair a new peer",
+                subtitle = "Scan QR codes in person to start a trusted chat",
                 onClick = onOpenFindPeers,
             )
 

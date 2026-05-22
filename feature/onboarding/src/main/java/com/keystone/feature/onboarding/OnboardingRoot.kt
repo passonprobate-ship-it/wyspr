@@ -45,6 +45,14 @@ fun OnboardingRoot(
      * for unit + preview composition.
      */
     blePermissionGate: suspend () -> Boolean = { true },
+    /**
+     * When true, force the flow back to RolePicker even if the user
+     * has already paired before. This is the "Pair a new peer" CTA's
+     * entry point — re-uses the same QR/scan/handshake flow to add
+     * an additional trust edge. Default false matches first-launch
+     * onboarding semantics: returning users skip to the main app.
+     */
+    startFresh: Boolean = false,
 ) {
     // onFindPeers is wired to the app-level Discovery route but the
     // onboarding flow now drives its own scan in-flow via the Pair
@@ -79,7 +87,12 @@ fun OnboardingRoot(
         }
 
         OnboardingViewModel.UiState.AlreadyOnboarded -> {
-            LaunchedEffect(Unit) { onContinueToWallet() }
+            // Re-entry from "Pair a new peer" forces back to RolePicker;
+            // first-launch path bounces straight to the main app.
+            LaunchedEffect(Unit) {
+                if (startFresh) viewModel.beginNewPairing()
+                else onContinueToWallet()
+            }
         }
 
         OnboardingViewModel.UiState.RolePicker ->

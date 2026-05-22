@@ -356,7 +356,7 @@ private fun ComposerRow(
         OutlinedTextField(
             value = draft,
             onValueChange = onDraftChange,
-            placeholder = { Text("Type a private message…") },
+            placeholder = { Text("Type a message…") },
             modifier = Modifier.weight(1f),
             maxLines = 4,
             shape = RoundedCornerShape(20.dp),

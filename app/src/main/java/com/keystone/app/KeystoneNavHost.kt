@@ -100,7 +100,7 @@ fun KeystoneNavHost(
                 onOpenMailbox = { navController.navigate(Routes.Mailbox) },
                 onOpenMyPage = { navController.navigate(Routes.MyPage) },
                 onOpenWallet = { navController.navigate(Routes.Marketplace) },
-                onOpenFindPeers = { navController.navigate(Routes.Discovery) },
+                onOpenFindPeers = { navController.navigate(Routes.PairPeer) },
                 onOpenShareApp = { navController.navigate(Routes.ShareApp) },
                 onOpenCommunityGraph = { navController.navigate(Routes.MyCommunityGraph) },
                 onOpenThread = { peer ->
@@ -183,6 +183,21 @@ fun KeystoneNavHost(
         composable(Routes.Discovery) {
             DiscoveryScreen(onBack = { navController.popBackStack() })
         }
+        composable(Routes.PairPeer) {
+            // Re-entrant QR handshake flow for adding a new peer
+            // after onboarding. Mounts OnboardingRoot with startFresh
+            // so AlreadyOnboarded routes back into RolePicker instead
+            // of bouncing to Main. The whole RolePicker → Pair →
+            // Compare → Run → Result path is reused unchanged.
+            val blePermissionGate = rememberBlePermissionGate()
+            OnboardingRoot(
+                onContinueToWallet = { navController.popBackStack() },
+                onFindPeers = { /* not used from this entry */ },
+                biometricPrompt = biometricPrompt,
+                blePermissionGate = blePermissionGate,
+                startFresh = true,
+            )
+        }
         composable(Routes.Marketplace) {
             MarketplaceRoot(
                 biometricPrompt = biometricPrompt,
@@ -220,6 +235,8 @@ object Routes {
     /** Post-onboarding root — bottom-nav shell. */
     const val Main = "main"
     const val Discovery = "discovery"
+    /** Re-entrant QR-handshake flow for adding a new peer after onboarding. */
+    const val PairPeer = "pair_peer"
     const val Marketplace = "marketplace"
     const val MyCommunityGraph = "my_community_graph"
     const val MyPage = "my_page"

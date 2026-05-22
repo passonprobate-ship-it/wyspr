@@ -96,6 +96,23 @@ class OnboardingViewModel @Inject constructor(
         _state.value = UiState.KeyGeneration(KeyGenStatus.Pending)
     }
 
+    /**
+     * Re-enter the pairing flow from a re-pair entry point (the "Pair
+     * a new peer" CTA after first onboarding). The init block routes
+     * existing users to [UiState.AlreadyOnboarded] so they don't see
+     * onboarding twice; this method walks them BACK into the
+     * RolePicker so they can add another peer.
+     *
+     * Idempotent — calling it during the active flow is a no-op
+     * unless we're at [UiState.AlreadyOnboarded].
+     */
+    fun beginNewPairing() {
+        if (_state.value is UiState.AlreadyOnboarded || _state.value is UiState.Booting) {
+            _role.value = null
+            _state.value = UiState.RolePicker
+        }
+    }
+
     fun back() {
         _state.value = when (val s = state.value) {
             // Booting and AlreadyOnboarded aren't user-interactive

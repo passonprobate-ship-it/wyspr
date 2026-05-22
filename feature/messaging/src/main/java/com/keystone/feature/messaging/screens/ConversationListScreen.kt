@@ -210,8 +210,8 @@ private fun NewConversationSheet(
             )
             SheetAction(
                 icon = Icons.Filled.Bluetooth,
-                title = "Find peers",
-                subtitle = "Scan for nearby Keystone devices to pair",
+                title = "Pair a new peer",
+                subtitle = "Scan QR codes in person to start a trusted chat",
                 onClick = onFindPeers,
             )
         }
@@ -291,7 +291,7 @@ private fun EmptyPanel(onOpenFindPeers: () -> Unit) {
             ExtendedFloatingActionButton(
                 onClick = onOpenFindPeers,
                 icon = { Icon(Icons.Filled.Bluetooth, contentDescription = null) },
-                text = { Text("Find a peer") },
+                text = { Text("Pair a peer") },
                 containerColor = MaterialTheme.colorScheme.primary,
             )
         }
