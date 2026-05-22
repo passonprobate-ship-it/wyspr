@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -127,9 +128,17 @@ class ConversationListViewModel @Inject constructor(
                 database.groupDao.allFlow(),
             ) { latest1to1, latestGroup, contacts, groups ->
                 Quad(latest1to1, latestGroup, contacts, groups)
-            }.collectLatest { (latest1to1, latestGroup, contacts, groups) ->
-                _state.value = project(own, peers, latest1to1, latestGroup, contacts, groups)
             }
+                // Run `project()` off the main thread — it does Map
+                // construction, ByteArray→List<Byte> conversions for
+                // hash equality, and sorts across every thread. Four
+                // upstream flows emit frequently; doing this on Main
+                // showed up as the hottest non-UI path in the
+                // ConversationList draw pipeline.
+                .flowOn(Dispatchers.Default)
+                .collectLatest { (latest1to1, latestGroup, contacts, groups) ->
+                    _state.value = project(own, peers, latest1to1, latestGroup, contacts, groups)
+                }
         }
     }
 

@@ -198,6 +198,18 @@ private class RealSession(
     override suspend fun run(): HandshakeSession.Outcome {
         if (cancelled) return abort(HandshakeSession.AbortReason.UserCancelled)
 
+        // Quarantine gate (SECURITY-MODEL.md §3.3). After a previous
+        // abort against this peer we refuse to engage for 24h — the
+        // peer must wait the cooldown or reset their identity. The
+        // sweep is best-effort: a stale row that's already past its
+        // deadline is harmless because isQuarantined checks "until >
+        // now".
+        database.open()
+        if (database.handshakeQuarantineDao.isQuarantined(peerQr.identityPub.bytes, clock())) {
+            Log.w(TAG_HS, "open: peer is quarantined; refusing handshake")
+            return abort(HandshakeSession.AbortReason.PeerQuarantined)
+        }
+
         // Inviter-side authorization gate. Consult the local trust
         // graph before doing any I/O — if this device is not allowed
         // to mint a fresh InvitationCertificate, fail fast with
@@ -375,6 +387,35 @@ private class RealSession(
                         )
                         return abort(HandshakeSession.AbortReason.SignatureInvalid)
                     }
+                    // Cap the validity window — spec says ~24h typical;
+                    // anything wider is almost certainly a misbehaving
+                    // Inviter (or one intentionally minting long-lived
+                    // certs for replay later). MAX_CERT_VALIDITY_SECONDS
+                    // is 48h.
+                    if (cert.expiresAt - cert.issuedAt > MAX_CERT_VALIDITY_SECONDS) {
+                        Log.w(
+                            TAG_HS,
+                            "Invitee: cert validity ${cert.expiresAt - cert.issuedAt}s " +
+                                "exceeds cap $MAX_CERT_VALIDITY_SECONDS",
+                        )
+                        return abort(HandshakeSession.AbortReason.CertificateExpired)
+                    }
+                    // Single-use nonce. SECURITY-MODEL.md §3.2 — a
+                    // stolen cert within validity could otherwise be
+                    // replayed against the same Invitee to rebind a
+                    // TrustEdge whose `peerOnion` an attacker swapped.
+                    // Insert-or-ignore; affected rows == 0 means the
+                    // nonce was already observed.
+                    val markInserted = database.seenCertNonceDao.mark(
+                        com.keystone.core.database.entities.SeenCertNonceEntity(
+                            nonce = cert.nonce,
+                            observedAt = clock(),
+                        ),
+                    )
+                    if (markInserted <= 0L) {
+                        Log.w(TAG_HS, "Invitee: cert nonce already observed; refusing replay")
+                        return abort(HandshakeSession.AbortReason.CertReplayed)
+                    }
                     Log.d(TAG_HS, "Invitee: cert verified ✓, sending ACK")
                     sendFrame(noise.encrypt(byteArrayOf(ACK_OK)))
                     TrustEdge(
@@ -429,8 +470,29 @@ private class RealSession(
         )
     }
 
-    private fun abort(reason: HandshakeSession.AbortReason): HandshakeSession.Outcome.Aborted {
+    private suspend fun abort(reason: HandshakeSession.AbortReason): HandshakeSession.Outcome.Aborted {
         _state.value = HandshakeSession.State.Aborted
+        // SECURITY-MODEL.md §3.3 — record the abort so the peer can't
+        // immediately re-attempt and grind QR mints. Skip for
+        // user-cancelled (no peer misbehaviour) and quarantined (we're
+        // already in the cooldown). PeerQuarantined and UserCancelled
+        // shouldn't write further quarantine rows.
+        val shouldQuarantine = when (reason) {
+            HandshakeSession.AbortReason.UserCancelled,
+            HandshakeSession.AbortReason.PeerQuarantined -> false
+            else -> true
+        }
+        if (shouldQuarantine) {
+            runCatching {
+                database.open()
+                database.handshakeQuarantineDao.upsert(
+                    com.keystone.core.database.entities.HandshakeQuarantineEntity(
+                        peerPub = peerQr.identityPub.bytes,
+                        quarantinedUntil = clock() + QUARANTINE_SECONDS,
+                    ),
+                )
+            }
+        }
         return HandshakeSession.Outcome.Aborted(reason)
     }
 
@@ -467,5 +529,7 @@ private class RealSession(
         const val FRAME_TIMEOUT_MS = 60_000L
         const val ACK_OK: Byte = 0x01
         const val CLOCK_SKEW_SECONDS = 60L
+        /** Post-abort cooldown. SECURITY-MODEL.md §3.3 spec is 24h. */
+        const val QUARANTINE_SECONDS = 24L * 60 * 60
     }
 }

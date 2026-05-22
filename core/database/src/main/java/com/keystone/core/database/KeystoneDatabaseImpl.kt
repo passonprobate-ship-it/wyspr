@@ -59,6 +59,8 @@ class KeystoneDatabaseImpl(
     override val mailboxBindingDao get() = requireOpen().mailboxBindingDao()
     override val mailboxStoredDao get() = requireOpen().mailboxStoredDao()
     override val mailboxPullCursorDao get() = requireOpen().mailboxPullCursorDao()
+    override val handshakeQuarantineDao get() = requireOpen().handshakeQuarantineDao()
+    override val seenCertNonceDao get() = requireOpen().seenCertNonceDao()
 
     override suspend fun open() = openLock.withLock {
         withContext(Dispatchers.IO) {
@@ -90,6 +92,7 @@ class KeystoneDatabaseImpl(
                     MIGRATION_8_9,
                     MIGRATION_9_10,
                     MIGRATION_10_11,
+                    MIGRATION_11_12,
                 )
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
                 .build()

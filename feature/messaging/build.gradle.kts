@@ -49,7 +49,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
-    implementation("androidx.compose.material:material-icons-extended")
+    // material-icons-extended is exposed transitively by `:core:ui` as api().
     implementation("androidx.compose.foundation:foundation")
 
     // CameraX + ZXing for the mailbox QR scanner. Same versions

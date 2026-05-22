@@ -26,32 +26,13 @@ class KeystoneApplication : Application() {
         // key, which must not be unlocked until the user has at least
         // launched the app interactively. See SECURITY-MODEL.md §4.
 
-        // Tor, however, is started eagerly: bootstrap takes 10-60s on a
-        // good network and we want it ready by the time the user finishes
-        // onboarding or opens the Community screen. The keystore-derive
-        // inside torBackend.start() reads only the seed file (no
-        // biometric prompt needed because the wrapping key is unbound
-        // until the user enables biometric lock), so this does not
-        // surface any UI.
-        appScope.launch {
-            try {
-                torBackend.start()
-            } catch (t: Throwable) {
-                Log.w(TAG, "torBackend.start() threw", t)
-            }
-        }
-        // The personal-page HTTP server binds on loopback only; Tor
-        // forwards `<onion>:80` to it. Start eagerly — no key access
-        // here, just a TCP listener. The page renderer reads the DB
-        // lazily on each request and serves a placeholder when the
-        // DB hasn't been unlocked yet.
-        appScope.launch {
-            try {
-                profileHttpServer.start()
-            } catch (t: Throwable) {
-                Log.w(TAG, "profileHttpServer.start() threw", t)
-            }
-        }
+        // Tor + ProfileHttpServer start was previously eager here, but
+        // bootstrap burns 10-60s of CPU + battery on slow devices even
+        // when the user is just opening Settings or About. Both are now
+        // started by MainActivity inside the biometric-gate's unlocked
+        // branch — see MainActivity.LaunchedEffect — so they only spin
+        // up when the user is actually past Welcome. start() is
+        // idempotent on both sides.
     }
 
     private companion object {

@@ -18,6 +18,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.LaunchedEffect
 import com.keystone.app.biometric.BiometricGate
 import com.keystone.app.biometric.BiometricUnlocker
+import com.keystone.app.profile.ProfileHttpServer
 import com.keystone.app.transport.AndroidMessagingNotifier
 import com.keystone.core.transport.TorBackend
 import com.keystone.core.ui.KeystoneTheme
@@ -39,6 +40,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var biometricSettings: BiometricSettings
     @Inject lateinit var biometricUnlocker: BiometricUnlocker
     @Inject lateinit var torBackend: TorBackend
+    @Inject lateinit var profileHttpServer: ProfileHttpServer
 
     // Notification permission request landed in API 33 (Tiramisu). The
     // transport foreground service can run without it — Android just
@@ -81,18 +83,16 @@ class MainActivity : FragmentActivity() {
                     val gateEnabled by biometricSettings.gateEnabled.collectAsStateWithLifecycle()
                     val pendingDeepLink by deepLink.collectAsStateWithLifecycle()
                     BiometricGate(enabled = gateEnabled) {
-                        // Tor bootstrap is also kicked off in
-                        // KeystoneApplication.onCreate, but a
-                        // biometric-bound install will bail there
-                        // (the keystore wrapping key isn't unlocked
-                        // until the user has authenticated). This
-                        // retry runs inside the unlocked branch of
-                        // the gate, so by the time the coroutine
-                        // suspends on keystore access the cipher
-                        // window is already open. start() is
-                        // idempotent.
+                        // Bootstrap Tor + the loopback profile HTTP
+                        // server inside the unlocked branch. Tor used
+                        // to spin up eagerly in
+                        // KeystoneApplication.onCreate, which burned
+                        // 10-60s of CPU + battery on slow devices even
+                        // when the user only opened Settings or About.
+                        // start() is idempotent on both sides.
                         LaunchedEffect(Unit) {
                             runCatching { torBackend.start() }
+                            runCatching { profileHttpServer.start() }
                         }
                         KeystoneNavHost(
                             unlocker = biometricUnlocker,

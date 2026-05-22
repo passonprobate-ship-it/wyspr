@@ -292,6 +292,11 @@ class FakeMessageDao : MessageDao {
 
     override suspend fun byId(id: ByteArray): MessageEntity? = store[IdKey(id)]
 
+    override fun totalUnreadFlow(): Flow<Int> =
+        changeCounter.map {
+            store.values.count { it.status != "read" }
+        }
+
     fun clear() { store.clear(); changeCounter.value = 0 }
 
     private data class PubKey(val pub: ByteArray) {

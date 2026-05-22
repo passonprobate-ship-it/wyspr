@@ -55,7 +55,7 @@ class RevocationSyncRepository(
         }
         return keys.mapNotNull { (issuer, target) ->
             val entity = indexed[RevocationKey(issuer, target)] ?: return@mapNotNull null
-            rebuildWireBytes(entity)
+            rebuildWireBytes(entity)  // null for legacy rows w/o stored community
         }
     }
 
@@ -79,11 +79,23 @@ class RevocationSyncRepository(
         wireCert: ByteArray,
         trustGraph: TrustGraph?,
         sodium: LazySodiumAndroid,
+        nowSeconds: Long = System.currentTimeMillis() / 1000,
     ): Boolean = runCatching {
         val cert = RevocationCertificate.fromWire(wireCert)
 
-        // Verify the Ed25519 signature.
-        if (!cert.verify(sodium)) return false
+        // CRITICAL: reject revocations signed against a different
+        // community. Without this guard, a trusted member of community
+        // A can sign a revocation referencing community B; the sig
+        // verifies, our trust graph accepts the issuer, and the cert
+        // would quarantine the target in B — an unrecoverable cross-
+        // community attack.
+        if (!cert.communityId.bytes.contentEquals(communityId)) return false
+
+        // Verify the Ed25519 signature AND time bounds. Without
+        // bounds, a trusted-then-compromised peer could forge
+        // `issuedAt = Long.MAX_VALUE` revocations that always pass
+        // every other check.
+        if (!cert.verify(sodium, nowSeconds)) return false
 
         // Check issuer trust if a graph is available.
         if (trustGraph != null) {
@@ -93,7 +105,9 @@ class RevocationSyncRepository(
             }
         }
 
-        // Persist to database.
+        // Persist to database — including the originally-signed
+        // communityId so re-broadcast bytes match what the issuer
+        // produced.
         database.revocationDao.upsert(
             RevocationEntity(
                 issuerPub = cert.issuerPub.bytes,
@@ -101,6 +115,7 @@ class RevocationSyncRepository(
                 issuedAt = cert.issuedAt,
                 reasonCode = cert.reasonCode.name,
                 signature = cert.signature,
+                communityId = cert.communityId.bytes,
             )
         )
 
@@ -119,14 +134,19 @@ class RevocationSyncRepository(
      *
      *     [version(1), issuerPub, targetPub, communityId, issuedAt, reasonCode.tag, signature]
      */
-    private fun rebuildWireBytes(entity: RevocationEntity): ByteArray {
+    private fun rebuildWireBytes(entity: RevocationEntity): ByteArray? {
         val reasonCode = RevocationCertificate.ReasonCode.valueOf(entity.reasonCode)
+        // Legacy rows (pre-v12) may have an empty community blob —
+        // refuse to re-broadcast them rather than fabricate bytes the
+        // issuer never signed. They'll be re-synced from a peer that
+        // has the originally-signed form.
+        if (entity.communityId.isEmpty()) return null
         return Cbor.encode {
             arrayHeader(7)
             uint(RevocationCertificate.VERSION.toLong())
             bytes(entity.issuerPub)
             bytes(entity.targetPub)
-            bytes(communityId)
+            bytes(entity.communityId)
             uint(entity.issuedAt)
             uint(reasonCode.tag.toLong())
             bytes(entity.signature)

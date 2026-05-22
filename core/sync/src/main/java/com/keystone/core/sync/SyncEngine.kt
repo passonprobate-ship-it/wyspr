@@ -44,28 +44,55 @@ class SyncEngine(
         val rejected: Int,
     )
 
-    suspend fun runSession(link: Link, community: ByteArray): Result {
-        // Step 1: send our HaveSet
+    /** Asymmetric coordination role — peers agree out-of-band who
+     *  goes first. Existing tests run two engines with opposite roles. */
+    enum class Role { Initiator, Responder }
+
+    /**
+     * One sync round. [role] determines who sends first at each step.
+     * Symmetric send-first (the v0 behaviour) deadlocks on transports
+     * that apply back-pressure to writes — Tor TCP under congestion or
+     * a future Reticulum/LoRa link will block on send(). BLE happens
+     * to be non-blocking with the current per-Link outboundSink
+     * Channel, but relying on that is the same kind of bug the
+     * messaging `exchangeReadReceipts` symmetric-send shape just
+     * surfaced. Role-asymmetric pairs are robust to either transport.
+     */
+    suspend fun runSession(
+        link: Link,
+        community: ByteArray,
+        role: Role = Role.Initiator,
+    ): Result {
         val myHave = repository.haveSet(community)
-        link.sendMessage(SyncMessage.HaveSet(community, myHave))
+        val peerHave: SyncMessage.HaveSet
+        if (role == Role.Initiator) {
+            link.sendMessage(SyncMessage.HaveSet(community, myHave))
+            peerHave = link.receiveMessage<SyncMessage.HaveSet>(community)
+        } else {
+            peerHave = link.receiveMessage<SyncMessage.HaveSet>(community)
+            link.sendMessage(SyncMessage.HaveSet(community, myHave))
+        }
 
-        // Step 2: receive peer's HaveSet
-        val peerHave = link.receiveMessage<SyncMessage.HaveSet>(community)
-
-        // Step 3: send what we want (peer.have − mine)
         val mineSet = myHave.toHashSet()
         val want = peerHave.keys.filter { it !in mineSet }
-        link.sendMessage(SyncMessage.Want(community, want))
+        val peerWant: SyncMessage.Want
+        if (role == Role.Initiator) {
+            link.sendMessage(SyncMessage.Want(community, want))
+            peerWant = link.receiveMessage<SyncMessage.Want>(community)
+        } else {
+            peerWant = link.receiveMessage<SyncMessage.Want>(community)
+            link.sendMessage(SyncMessage.Want(community, want))
+        }
 
-        // Step 4: receive what the peer wants
-        val peerWant = link.receiveMessage<SyncMessage.Want>(community)
-
-        // Step 5: send rows for the keys the peer wants
         val push = repository.envelopesByKeys(community, peerWant.keys)
-        link.sendMessage(SyncMessage.Push(push))
-
-        // Step 6: receive their push, ingest each row
-        val peerPush = link.receiveMessage<SyncMessage.Push>(community = null)
+        val peerPush: SyncMessage.Push
+        if (role == Role.Initiator) {
+            link.sendMessage(SyncMessage.Push(push))
+            peerPush = link.receiveMessage<SyncMessage.Push>(community = null)
+        } else {
+            peerPush = link.receiveMessage<SyncMessage.Push>(community = null)
+            link.sendMessage(SyncMessage.Push(push))
+        }
         var rejected = 0
         for (row in peerPush.rows) {
             // Trust the engine's contract: only rows for `community`. If

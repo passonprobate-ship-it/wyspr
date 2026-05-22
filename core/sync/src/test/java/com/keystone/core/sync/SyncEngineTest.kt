@@ -103,8 +103,8 @@ class SyncEngineTest {
         val link = LinkPair()
 
         val (resultA, resultB) = listOf(
-            async { engineA.runSession(link.a, community) },
-            async { engineB.runSession(link.b, community) },
+            async { engineA.runSession(link.a, community, SyncEngine.Role.Initiator) },
+            async { engineB.runSession(link.b, community, SyncEngine.Role.Responder) },
         ).awaitAll()
 
         // Both repos now hold all three rows.
@@ -134,8 +134,8 @@ class SyncEngineTest {
         val link = LinkPair()
 
         listOf(
-            async { SyncEngine(repoA).runSession(link.a, community) },
-            async { SyncEngine(repoB).runSession(link.b, community) },
+            async { SyncEngine(repoA).runSession(link.a, community, SyncEngine.Role.Initiator) },
+            async { SyncEngine(repoB).runSession(link.b, community, SyncEngine.Role.Responder) },
         ).awaitAll()
 
         assertEquals(2, repoA.rows.size)
@@ -161,8 +161,8 @@ class SyncEngineTest {
         val link = LinkPair()
 
         listOf(
-            async { SyncEngine(repoA).runSession(link.a, community) },
-            async { SyncEngine(repoB).runSession(link.b, community) },
+            async { SyncEngine(repoA).runSession(link.a, community, SyncEngine.Role.Initiator) },
+            async { SyncEngine(repoB).runSession(link.b, community, SyncEngine.Role.Responder) },
         ).awaitAll()
 
         // Repo A stays empty — repo B's row is for a different

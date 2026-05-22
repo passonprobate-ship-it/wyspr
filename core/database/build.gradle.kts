@@ -29,6 +29,12 @@ dependencies {
     implementation("androidx.sqlite:sqlite:2.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
+    // compileOnly so we can annotate entities with @Immutable for
+    // Compose stability inference without pulling Compose into the
+    // runtime classpath. The annotation is a marker only — no Compose
+    // code runs against these entities outside of UI modules that
+    // already have the runtime.
+    compileOnly("androidx.compose.runtime:runtime:1.6.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlin:kotlin-test:1.9.22")

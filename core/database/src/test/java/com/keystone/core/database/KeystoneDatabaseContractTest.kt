@@ -156,6 +156,7 @@ class KeystoneDatabaseContractTest {
                 issuedAt = 2000L,
                 reasonCode = "COMPROMISED",
                 signature = ByteArray(64),
+                communityId = ByteArray(32) { 0x33.toByte() },
             )
         )
         assertEquals(1, db.revocationDao.all().size)

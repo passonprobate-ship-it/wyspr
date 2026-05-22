@@ -182,5 +182,15 @@ interface HandshakeSession {
          * consulted at handshake start decides.
          */
         NotAuthorized,
+        /**
+         * Peer aborted a handshake against us within the last
+         * QUARANTINE_SECONDS (24h by default). SECURITY-MODEL.md §3.3.
+         */
+        PeerQuarantined,
+        /**
+         * Invitation cert nonce has already been observed; replay
+         * refused. SECURITY-MODEL.md §3.2.
+         */
+        CertReplayed,
     }
 }

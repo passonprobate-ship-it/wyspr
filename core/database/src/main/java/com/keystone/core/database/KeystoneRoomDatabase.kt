@@ -11,11 +11,13 @@ import com.keystone.core.database.dao.CurrencyEnvelopeDao
 import com.keystone.core.database.dao.GroupDao
 import com.keystone.core.database.dao.GroupMemberDao
 import com.keystone.core.database.dao.GroupMessageDao
+import com.keystone.core.database.dao.HandshakeQuarantineDao
 import com.keystone.core.database.dao.MailboxBindingDao
 import com.keystone.core.database.dao.MailboxPullCursorDao
 import com.keystone.core.database.dao.MailboxStoredDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.RevocationDao
+import com.keystone.core.database.dao.SeenCertNonceDao
 import com.keystone.core.database.dao.TrustEdgeDao
 import com.keystone.core.database.dao.UserProfileDao
 import com.keystone.core.database.entities.AccountEntity
@@ -25,11 +27,13 @@ import com.keystone.core.database.entities.CurrencyEnvelopeEntity
 import com.keystone.core.database.entities.GroupEntity
 import com.keystone.core.database.entities.GroupMemberEntity
 import com.keystone.core.database.entities.GroupMessageEntity
+import com.keystone.core.database.entities.HandshakeQuarantineEntity
 import com.keystone.core.database.entities.MailboxBindingEntity
 import com.keystone.core.database.entities.MailboxPullCursorEntity
 import com.keystone.core.database.entities.MailboxStoredEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.database.entities.RevocationEntity
+import com.keystone.core.database.entities.SeenCertNonceEntity
 import com.keystone.core.database.entities.TrustEdgeEntity
 import com.keystone.core.database.entities.UserProfileEntity
 
@@ -84,8 +88,10 @@ import com.keystone.core.database.entities.UserProfileEntity
         MailboxBindingEntity::class,
         MailboxStoredEntity::class,
         MailboxPullCursorEntity::class,
+        HandshakeQuarantineEntity::class,
+        SeenCertNonceEntity::class,
     ],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {
@@ -103,6 +109,8 @@ abstract class KeystoneRoomDatabase : RoomDatabase() {
     abstract fun mailboxBindingDao(): MailboxBindingDao
     abstract fun mailboxStoredDao(): MailboxStoredDao
     abstract fun mailboxPullCursorDao(): MailboxPullCursorDao
+    abstract fun handshakeQuarantineDao(): HandshakeQuarantineDao
+    abstract fun seenCertNonceDao(): SeenCertNonceDao
 }
 
 /**
@@ -271,6 +279,39 @@ internal val MIGRATION_10_11 = object : Migration(10, 11) {
                 "`mailbox_pub` BLOB NOT NULL, " +
                 "`since_cursor` INTEGER NOT NULL DEFAULT 0, " +
                 "PRIMARY KEY(`mailbox_pub`))"
+        )
+    }
+}
+
+/**
+ * v11 → v12: revocation gets a `communityId` column AND new tables
+ * for handshake quarantine and single-use cert nonces. Previously
+ * the revocation's community was inferred from the local install at
+ * rebuild time; under that scheme a cert signed against community
+ * X stored on a device claiming community Y would re-broadcast as
+ * invalid bytes. We now persist the originally-signed community
+ * verbatim. Legacy rows are defaulted to a zero-length blob — the
+ * sync ingest path filters those out at startup.
+ *
+ * `handshake_quarantine` and `seen_cert_nonce` are new tables.
+ * Additive, no data changes for them.
+ */
+internal val MIGRATION_11_12 = object : Migration(11, 12) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE `revocation` ADD COLUMN `communityId` BLOB NOT NULL DEFAULT x''"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `handshake_quarantine` (" +
+                "`peer_pub` BLOB NOT NULL, " +
+                "`quarantined_until` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`peer_pub`))"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `seen_cert_nonce` (" +
+                "`nonce` BLOB NOT NULL, " +
+                "`observed_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`nonce`))"
         )
     }
 }

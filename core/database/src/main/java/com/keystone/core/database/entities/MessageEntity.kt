@@ -1,5 +1,6 @@
 package com.keystone.core.database.entities
 
+import androidx.compose.runtime.Immutable
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
@@ -37,6 +38,7 @@ import androidx.room.PrimaryKey
         Index(value = ["status"]),
     ],
 )
+@Immutable
 data class MessageEntity(
     @PrimaryKey @ColumnInfo("id") val id: ByteArray,
     @ColumnInfo("thread_pub") val threadPub: ByteArray,

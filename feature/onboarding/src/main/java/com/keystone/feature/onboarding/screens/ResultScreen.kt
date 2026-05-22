@@ -158,6 +158,19 @@ private fun AbortCard(
                 "active community.",
             false,
         )
+        HandshakeSession.AbortReason.PeerQuarantined -> Triple(
+            "Peer is in cooldown",
+            "This peer's previous handshake against you aborted. They are " +
+                "quarantined for 24 hours. Wait the cooldown, then try again " +
+                "with a fresh QR.",
+            false,
+        )
+        HandshakeSession.AbortReason.CertReplayed -> Triple(
+            "Replayed certificate",
+            "The invitation you received was already accepted once on this " +
+                "device. Ask your peer to mint a fresh one.",
+            false,
+        )
     }
 
     Surface(

@@ -63,6 +63,12 @@ data class RevocationEntity(
     @ColumnInfo(name = "issuedAt") val issuedAt: Long,
     @ColumnInfo(name = "reasonCode") val reasonCode: String,
     @ColumnInfo(name = "signature") val signature: ByteArray,
+    /** Community the cert was originally signed against. Stored so
+     *  re-broadcast bytes are byte-identical to the issuer's signed
+     *  form. Defaulted on legacy installs (MIGRATION_11_12 fills it
+     *  with the local community), so a cert signed against another
+     *  community can't sneak in unverifiable. */
+    @ColumnInfo(name = "communityId") val communityId: ByteArray,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -71,7 +77,8 @@ data class RevocationEntity(
             targetPub.contentEquals(other.targetPub) &&
             issuedAt == other.issuedAt &&
             reasonCode == other.reasonCode &&
-            signature.contentEquals(other.signature)
+            signature.contentEquals(other.signature) &&
+            communityId.contentEquals(other.communityId)
     }
 
     override fun hashCode(): Int {
@@ -80,6 +87,7 @@ data class RevocationEntity(
         result = 31 * result + issuedAt.hashCode()
         result = 31 * result + reasonCode.hashCode()
         result = 31 * result + signature.contentHashCode()
+        result = 31 * result + communityId.contentHashCode()
         return result
     }
 }

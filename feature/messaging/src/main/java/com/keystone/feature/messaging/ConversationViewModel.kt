@@ -80,12 +80,20 @@ class ConversationViewModel @Inject constructor(
                         displayName = displayName,
                         messages = messages,
                     )
-                    // Any newly-arrived "received" messages get flipped
-                    // to "viewed" while the chat is open, so the read
-                    // receipt fires on the next sync without the user
-                    // re-entering the screen.
-                    withContext(Dispatchers.IO) {
-                        messageStore.markInboundViewed(peer)
+                    // Flip any unviewed inbound to "viewed" only when
+                    // there's actually something to flip. The flow
+                    // emits on every status change including
+                    // outbound-state transitions; gating here keeps
+                    // a busy thread from running an O(thread) UPDATE
+                    // loop on every message-bubble repaint.
+                    val hasUnviewed = messages.any { m ->
+                        m.status == MessageStore.STATUS_RECEIVED &&
+                            m.fromPub.contentEquals(peer.bytes)
+                    }
+                    if (hasUnviewed) {
+                        withContext(Dispatchers.IO) {
+                            messageStore.markInboundViewed(peer)
+                        }
                     }
                 }
         }
@@ -121,7 +129,15 @@ class ConversationViewModel @Inject constructor(
             // existing thread before BLE radio fires up.
             delay(INITIAL_SYNC_DELAY_MS)
             while (isActive) {
-                runCatching { syncService.runOnce(timeoutMs = AUTO_SYNC_TIMEOUT_MS) }
+                runCatching {
+                    syncService.runOnce(timeoutMs = AUTO_SYNC_TIMEOUT_MS)
+                }.onFailure { t ->
+                    // Re-throw cancellation so structured concurrency works
+                    // — eating it here would let the loop swallow shutdown
+                    // signals and keep holding the round mutex while the
+                    // viewModelScope is supposed to be tearing down.
+                    if (t is kotlinx.coroutines.CancellationException) throw t
+                }
                 delay(AUTO_SYNC_INTERVAL_MS)
             }
         }

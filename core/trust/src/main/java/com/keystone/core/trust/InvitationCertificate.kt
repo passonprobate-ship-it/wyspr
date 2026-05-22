@@ -291,8 +291,36 @@ data class RevocationCertificate(
     }
 }
 
-fun RevocationCertificate.verify(sodium: LazySodiumAndroid): Boolean {
+/**
+ * Verify a [RevocationCertificate]. As with invitation certs, the
+ * Ed25519 signature is checked AND `issuedAt` is bounded to a sane
+ * window — without time bounds, a trusted-then-compromised peer can
+ * forge `issuedAt = Long.MAX_VALUE` revocations and irreversibly
+ * quarantine any target. There is no un-revoke; a single accepted
+ * forgery is unrecoverable.
+ *
+ * [maxFutureSkewSeconds] mirrors the invitation path's
+ * [DEFAULT_CLOCK_SKEW_SECONDS] (60 s) — small enough to defeat
+ * future-dated forgeries, generous enough for real device drift.
+ */
+fun RevocationCertificate.verify(
+    sodium: LazySodiumAndroid,
+    nowSeconds: Long = System.currentTimeMillis() / 1000,
+    maxFutureSkewSeconds: Long = DEFAULT_CLOCK_SKEW_SECONDS,
+): Boolean {
     if (signature.size != Sign.BYTES) return false
+    if (issuedAt < 0) return false
+    if (issuedAt > nowSeconds + maxFutureSkewSeconds) return false
     val signed = signedBytes()
     return sodium.cryptoSignVerifyDetached(signature, signed, signed.size, issuerPub.bytes)
 }
+
+/** Shared clock-skew tolerance (seconds). 60 s is generous given
+ *  real-device NTP drift while still defeating future-dated forgeries. */
+const val DEFAULT_CLOCK_SKEW_SECONDS: Long = 60
+
+/** Cap on a received invitation cert's validity period. Spec says
+ *  24h typical; we allow up to 48h to accommodate longer-lived
+ *  invitations. Anything wider is almost certainly a misbehaving
+ *  Inviter or an attack. */
+const val MAX_CERT_VALIDITY_SECONDS: Long = 48L * 60 * 60
