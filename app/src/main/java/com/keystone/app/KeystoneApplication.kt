@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import com.keystone.app.profile.ProfileHttpServer
 import com.keystone.core.transport.TorBackend
+import com.keystone.feature.messaging.mailbox.MailboxNotifyHost
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,10 +18,26 @@ class KeystoneApplication : Application() {
     @Inject lateinit var torBackend: TorBackend
     @Inject lateinit var profileHttpServer: ProfileHttpServer
 
+    /**
+     * Eager-instantiated so its init {} block runs at app start and
+     * starts observing [MailboxSettings.hostEnabled]. Without this
+     * forced injection the singleton would never be constructed
+     * (nothing else holds a reference) and the listener on
+     * 127.0.0.1:9093 would never bind — turning on "Be a mailbox"
+     * in the UI would silently leave Sprint 3's push-notify channel
+     * unavailable.
+     */
+    @Inject lateinit var mailboxNotifyHost: MailboxNotifyHost
+
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
+        // Touch mailboxNotifyHost so Kotlin doesn't elide the field
+        // and so the singleton's init {} block has fired by the time
+        // anything else runs. The reference itself is unused.
+        @Suppress("UNUSED_VARIABLE")
+        val warm = mailboxNotifyHost
         // Crypto + DB bring-up happens lazily via Hilt. We do NOT eagerly
         // open the database — it requires the hardware-keystore identity
         // key, which must not be unlocked until the user has at least

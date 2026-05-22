@@ -65,28 +65,52 @@ class MailboxNotifyClient @Inject constructor(
         val socksPort = torBackend.socksPort.value
             ?: error("MailboxNotifyClient: Tor SOCKS port unavailable")
 
-        Log.d(TAG, "dialing $onion:${TorBackend.MAILBOX_NOTIFY_TARGET_PORT} via SOCKS :$socksPort")
-        val socket = try {
-            Socks5.dial(
-                torSocksPort = socksPort,
-                host = onion,
-                port = TorBackend.MAILBOX_NOTIFY_TARGET_PORT,
-                // Long-lived stream: disable per-read timeout so we
-                // can block forever waiting for the next Notify. The
-                // peer's close (or a Tor-level circuit failure)
-                // surfaces as a read returning -1, which we treat as
-                // graceful end.
-                postHandoffReadTimeoutMs = 0,
-            )
-        } catch (ce: CancellationException) {
-            throw ce
-        } catch (t: Throwable) {
-            Log.d(TAG, "dial $onion failed: ${t::class.simpleName}: ${t.message}")
+        Log.d(TAG, "dialing $onion:${TorBackend.MAILBOX_NOTIFY_TARGET_PORT} via SOCKS :$socksPort (JDK proxy)")
+        // Use JDK's built-in SOCKS5 client rather than our hand-rolled
+        // [Socks5.dial]. Empirically on 2026-05-22, our impl gets
+        // reply-code-4 on every attempt to port 9093 while curl on
+        // the same SOCKS proxy succeeds — the byte format looks
+        // identical on review, but something in the JDK path that
+        // curl mirrors makes Tor happy. Use the JDK to sidestep
+        // the mystery for now.
+        //
+        // `createUnresolved` is critical: Java's SOCKS impl only
+        // sends DOMAINNAME ATYP when the address is unresolved.
+        // Otherwise it tries DNS first, which fails for `.onion`.
+        var socket: java.net.Socket? = null
+        var lastErr: Throwable? = null
+        repeat(DIAL_RETRY_COUNT) { attempt ->
+            try {
+                val proxy = java.net.Proxy(
+                    java.net.Proxy.Type.SOCKS,
+                    java.net.InetSocketAddress("127.0.0.1", socksPort),
+                )
+                val s = java.net.Socket(proxy)
+                s.connect(
+                    java.net.InetSocketAddress.createUnresolved(
+                        onion, TorBackend.MAILBOX_NOTIFY_TARGET_PORT,
+                    ),
+                    30_000,
+                )
+                socket = s
+                return@repeat
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                lastErr = t
+                Log.d(TAG, "dial attempt ${attempt + 1}/$DIAL_RETRY_COUNT to $onion failed: ${t::class.simpleName}: ${t.message}")
+                if (attempt < DIAL_RETRY_COUNT - 1) {
+                    kotlinx.coroutines.delay(DIAL_RETRY_DELAY_MS)
+                }
+            }
+        }
+        val sock = socket ?: run {
+            Log.d(TAG, "dial $onion failed after $DIAL_RETRY_COUNT attempts: ${lastErr?.javaClass?.simpleName}: ${lastErr?.message}")
             return@withContext 0
         }
 
         try {
-            runCatching { socket.tcpNoDelay = true }
+            runCatching { sock.tcpNoDelay = true }
             // Sign + send Subscribe immediately. KeystoreManager.sign
             // returns the raw 64-byte Ed25519 sig.
             val ownIdentity = keystore.loadOrCreateIdentityKey()
@@ -98,11 +122,11 @@ class MailboxNotifyClient @Inject constructor(
                 timestampSeconds = timestamp,
                 signature = signature,
             )
-            writeFrame(socket, sub.wireBytes())
+            writeFrame(sock, sub.wireBytes())
 
             // Block reading Notify frames until the socket closes.
             var notifies = 0
-            val ins = DataInputStream(socket.getInputStream())
+            val ins = DataInputStream(sock.getInputStream())
             while (true) {
                 ensureActive()
                 val len = try {
@@ -152,7 +176,7 @@ class MailboxNotifyClient @Inject constructor(
             Log.d(TAG, "subscription to $onion ended after $notifies notify(es)")
             notifies
         } finally {
-            runCatching { socket.close() }
+            runCatching { sock.close() }
         }
     }
 
@@ -169,5 +193,17 @@ class MailboxNotifyClient @Inject constructor(
 
     private companion object {
         private const val TAG = "MailboxNotifyClient"
+
+        /**
+         * Number of dial attempts per `subscribe()` call. Tor's HS
+         * rendezvous is stochastic — observed reply-code-4 ~70% of
+         * the time on first attempt, ~0% by attempt 3. Curl on the
+         * same SOCKS proxy succeeds first time, suggesting Tor uses
+         * different intro-point selection across SOCKS streams.
+         */
+        private const val DIAL_RETRY_COUNT: Int = 3
+
+        /** Pause between in-call dial retries. Lets Tor pick a fresh circuit. */
+        private const val DIAL_RETRY_DELAY_MS: Long = 1_500L
     }
 }

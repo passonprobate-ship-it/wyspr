@@ -53,6 +53,17 @@ object Socks5 {
         /** Per-read timeout applied to the returned socket. Set to 0 to
          *  disable (caller takes responsibility for deadlines). */
         postHandoffReadTimeoutMs: Int = DEFAULT_POST_HANDOFF_READ_TIMEOUT_MS,
+        /**
+         * Optional Tor stream-isolation key. When set, sends RFC 1929
+         * USERPASS auth with this key as the username; Tor's default
+         * `IsolateSOCKSAuth` config then allocates a fresh circuit for
+         * the dial instead of pooling onto a shared one. Useful when
+         * repeated dials from the same process keep landing on a stuck
+         * intro point — pass a fresh key per attempt to force Tor to
+         * try a different rendezvous path. Tor doesn't actually
+         * authenticate the username; any non-empty string works.
+         */
+        isolationKey: String? = null,
     ): Socket {
         val hostBytes = host.toByteArray(Charsets.US_ASCII)
         require(hostBytes.size in 1..255) { "SOCKS5 DOMAINNAME must be 1..255 bytes" }
@@ -66,13 +77,40 @@ object Socks5 {
             val ins: InputStream = socket.getInputStream()
 
             // ---- Method negotiation (RFC 1928 §3) ----
-            // VER=5, NMETHODS=1, METHODS=[NO_AUTH]
-            out.write(byteArrayOf(0x05, 0x01, 0x00))
-            out.flush()
-            val mver = ins.read()
-            val mmethod = ins.read()
-            if (mver != 0x05 || mmethod != 0x00) {
-                throw IOException("SOCKS5: method negotiation failed (ver=$mver method=$mmethod)")
+            if (isolationKey == null) {
+                // VER=5, NMETHODS=1, METHODS=[NO_AUTH]
+                out.write(byteArrayOf(0x05, 0x01, 0x00))
+                out.flush()
+                val mver = ins.read()
+                val mmethod = ins.read()
+                if (mver != 0x05 || mmethod != 0x00) {
+                    throw IOException("SOCKS5: method negotiation failed (ver=$mver method=$mmethod)")
+                }
+            } else {
+                // VER=5, NMETHODS=1, METHODS=[USERPASS]
+                out.write(byteArrayOf(0x05, 0x01, 0x02))
+                out.flush()
+                val mver = ins.read()
+                val mmethod = ins.read()
+                if (mver != 0x05 || mmethod != 0x02) {
+                    throw IOException("SOCKS5: server refused USERPASS auth (ver=$mver method=$mmethod)")
+                }
+                // RFC 1929 USERPASS sub-negotiation. Tor doesn't check
+                // the password; any non-empty string works. Use a
+                // single-byte password to minimise wire bytes.
+                val userBytes = isolationKey.encodeToByteArray()
+                require(userBytes.size in 1..255) { "isolationKey must be 1..255 bytes" }
+                out.write(0x01)                  // RFC 1929 VER
+                out.write(userBytes.size)
+                out.write(userBytes)
+                out.write(0x01)                  // PLEN=1
+                out.write(0x00)                  // PWD=0x00
+                out.flush()
+                val aver = ins.read()
+                val astatus = ins.read()
+                if (aver != 0x01 || astatus != 0x00) {
+                    throw IOException("SOCKS5 USERPASS auth failed (ver=$aver status=$astatus)")
+                }
             }
 
             // ---- CONNECT request (RFC 1928 §4) ----

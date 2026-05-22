@@ -35,7 +35,26 @@ class AndroidMessagingNotifier @Inject constructor(
     private val nm = NotificationManagerCompat.from(context)
     private val systemNm = context.getSystemService(NotificationManager::class.java)
 
+    /**
+     * Peer the user is currently viewing in [com.keystone.feature.messaging.ConversationViewModel].
+     * Set on bind / cleared on screen leave so [notifyInbound] can
+     * suppress noise for the active conversation — the user is
+     * already looking at the thread.
+     *
+     * Volatile, not synchronized: a torn read here just means one
+     * spurious notification, never a missed message (messages still
+     * land in the DB regardless).
+     */
+    @Volatile private var activePeer: ByteArray? = null
+
     init { ensureChannel() }
+
+    override fun setActivePeer(peerPub: ByteArray?) {
+        activePeer = peerPub
+        // Also clear any stale notification for the peer the user is
+        // now looking at — they've seen it.
+        peerPub?.let { nm.cancel(notificationId(it)) }
+    }
 
     override fun notifyInbound(
         peerPub: ByteArray,
@@ -44,6 +63,12 @@ class AndroidMessagingNotifier @Inject constructor(
         preview: String,
     ) {
         if (!nm.areNotificationsEnabled()) return
+        // Suppress if the user is currently viewing this peer's
+        // thread — an OS notification on top of the open chat is
+        // just noise. The message itself lives in the DB and is
+        // already on screen for them.
+        val active = activePeer
+        if (active != null && active.contentEquals(peerPub)) return
         val title = if (count > 1) "$count new messages" else "New message"
         // Deep-link payload: hex-encode the peer pubkey into the
         // intent extras. MainActivity reads these on launch and

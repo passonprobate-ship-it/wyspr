@@ -32,6 +32,20 @@ interface MessagingNotifier {
     /** Clear any pending notifications for [peerPub] (e.g. the user opened the chat). */
     fun clearForPeer(peerPub: ByteArray)
 
+    /**
+     * Tell the notifier which peer the user is currently viewing so
+     * [notifyInbound] suppresses pings for that peer's incoming
+     * messages — the user is already looking at the thread, an OS
+     * notification would just be noise. Pass `null` when leaving the
+     * conversation (or backgrounding the app entirely).
+     *
+     * Implementations should treat this as best-effort UX state, not
+     * security: even if the suppression is wrong, the messages still
+     * land in the database and the badge count updates. Worst case is
+     * one spurious notification.
+     */
+    fun setActivePeer(peerPub: ByteArray?)
+
     /** No-op fallback for tests + early bootstrap. */
     object NoOp : MessagingNotifier {
         override fun notifyInbound(
@@ -41,5 +55,6 @@ interface MessagingNotifier {
             preview: String,
         ) = Unit
         override fun clearForPeer(peerPub: ByteArray) = Unit
+        override fun setActivePeer(peerPub: ByteArray?) = Unit
     }
 }

@@ -128,6 +128,10 @@ class ConversationViewModel @Inject constructor(
         // when the VM is cleared (screen leaves the back stack)
         // or when bind() is called with a different peer.
         notifier.clearForPeer(peer.bytes)
+        // Suppress notifications for this peer while the user is in
+        // the chat — the message lands in the DB and on screen; an
+        // OS notification on top is just noise.
+        notifier.setActivePeer(peer.bytes)
         startAutoSync()
         startMailboxNotify()
 
@@ -296,6 +300,9 @@ class ConversationViewModel @Inject constructor(
         super.onCleared()
         autoSyncJob?.cancel()
         mailboxNotifyJob?.cancel()
+        // Re-enable notifications for this peer — the user is no
+        // longer looking at the thread.
+        notifier.setActivePeer(null)
     }
 
     fun send(body: String) {
