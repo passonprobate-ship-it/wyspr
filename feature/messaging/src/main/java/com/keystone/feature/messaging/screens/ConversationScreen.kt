@@ -262,9 +262,23 @@ fun ConversationScreen(
             displayName = currentDisplayName,
             onDismiss = viewModel::closePeerDetails,
             onRename = viewModel::openRename,
+            onNotes = viewModel::openNotes,
             onViewPage = {
                 viewModel.closePeerDetails()
                 onViewPeerPage()
+            },
+        )
+    }
+    val notesOpen by viewModel.notesOpen.collectAsStateWithLifecycle()
+    val currentNotes = (state as? ConversationViewModel.UiState.Ready)?.notes
+    if (notesOpen) {
+        EditNotesDialog(
+            initial = currentNotes.orEmpty(),
+            displayName = currentDisplayName ?: peer.fingerprint.toString().take(20),
+            onDismiss = viewModel::closeNotes,
+            onConfirm = { value ->
+                viewModel.saveNotes(value)
+                viewModel.closeNotes()
             },
         )
     }
@@ -273,7 +287,7 @@ fun ConversationScreen(
 /**
  * Bottom sheet that opens when the user taps the conversation title.
  * Holds everything that used to clutter the top bar — full
- * fingerprint, rename, and "view web page" action.
+ * fingerprint, rename, notes, and "view web page" action.
  */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
@@ -282,6 +296,7 @@ private fun PeerDetailsSheet(
     displayName: String?,
     onDismiss: () -> Unit,
     onRename: () -> Unit,
+    onNotes: () -> Unit,
     onViewPage: () -> Unit,
 ) {
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
@@ -306,12 +321,58 @@ private fun PeerDetailsSheet(
             androidx.compose.material3.TextButton(onClick = onRename, modifier = Modifier.fillMaxWidth()) {
                 Text("Rename contact", modifier = Modifier.fillMaxWidth())
             }
+            androidx.compose.material3.TextButton(onClick = onNotes, modifier = Modifier.fillMaxWidth()) {
+                Text("Notes", modifier = Modifier.fillMaxWidth())
+            }
             androidx.compose.material3.TextButton(onClick = onViewPage, modifier = Modifier.fillMaxWidth()) {
                 Text("View web page", modifier = Modifier.fillMaxWidth())
             }
             androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(16.dp))
         }
     }
+}
+
+/**
+ * Multi-line free-form notes editor. Notes are local-only and never
+ * synced over the wire. Saved on tap of "Save"; cancel discards.
+ */
+@Composable
+private fun EditNotesDialog(
+    initial: String,
+    displayName: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var value by remember { mutableStateOf(initial) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Notes about $displayName") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Private to this device — never shared with the peer or anyone else.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                androidx.compose.material3.OutlinedTextField(
+                    value = value,
+                    onValueChange = { value = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 120.dp),
+                    placeholder = { Text("Where we met, what they care about, anything you want to remember…") },
+                    singleLine = false,
+                    maxLines = 8,
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = { onConfirm(value) }) { Text("Save") }
+        },
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 /** Compact 4-then-4 fingerprint: `abcd⋯wxyz`. Used as a fallback

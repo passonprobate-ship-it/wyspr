@@ -63,6 +63,11 @@ class ConversationViewModel @Inject constructor(
     private val _renameOpen = MutableStateFlow(false)
     val renameOpen: StateFlow<Boolean> = _renameOpen.asStateFlow()
 
+    /** Local-only free-form notes about the peer. Edited via the
+     *  peer-details sheet's "Notes" expander. Never synced. */
+    private val _notesOpen = MutableStateFlow(false)
+    val notesOpen: StateFlow<Boolean> = _notesOpen.asStateFlow()
+
     fun updateDraft(value: String) { _draft.value = value }
     fun clearDraft() { _draft.value = "" }
     fun openPeerDetails() { _peerDetailsOpen.value = true }
@@ -72,6 +77,30 @@ class ConversationViewModel @Inject constructor(
         _renameOpen.value = true
     }
     fun closeRename() { _renameOpen.value = false }
+    fun openNotes() {
+        _peerDetailsOpen.value = false
+        _notesOpen.value = true
+    }
+    fun closeNotes() { _notesOpen.value = false }
+
+    /** Persist the user's free-form notes for the bound peer. */
+    fun saveNotes(text: String) {
+        val peer = peerPub ?: return
+        val trimmed = text.trim().takeIf { it.isNotBlank() }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                if (!database.isOpen) database.open()
+                val existing = database.contactDao.byPub(peer)
+                database.contactDao.upsert(
+                    ContactEntity(
+                        peerPub = peer,
+                        displayName = existing?.displayName,
+                        notes = trimmed,
+                    ),
+                )
+            }
+        }
+    }
 
     @Volatile private var ownPub: ByteArray? = null
     @Volatile private var peerPub: ByteArray? = null
@@ -99,17 +128,19 @@ class ConversationViewModel @Inject constructor(
             }
             messageStore.threadFlow(peer)
                 .combine(database.contactDao.allFlow()) { messages, contacts ->
-                    val name = contacts
-                        .firstOrNull { it.peerPub.contentEquals(peer.bytes) }
-                        ?.displayName
-                        ?.takeIf { it.isNotBlank() }
-                    Triple(messages, name, Unit)
+                    val row = contacts.firstOrNull { it.peerPub.contentEquals(peer.bytes) }
+                    Triple(
+                        messages,
+                        row?.displayName?.takeIf { it.isNotBlank() },
+                        row?.notes?.takeIf { it.isNotBlank() },
+                    )
                 }
-                .collectLatest { (messages, displayName, _) ->
+                .collectLatest { (messages, displayName, notes) ->
                     _state.value = UiState.Ready(
                         own = ownPub?.let { PublicKey(it) },
                         peer = peer,
                         displayName = displayName,
+                        notes = notes,
                         messages = messages,
                     )
                     // Flip any unviewed inbound to "viewed" only when
@@ -142,11 +173,18 @@ class ConversationViewModel @Inject constructor(
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 if (!database.isOpen) database.open()
-                if (trimmed.isEmpty()) {
+                val existing = database.contactDao.byPub(peer)
+                if (trimmed.isEmpty() && existing?.notes.isNullOrBlank()) {
+                    // No display name and no notes — drop the row entirely
+                    // so the UI falls back to the raw fingerprint.
                     database.contactDao.clear(peer)
                 } else {
                     database.contactDao.upsert(
-                        ContactEntity(peerPub = peer, displayName = trimmed),
+                        ContactEntity(
+                            peerPub = peer,
+                            displayName = trimmed.takeIf { it.isNotEmpty() },
+                            notes = existing?.notes,
+                        ),
                     )
                 }
             }
@@ -241,6 +279,8 @@ class ConversationViewModel @Inject constructor(
             val peer: PublicKey,
             /** User-set friendly name for the peer, or null/blank to use fingerprint. */
             val displayName: String?,
+            /** User-set free-form notes about this peer (local only). */
+            val notes: String?,
             val messages: List<MessageEntity>,
         ) : UiState
     }

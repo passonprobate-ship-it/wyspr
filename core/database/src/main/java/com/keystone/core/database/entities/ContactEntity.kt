@@ -24,16 +24,23 @@ data class ContactEntity(
     @androidx.room.PrimaryKey
     @ColumnInfo(name = "peerPub") val peerPub: ByteArray,
     @ColumnInfo(name = "displayName") val displayName: String?,
+    /** Free-form private notes about this peer. Local-only, never
+     *  synced. Useful for "where we met / context / what they care
+     *  about" — the kind of light context a address book gives you. */
+    @ColumnInfo(name = "notes") val notes: String? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ContactEntity) return false
-        return peerPub.contentEquals(other.peerPub) && displayName == other.displayName
+        return peerPub.contentEquals(other.peerPub) &&
+            displayName == other.displayName &&
+            notes == other.notes
     }
 
     override fun hashCode(): Int {
         var result = peerPub.contentHashCode()
         result = 31 * result + (displayName?.hashCode() ?: 0)
+        result = 31 * result + (notes?.hashCode() ?: 0)
         return result
     }
 }

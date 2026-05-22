@@ -238,7 +238,13 @@ class ProfileHttpServer @Inject constructor(
             append("<style>")
             append(BASE_CSS)
             append("</style>\n")
-            append("</head><body><main>\n")
+            append("</head><body>\n")
+            // Subtle ambient backdrop — two radial gradients laid over
+            // each other in the teal/blue Keystone palette. Pure CSS,
+            // no images, no JS.
+            append("<div class=\"bg\"></div>\n")
+            append("<main>\n")
+            append("<div class=\"card\">\n")
             append("<div class=\"avatar\">$avatar</div>\n")
             append("<h1>$displayName</h1>\n")
             if (bio != null) {
@@ -248,11 +254,25 @@ class ProfileHttpServer @Inject constructor(
                 append("<ul class=\"links\">\n")
                 for (raw in links) {
                     val safe = raw.htmlEscape()
-                    append("<li><a href=\"$safe\" rel=\"noopener noreferrer\">$safe</a></li>\n")
+                    val label = safe
+                        .removePrefix("https://")
+                        .removePrefix("http://")
+                        .removeSuffix("/")
+                    append("<li><a href=\"$safe\" rel=\"noopener noreferrer\">")
+                    append("<span class=\"glyph\">↗</span><span>$label</span>")
+                    append("</a></li>\n")
                 }
                 append("</ul>\n")
             }
-            append("<footer>served by Keystone over Tor · no JavaScript · no tracking</footer>\n")
+            append("</div>\n")
+            append("<footer>\n")
+            append("  <span class=\"footer-glyph\">◇</span>\n")
+            append("  <span>served by Keystone over Tor</span>\n")
+            append("  <span class=\"dot\">·</span>\n")
+            append("  <span>no JavaScript</span>\n")
+            append("  <span class=\"dot\">·</span>\n")
+            append("  <span>no tracking</span>\n")
+            append("</footer>\n")
             append("</main></body></html>\n")
         }
     }
@@ -272,22 +292,137 @@ class ProfileHttpServer @Inject constructor(
         private const val TAG = "ProfileHttp"
         private const val REQUEST_TIMEOUT_MS = 5_000
         private val BASE_CSS = """
-            body { background: #06080b; color: #e5eaef; font: 16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; margin: 0; padding: 48px 16px; min-height: 100vh; }
-            main { max-width: 540px; margin: 0 auto; }
-            .avatar { font-size: 72px; line-height: 1; margin-bottom: 16px; }
-            h1 { font-size: 28px; margin: 0 0 16px; font-weight: 600; letter-spacing: -0.01em; }
-            .bio { color: #a8b2bd; margin: 16px 0 24px; font-size: 17px; }
-            ul.links { list-style: none; padding: 0; margin: 24px 0; }
-            ul.links li { margin: 6px 0; }
-            ul.links a { color: #80e0c0; text-decoration: none; border-bottom: 1px solid #1a3a2e; padding-bottom: 1px; word-break: break-all; }
-            ul.links a:hover { border-bottom-color: #80e0c0; }
-            footer { margin-top: 48px; font-size: 12px; color: #2a323d; font-family: ui-monospace,SFMono-Regular,Menlo,monospace; }
+            * { box-sizing: border-box; }
+            html, body { margin: 0; padding: 0; }
+            body {
+                background: #06080b;
+                color: #e5eaef;
+                font: 16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+                min-height: 100vh;
+                position: relative;
+                overflow-x: hidden;
+            }
+            /* Two soft glows behind the card — top-left teal, bottom-right
+             * indigo. Fixed-positioned so they stay anchored when content
+             * is short. */
+            .bg {
+                position: fixed;
+                inset: 0;
+                z-index: 0;
+                pointer-events: none;
+                background:
+                    radial-gradient(ellipse 60% 50% at 15% 10%, rgba(128, 224, 192, 0.16), transparent 60%),
+                    radial-gradient(ellipse 60% 50% at 85% 90%, rgba(99, 132, 224, 0.14), transparent 60%);
+            }
+            main {
+                position: relative;
+                z-index: 1;
+                max-width: 560px;
+                margin: 0 auto;
+                padding: 64px 20px 32px;
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+            }
+            .card {
+                background: rgba(18, 23, 30, 0.72);
+                border: 1px solid rgba(128, 224, 192, 0.12);
+                border-radius: 16px;
+                padding: 36px 32px 32px;
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+            }
+            .avatar {
+                font-size: 80px;
+                line-height: 1;
+                margin: -8px 0 18px;
+                filter: drop-shadow(0 4px 24px rgba(128, 224, 192, 0.25));
+            }
+            h1 {
+                font-size: 32px;
+                margin: 0 0 4px;
+                font-weight: 700;
+                letter-spacing: -0.015em;
+                background: linear-gradient(135deg, #e5eaef 0%, #a0c8ff 100%);
+                -webkit-background-clip: text;
+                background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            .bio {
+                color: #a8b2bd;
+                margin: 20px 0 0;
+                font-size: 17px;
+                line-height: 1.6;
+            }
+            ul.links {
+                list-style: none;
+                padding: 0;
+                margin: 28px 0 0;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+            ul.links a {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                color: #80e0c0;
+                text-decoration: none;
+                background: rgba(128, 224, 192, 0.06);
+                border: 1px solid rgba(128, 224, 192, 0.18);
+                border-radius: 10px;
+                padding: 12px 14px;
+                font-size: 15px;
+                font-weight: 500;
+                transition: background 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+                word-break: break-all;
+            }
+            ul.links a:hover {
+                background: rgba(128, 224, 192, 0.12);
+                border-color: rgba(128, 224, 192, 0.32);
+                transform: translateY(-1px);
+            }
+            ul.links a .glyph {
+                color: #80e0c0;
+                font-size: 13px;
+                opacity: 0.65;
+                flex-shrink: 0;
+            }
+            footer {
+                margin-top: auto;
+                padding-top: 48px;
+                font-size: 11px;
+                color: #4a525e;
+                font-family: ui-monospace,SFMono-Regular,Menlo,monospace;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                align-items: center;
+                letter-spacing: 0.02em;
+            }
+            footer .footer-glyph { color: #80e0c0; opacity: 0.5; }
+            footer .dot { opacity: 0.4; }
+            @media (max-width: 480px) {
+                main { padding: 32px 16px 24px; }
+                .card { padding: 28px 22px 24px; border-radius: 14px; }
+                .avatar { font-size: 64px; }
+                h1 { font-size: 26px; }
+            }
             @media (prefers-color-scheme: light) {
-                body { background: #f7f7f5; color: #101418; }
+                body { background: #f5f6f8; color: #101418; }
+                .bg {
+                    background:
+                        radial-gradient(ellipse 60% 50% at 15% 10%, rgba(96, 180, 150, 0.18), transparent 60%),
+                        radial-gradient(ellipse 60% 50% at 85% 90%, rgba(80, 110, 200, 0.14), transparent 60%);
+                }
+                .card { background: rgba(255, 255, 255, 0.78); border-color: rgba(0, 50, 40, 0.08); }
+                h1 { background: linear-gradient(135deg, #101418 0%, #1e3a5f 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
                 .bio { color: #3a4350; }
-                ul.links a { color: #1e3a5f; border-bottom-color: #d6e2f0; }
-                ul.links a:hover { border-bottom-color: #1e3a5f; }
-                footer { color: #7a8290; }
+                ul.links a { color: #1e3a5f; background: rgba(30, 58, 95, 0.06); border-color: rgba(30, 58, 95, 0.18); }
+                ul.links a:hover { background: rgba(30, 58, 95, 0.10); border-color: rgba(30, 58, 95, 0.32); }
+                ul.links a .glyph { color: #1e3a5f; }
+                footer { color: #8a929e; }
+                footer .footer-glyph { color: #1e3a5f; opacity: 0.55; }
             }
         """.trimIndent()
     }

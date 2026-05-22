@@ -91,7 +91,7 @@ import com.keystone.core.database.entities.UserProfileEntity
         HandshakeQuarantineEntity::class,
         SeenCertNonceEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {
@@ -280,6 +280,17 @@ internal val MIGRATION_10_11 = object : Migration(10, 11) {
                 "`since_cursor` INTEGER NOT NULL DEFAULT 0, " +
                 "PRIMARY KEY(`mailbox_pub`))"
         )
+    }
+}
+
+/**
+ * v12 → v13: contact gets a `notes` column. User-supplied free-form
+ * text, local-only (never synced over the wire). Default null so
+ * existing rows survive without backfill.
+ */
+internal val MIGRATION_12_13 = object : Migration(12, 13) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `contact` ADD COLUMN `notes` TEXT")
     }
 }
 
