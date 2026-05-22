@@ -2,10 +2,9 @@ package com.keystone.core.database.entities
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
-import androidx.room.PrimaryKey
 
 /**
- * One row per "this peer's chosen mailbox" mapping.
+ * One row per "this owner uses this host as a mailbox" mapping.
  *
  * Stores the signed CBOR `MailboxBinding` cert verbatim alongside the
  * parsed fields. The cert is what propagates between peers (sender
@@ -13,18 +12,21 @@ import androidx.room.PrimaryKey
  * fields exist so DAO queries don't have to reparse on every lookup.
  *
  * `owner_pub` is the user this mailbox serves (== the cert's signer);
- * `mailbox_pub` is the device acting as the mailbox. Locally the row
- * with `owner_pub == ownPub` describes MY mailbox; rows with other
+ * `mailbox_pub` is the device acting as the mailbox. Locally the rows
+ * with `owner_pub == ownPub` describe MY mailboxes; rows with other
  * `owner_pub` describe peers' mailboxes that I've learned about via
- * cert sync (Phase 3).
+ * cert sync.
  *
- * v1 keeps a single row per `owner_pub` (one mailbox per user). v2+
- * can add a composite key for multi-mailbox redundancy without a
- * destructive migration — only the PK changes.
+ * Multi-host (schema v14, Sprint 2 of TOR-ACROSS-WEB): an owner can
+ * publish N bindings, one per host they delegate to. Composite PK
+ * `(owner_pub, mailbox_pub)` means upsert is per (owner, host) pair —
+ * adding a second host does NOT evict the first. Senders iterate every
+ * known binding for a recipient and push to each reachable host.
+ * Receivers pull from whichever of their own hosts is up.
  */
-@Entity(tableName = "mailbox_binding")
+@Entity(tableName = "mailbox_binding", primaryKeys = ["owner_pub", "mailbox_pub"])
 data class MailboxBindingEntity(
-    @PrimaryKey @ColumnInfo("owner_pub") val ownerPub: ByteArray,
+    @ColumnInfo("owner_pub") val ownerPub: ByteArray,
     @ColumnInfo("mailbox_pub") val mailboxPub: ByteArray,
     /** Mailbox host's HSv3 .onion (56 chars, no scheme) — null for BLE-only. */
     @ColumnInfo("mailbox_onion") val mailboxOnion: String?,

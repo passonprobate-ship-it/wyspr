@@ -63,6 +63,13 @@
     <!-- Wake locks — never long-lived; bounded to active sync sessions. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- Optional: lets the user grant a battery-optimization exemption so
+         the foreground service hosting a mailbox doesn't get killed by
+         Doze. Always user-initiated via the Settings system intent — we
+         never silently elevate. Required only when running as a mailbox
+         host; users who don't host can ignore the prompt. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Lets the app hand a downloaded peer-update APK to the system
          PackageInstaller. The user still has to tap "Install" in the
          system dialog; Android refuses any APK whose signer differs

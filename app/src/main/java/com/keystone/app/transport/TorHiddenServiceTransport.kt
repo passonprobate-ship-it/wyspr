@@ -79,10 +79,17 @@ class TorHiddenServiceTransport(
             return@withLock
         }
         val targetPort = torBackend.hsTargetPort
-        // Bind on loopback only — Tor forwards .onion:targetPort to
-        // 127.0.0.1:targetPort. Binding on 0.0.0.0 would expose the
-        // service on every interface, defeating the point of the
-        // hidden service.
+        // Bind on IPv4 loopback only. Tor forwards `.onion:targetPort`
+        // to `127.0.0.1:targetPort` — always IPv4. `InetAddress.getLoopbackAddress()`
+        // returns `::1` (IPv6) on dual-stack Androids, which makes
+        // Tor's final forwarding hop hit nothing and surface as SOCKS
+        // reply code 4 (host unreachable) on the dialer side. The
+        // descriptor lookup + rendezvous + intro-point handshake all
+        // succeed; only the last 1mm of localhost forwarding fails.
+        // Bind explicitly to 127.0.0.1 so both endpoints agree.
+        //
+        // Binding on 0.0.0.0 would expose the service on every
+        // interface, defeating the point of the hidden service.
         //
         // Rapid stop()/start() cycles (each sync round currently
         // tears the listener down and brings it back up) can race
@@ -90,6 +97,7 @@ class TorHiddenServiceTransport(
         // and surface as `EADDRINUSE` even with SO_REUSEADDR set.
         // Retry briefly before giving up so a single transient
         // collision doesn't kill the whole sync round.
+        val ipv4Loopback = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
         val server = withContext(Dispatchers.IO) {
             var lastErr: Throwable? = null
             var attempt = 0
@@ -97,7 +105,7 @@ class TorHiddenServiceTransport(
                 try {
                     return@withContext ServerSocket().apply {
                         reuseAddress = true
-                        bind(java.net.InetSocketAddress(InetAddress.getLoopbackAddress(), targetPort))
+                        bind(java.net.InetSocketAddress(ipv4Loopback, targetPort))
                     }
                 } catch (be: java.net.BindException) {
                     lastErr = be

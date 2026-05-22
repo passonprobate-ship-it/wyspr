@@ -58,12 +58,20 @@ class ProfileHttpServer @Inject constructor(
             Log.d(TAG, "already running")
             return@withLock
         }
+        // Bind explicitly to IPv4 loopback. Tor's `HiddenServicePort
+        // 80 WEB_TARGET_PORT` (configured in EmbeddedTorBackend)
+        // forwards inbound .onion:80 traffic to 127.0.0.1, ALWAYS
+        // IPv4. `InetAddress.getLoopbackAddress()` returns `::1`
+        // (IPv6) on dual-stack Androids, which leaves Tor's last hop
+        // hitting nothing and the user's profile page silently
+        // 404-ing over Tor while the server is "running" locally.
+        val ipv4Loopback = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
         val s = withContext(Dispatchers.IO) {
             ServerSocket().apply {
                 reuseAddress = true
                 bind(
                     java.net.InetSocketAddress(
-                        InetAddress.getLoopbackAddress(),
+                        ipv4Loopback,
                         TorBackend.WEB_TARGET_PORT,
                     ),
                 )

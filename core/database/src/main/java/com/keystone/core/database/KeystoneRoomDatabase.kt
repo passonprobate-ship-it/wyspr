@@ -91,7 +91,7 @@ import com.keystone.core.database.entities.UserProfileEntity
         HandshakeQuarantineEntity::class,
         SeenCertNonceEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {
@@ -291,6 +291,38 @@ internal val MIGRATION_10_11 = object : Migration(10, 11) {
 internal val MIGRATION_12_13 = object : Migration(12, 13) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE `contact` ADD COLUMN `notes` TEXT")
+    }
+}
+
+/**
+ * v13 → v14: relax `mailbox_binding.PRIMARY KEY` from `(owner_pub)` to
+ * `(owner_pub, mailbox_pub)` so an owner can list multiple mailbox
+ * hosts simultaneously (Sprint 2 of TOR-ACROSS-WEB). SQLite can't
+ * change a primary key in place, so we recreate the table.
+ *
+ * Existing data survives: at most one row per `owner_pub` in v13 means
+ * no composite-key collisions when re-inserting.
+ */
+internal val MIGRATION_13_14 = object : Migration(13, 14) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `mailbox_binding_new` (" +
+                "`owner_pub` BLOB NOT NULL, " +
+                "`mailbox_pub` BLOB NOT NULL, " +
+                "`mailbox_onion` TEXT, " +
+                "`cert_bytes` BLOB NOT NULL, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "`expires_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`owner_pub`, `mailbox_pub`))"
+        )
+        db.execSQL(
+            "INSERT INTO `mailbox_binding_new` " +
+                "(owner_pub, mailbox_pub, mailbox_onion, cert_bytes, created_at, expires_at) " +
+                "SELECT owner_pub, mailbox_pub, mailbox_onion, cert_bytes, created_at, expires_at " +
+                "FROM `mailbox_binding`"
+        )
+        db.execSQL("DROP TABLE `mailbox_binding`")
+        db.execSQL("ALTER TABLE `mailbox_binding_new` RENAME TO `mailbox_binding`")
     }
 }
 

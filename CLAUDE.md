@@ -354,6 +354,147 @@ encrypted DB.
   phone-screen reading conditions (multi-frame retry, TRY_HARDER
   hints).
 
+### 2026-05-22 — Tor stuck-state diagnosed (during Sprint 1 hardware test)
+
+The Tor SOCKS failures observed since 2026-05-20 (`SOCKS5 CONNECT
+failed: reply code 1 (general SOCKS server failure)` and `No more
+HSDir available to query`) turn out to be a **stuck bootstrap**
+problem, not a code bug:
+
+- kmp-tor spawns the daemon with `--DisableNetwork 1` (its default)
+- `Action.startDaemonAsync()` is supposed to flip that off after the
+  control connection is up, but sometimes the daemon never reaches
+  >0% bootstrap and sits indefinitely
+- Both phones in the 2026-05-22 test had `cached-microdesc-consensus`
+  files from earlier in the day in `cache/torservice/` BUT no Tor
+  NOTICE traffic since launch — the daemon was running but offline
+- **Force-stopping Keystone and relaunching cured it on the S23**
+  (bootstrap → 100% in ~2s); A02s is slower and may need multiple
+  restarts
+- This is the same Tor leg that's been blocking Sprint 1's hardware
+  verification
+
+Suspected code culprits in `app/transport/EmbeddedTorBackend.kt`:
+- `observerStatic(RuntimeEvent.READY)` at line 152 unconditionally
+  flips `_state` to Ready when the control connection is up — not
+  when bootstrap completes. The `STATE` observer (`applyTorState`
+  at line 246) correctly gates on `d.isBootstrapped`, so the READY
+  one is at best redundant, at worst racy.
+- No watchdog: if bootstrap stalls < 100% for any length of time,
+  nothing notices or recovers.
+
+Defensive fixes worth landing (hardware-test session required):
+1. Remove the `RuntimeEvent.READY` observer; rely solely on `STATE`
+2. Add a Tor watchdog: if `isBootstrapped` stays false for 120s,
+   stop+start the daemon
+3. Surface bootstrap percent on the Tor settings page so the user
+   can spot stuck state visually
+
+Workaround until then: when sync over Tor doesn't work, **force-stop
+Keystone and relaunch**. The HSv3 identity is keystore-derived so
+the onion address survives.
+
+### 2026-05-22 — Sprint 2 (partial) of TOR-ACROSS-WEB: multi-host mailbox + battery-opt prompt
+
+Two pieces of Sprint 2 landed, both code-complete and build-clean,
+neither hardware-verified yet:
+
+**1. Multi-host mailbox bindings (schema v14).** `MailboxBindingEntity`
+now uses a composite primary key `(owner_pub, mailbox_pub)`. An owner
+can publish N bindings (one per host they delegate to). Migration
+`MIGRATION_13_14` rebuilds the table preserving existing rows.
+
+- `MailboxBindingService.forOwner` returns `List<MailboxBinding>`;
+  `myBindings`/`myBindingsFlow` replace the singular variants (which
+  remain as `myBinding`/`myBindingFlow` adapters for UI back-compat).
+- New `addOwn` (composite-PK upsert), `removeOwnHost` (per-host
+  delete), `clearOwn` (delete-all-for-owner) on the service.
+- `setOwn` kept as `@Deprecated` alias for `addOwn` — semantics
+  changed (insert one row, doesn't evict siblings).
+- `MessageSyncEngine.sealForMailboxPeer` and `mailboxPullPhase`
+  iterate over the recipient's full binding list. Sender seals if
+  the sync partner is ANY of the recipient's hosts; receiver pulls
+  if the sync partner is ANY of own hosts.
+- `MessageSyncEngine.pushPending` broadcasts ALL of own bindings
+  every round (was: just the one). Wire-compatible with v0.8.x
+  peers — the `mailboxBindings` list already supported N entries.
+- UI not yet updated for "add another host" — `MailboxClientViewModel`
+  exposes `myBindings: StateFlow<List<...>>` so the polish pass can
+  enumerate, but the existing single-mailbox UI keeps working via
+  the `myBinding` first-of-list adapter.
+
+**2. Battery-opt exemption banner.** `MailboxScreen` shows a tertiary-
+container card whenever host mode is on AND the app isn't already
+exempt from Doze. "Open battery settings" fires the
+`Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` intent for
+this app's package, with the global-list intent as a fallback. The
+permission `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is declared in the
+manifest. The card auto-dismisses once `PowerManager.isIgnoringBatteryOptimizations`
+flips true.
+
+**Deferred from Sprint 2 (intentionally):**
+- BOOT_COMPLETED receiver — the API-26/31/34 restrictions on starting
+  a foreground service from a boot broadcast deserve a dedicated
+  session with hardware to test. Without it, a phone reboot leaves
+  the mailbox offline until the user opens the app once. Document
+  this as a known limitation; reach for it after Sprint 1+2 hardware
+  verification.
+- OEM-killer deep-links (Samsung/Xiaomi/OPPO/Vivo/Huawei via
+  `dontkillmyapp.com`) — field-test-and-iterate work, not buildable
+  blind.
+- Multi-host UI (add another, list, remove one) — the data layer
+  supports it; the screen surface remains single-host.
+
+Files touched:
+- `core/database/.../entities/MailboxBindingEntity.kt`
+- `core/database/.../dao/MailboxBindingDao.kt`
+- `core/database/.../KeystoneRoomDatabase.kt` (v14 + MIGRATION_13_14)
+- `core/database/.../KeystoneDatabaseImpl.kt` (register migration)
+- `feature/messaging/.../mailbox/MailboxBindingService.kt`
+- `feature/messaging/.../mailbox/MailboxClientViewModel.kt`
+- `feature/messaging/.../sync/MessageSyncEngine.kt`
+- `feature/messaging/.../mailbox/screens/MailboxScreen.kt`
+- `app/src/main/AndroidManifest.xml`
+
+### 2026-05-22 — Sprint 1 of TOR-ACROSS-WEB: Noise-session reuse
+
+Code-complete, **NOT YET HARDWARE-VERIFIED**. Builds clean against
+the v0.8.3 tree; messaging unit tests pass.
+
+`MessageSyncService` now keeps the `(Link, NoiseSession)` pair alive
+across rounds when the underlying link is a Tor circuit. The next
+round on the same peer skips Tor descriptor lookup, SOCKS5 dial,
+and the 6-message Noise XX handshake — expected per-round cost
+drops from ~30s (current cold-circuit) to sub-second.
+
+- New private `cachedSessions: MutableMap<PeerKey, CachedSession>`
+  field on `MessageSyncService`, guarded by the existing round
+  Mutex.
+- `runOnce` checks the cache before `transports.startAll`. Hit →
+  `tryCachedRound` runs the engine directly on the cached session.
+  Miss → existing race/handshake path, then `maybeCacheTorSession`
+  stages the result for next round (Tor links only — BLE links
+  continue to close as before).
+- `openSessionAndSync` now returns the `NoiseSession` to the
+  caller on success (so it can be cached) rather than closing it
+  in `finally`. A `callerOwnsNoise` flag preserves close-on-
+  failure semantics.
+- Eviction is on-failure only. No keepalive: the 8s auto-sync
+  cycle is itself the implicit keepalive, and Tor circuits use
+  TCP keepalive for longer idle periods.
+- BLE-backed sessions are explicitly not cached (checked via
+  `link.endpoint.kind == Transport.Kind.TorHiddenService`); BLE
+  rounds remain identical to v0.8.3.
+
+Files touched: `feature/messaging/.../MessageSyncService.kt` only.
+No interface changes; no `NoiseSession`/`NoiseSessionImpl` changes;
+no `TransportSelector` changes.
+
+Hardware proof still owed: two-device test with BLE off, observing
+round 1 cost (~30s cold) followed by round 2 sub-second. Apply the
+[[keystone-feedback-verify-baseline]] rule — code that builds is not
+the same as code that works.
+
 ## What's NOT Built Yet (see NEXT-STEPS.md for the full plan)
 
 - **Two-device hardware proof of the Tor leg over Tor only** — BLE +

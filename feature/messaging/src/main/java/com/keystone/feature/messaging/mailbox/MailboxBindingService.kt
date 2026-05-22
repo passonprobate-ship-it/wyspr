@@ -40,48 +40,66 @@ class MailboxBindingService @Inject constructor(
 ) {
 
     /**
-     * Persist the local user's binding. Caller is responsible for
-     * having signed the cert with the local keystore — we don't
-     * re-verify here (loopback verification is wasted cycles when
-     * the keystore is the source of truth).
+     * Persist (or refresh) the local user's binding for a single host.
+     * Composite-PK upsert: adding a NEW host doesn't evict existing
+     * bindings for the same owner — pass [clearOwn] first to replace
+     * the whole set. Caller is responsible for having signed the cert.
      */
-    suspend fun setOwn(binding: MailboxBinding) = withContext(Dispatchers.IO) {
+    suspend fun addOwn(binding: MailboxBinding) = withContext(Dispatchers.IO) {
         ensureOpen()
         database.mailboxBindingDao.upsert(binding.toEntity())
     }
 
     /**
-     * Remove the local user's binding (user disabled their mailbox).
+     * @deprecated Multi-host (schema v14): name was misleading; use
+     * [addOwn]. Kept as a thin alias because every call site used to
+     * mean "register a mailbox," not "replace all my mailboxes."
+     */
+    @Deprecated("Use addOwn — semantics in multi-host world.", ReplaceWith("addOwn(binding)"))
+    suspend fun setOwn(binding: MailboxBinding) = addOwn(binding)
+
+    /**
+     * Remove every mailbox the local user has configured. UI exposes
+     * this as "stop using mailboxes."
      */
     suspend fun clearOwn(ownPub: PublicKey) = withContext(Dispatchers.IO) {
         ensureOpen()
         database.mailboxBindingDao.deleteForOwner(ownPub.bytes)
     }
 
-    /** The local user's binding, or null if no mailbox configured. */
-    suspend fun myBinding(ownPub: PublicKey): MailboxBinding? = withContext(Dispatchers.IO) {
+    /** Remove exactly one mailbox host from the local user's set. */
+    suspend fun removeOwnHost(ownPub: PublicKey, mailboxPub: PublicKey) =
+        withContext(Dispatchers.IO) {
+            ensureOpen()
+            database.mailboxBindingDao.deleteForOwnerHost(ownPub.bytes, mailboxPub.bytes)
+        }
+
+    /** The local user's bindings (one per delegated host). Empty list when none. */
+    suspend fun myBindings(ownPub: PublicKey): List<MailboxBinding> = withContext(Dispatchers.IO) {
         ensureOpen()
-        database.mailboxBindingDao.forOwner(ownPub.bytes)?.toBinding()
+        database.mailboxBindingDao.forOwner(ownPub.bytes).map { it.toBinding() }
     }
 
-    /** Reactive variant — the UI subscribes to render "your mailbox is X." */
-    fun myBindingFlow(ownPub: PublicKey): Flow<MailboxBinding?> =
-        database.mailboxBindingDao.forOwnerFlow(ownPub.bytes).map { it?.toBinding() }
+    /** Reactive variant — the UI subscribes to render the list of mailboxes. */
+    fun myBindingsFlow(ownPub: PublicKey): Flow<List<MailboxBinding>> =
+        database.mailboxBindingDao.forOwnerFlow(ownPub.bytes).map { rows -> rows.map { it.toBinding() } }
 
     /**
-     * Look up a peer's binding (learned via sync). Null if not known
-     * OR the cert has expired — senders shouldn't push to a 90-day-
-     * expired mailbox just because the row is still on disk. [nowSeconds]
-     * defaults to the wall clock; tests override.
+     * Look up a peer's bindings (learned via sync). Returns every
+     * non-expired binding the peer has published; empty list if we
+     * don't know any or they've all expired.
+     *
+     * Senders iterate the returned list and push to each reachable
+     * host. [nowSeconds] defaults to the wall clock; tests override.
      */
     suspend fun forOwner(
         ownerPub: PublicKey,
         nowSeconds: Long = System.currentTimeMillis() / 1000,
-    ): MailboxBinding? = withContext(Dispatchers.IO) {
+    ): List<MailboxBinding> = withContext(Dispatchers.IO) {
         ensureOpen()
-        val row = database.mailboxBindingDao.forOwner(ownerPub.bytes) ?: return@withContext null
-        if (row.expiresAt <= nowSeconds) return@withContext null
-        row.toBinding()
+        database.mailboxBindingDao.forOwner(ownerPub.bytes)
+            .filter { it.expiresAt > nowSeconds }
+            .map { it.toBinding() }
     }
 
     /**
@@ -121,10 +139,13 @@ class MailboxBindingService @Inject constructor(
             return@withContext false
         }
         ensureOpen()
+        // Multi-host: check whether an existing (owner, host) row is
+        // already newer. We don't downgrade the cert for that specific
+        // host. Bindings for OTHER hosts the same owner publishes are
+        // untouched — that's the whole point of multi-host.
         val existing = database.mailboxBindingDao.forOwner(binding.ownerPub.bytes)
+            .firstOrNull { it.mailboxPub.contentEquals(binding.mailboxPub.bytes) }
         if (existing != null && existing.createdAt >= binding.createdAt) {
-            // We already have this or a newer cert for the same owner.
-            // Don't downgrade.
             return@withContext true
         }
         database.mailboxBindingDao.upsert(binding.toEntity())

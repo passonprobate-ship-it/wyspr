@@ -167,11 +167,12 @@ internal class MessageSyncEngine(
         // idempotent on (groupId, memberPub)).
         val membershipCerts = groupStore.membershipCertsForPeer(peerPub)
 
-        // Mailbox binding propagation (Phase 3a). Include the local
-        // user's signed binding so this peer learns where to push
-        // asynchronous mail destined for US. Empty list when the user
-        // hasn't configured a mailbox.
-        val mailboxBindings = listOfNotNull(bindingService.myBinding(ownPub))
+        // Mailbox binding propagation. Broadcast EVERY mailbox the
+        // local user has delegated to (multi-host, Sprint 2 of
+        // TOR-ACROSS-WEB) so peers learn about all of them — that's
+        // what gives the recipient redundancy when one host is down.
+        // Empty list when the user hasn't configured any mailbox.
+        val mailboxBindings = bindingService.myBindings(ownPub)
 
         // Mailbox push lane (Phase 3b). For every pending direct
         // outbound where the recipient has a known binding pointing
@@ -243,9 +244,17 @@ internal class MessageSyncEngine(
         val sealed = ArrayList<MailboxEnvelope>(pending.size)
         for (msg in pending) {
             val recipient = PublicKey(msg.toPub)
-            val binding = bindingService.forOwner(recipient) ?: continue
-            // Only seal when THIS peer is the recipient's mailbox.
-            if (!binding.mailboxPub.bytes.contentEquals(peerPub.bytes)) continue
+            // Multi-host: look at every binding the recipient has
+            // published. Seal an envelope only if THIS peer is one of
+            // their hosts. When a recipient has bindings to multiple
+            // hosts we'll seal a copy each round for whichever host we
+            // happen to be talking to; the host's dedup (INSERT IGNORE
+            // on envelope_id) keeps the storage cost bounded.
+            val recipientBindings = bindingService.forOwner(recipient)
+            val isPeerAHostForRecipient = recipientBindings.any { b ->
+                b.mailboxPub.bytes.contentEquals(peerPub.bytes)
+            }
+            if (!isPeerAHostForRecipient) continue
             try {
                 sealed.add(
                     MailboxEnvelope.seal(
@@ -373,8 +382,12 @@ internal class MessageSyncEngine(
      * local MessageStore.
      */
     private suspend fun mailboxPullPhase(): Int {
-        val myBinding = bindingService.myBinding(ownPub)
-        val iPull = myBinding?.mailboxPub?.bytes?.contentEquals(peerPub.bytes) == true
+        // Multi-host: pull whenever THIS peer is one of MY mailbox
+        // hosts. We may have several; this round's sync partner is
+        // whichever one we happen to be connected to. Other hosts get
+        // their own rounds.
+        val myBindings = bindingService.myBindings(ownPub)
+        val iPull = myBindings.any { it.mailboxPub.bytes.contentEquals(peerPub.bytes) }
         return when (role) {
             HandshakeRole.Initiator -> {
                 val ingested = sendPullAndIngest(iPull)

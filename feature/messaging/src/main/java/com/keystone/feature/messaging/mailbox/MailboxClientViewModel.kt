@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -38,9 +39,24 @@ class MailboxClientViewModel @Inject constructor(
 
     private val _ownPub = MutableStateFlow<PublicKey?>(null)
 
+    /**
+     * Every mailbox host the local user has configured. v0.8.x had at
+     * most one; multi-host (Sprint 2 of TOR-ACROSS-WEB) allows N. The
+     * UI currently surfaces the first (oldest) entry as "your mailbox"
+     * and is silent about additional ones — that polish lands when the
+     * test cohort actually starts configuring multi-host.
+     */
+    val myBindings: StateFlow<List<MailboxBinding>> = _ownPub
+        .flatMapLatest { pub ->
+            if (pub == null) flowOf(emptyList()) else bindingService.myBindingsFlow(pub)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Backwards-compat surface for the existing single-mailbox UI. First/oldest binding or null. */
     val myBinding: StateFlow<MailboxBinding?> = _ownPub
         .flatMapLatest { pub ->
-            if (pub == null) flowOf(null) else bindingService.myBindingFlow(pub)
+            if (pub == null) flowOf(null)
+            else bindingService.myBindingsFlow(pub).map { it.firstOrNull() }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -89,7 +105,11 @@ class MailboxClientViewModel @Inject constructor(
                     now = now,
                 )
             }
-            bindingService.setOwn(binding)
+            // addOwn: multi-host upserts the (owner, host) row, leaves
+            // other hosts alone. Re-scanning the same host's QR refreshes
+            // the cert; scanning a different host's QR adds a second
+            // mailbox without evicting the first.
+            bindingService.addOwn(binding)
             _scanFeedback.value = "Mailbox configured."
         }
     }

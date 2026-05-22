@@ -20,12 +20,13 @@ useful — outcome.
 
 ## TL;DR
 
-**Don't abandon Tor. Stop misusing it, then add an always-online
-mailbox per community as the cross-internet default, then upgrade to a
+**Don't abandon Tor. Stop misusing it, then turn the existing on-phone
+mailbox into the cross-internet default by allowing multiple hosts per
+community and hardening on-phone reliability, then upgrade to a
 long-lived WebSocket subscription on top.** None of these require new
-crypto, new wire protocols, or new infrastructure outside the trust
-graph. All are increments on code already in `feature/messaging/mailbox/`
-and `app/transport/`.
+crypto, new wire protocols, new infrastructure, or any server outside
+the trust graph. All are increments on code already in
+`feature/messaging/mailbox/` and `app/transport/`.
 
 In one diagram (asterisks mark what already exists):
 
@@ -196,11 +197,32 @@ before we notice; same behaviour as today.
 
 ---
 
-## Sprint 2: always-online community mailbox
+## Sprint 2: on-phone mailbox as the cross-internet default
 
 **Goal:** make the cross-internet default "push to mailbox" rather
 than "dial peer directly." Solves the "both have to be online at the
 same moment" problem that no amount of Tor optimization fixes.
+
+**No new server. No headless build. No infrastructure outside the
+trust graph.** The existing on-phone `MailboxHost` already does the
+work — we just need to (a) allow multiple hosts per community for
+redundancy and (b) harden on-phone reachability so a dedicated
+spare phone is a credible always-up mailbox.
+
+### Why on-phone is enough
+
+The original framing assumed "phone in a pocket" was the only
+deployment shape, and concluded we needed a server. Wrong shape.
+The deployment shape that works is **a spare Android phone on a
+charger, on home WiFi, with battery-optimization disabled and
+Doze whitelisted**. This is exactly the [Briar Mailbox companion
+app](https://briarproject.org/manual/#briar-mailbox) model — they
+recommend a dedicated old phone and it works.
+
+Reachability isn't binary, it's probabilistic. One spare phone at
+~95% reachable is fine for asynchronous messaging. Five community
+members each at 60% reachable approaches 99% — and we can ride
+that with multi-host bindings.
 
 ### The shape
 
@@ -212,14 +234,15 @@ v0.8.0 mailbox already exists. The pieces:
   Noise on the existing transport)
 - `MailboxSettings` (the per-device "I am a mailbox" toggle)
 
-Today the mailbox host runs on a paired phone. To make it useful as
-the cross-internet default, the host needs to be **always online** —
-which a phone in a pocket is not. The change is:
+What we add:
 
-**Build a headless Linux binary of `MailboxHost`** that can run on a
-community member's RPi, VPS, or always-on machine, expose a Tor
-hidden service, and serve the same protocol the existing in-app
-mailbox already serves.
+1. **Reliability hardening on the host phone** so a phone-as-server
+   is a credible always-up endpoint.
+2. **Multiple bindings per owner** so a recipient lists 2–N mailbox
+   hosts; senders try them all, recipient pulls from whichever is
+   reachable.
+3. **Senders push to all known hosts** (best-effort replication) so
+   that any reachable host has a copy when the recipient pulls.
 
 ### Why this works
 
@@ -228,21 +251,59 @@ mailbox already serves.
   in `MailboxWire.kt` unchanged.
 - **Same trust model.** Host sees `(fromPub, toPub, ciphertext)` —
   exactly what `MailboxHost.handlePush` already exposes. No new
-  metadata surface.
+  metadata surface beyond what v0.8.0 already accepted.
 - **Solves the offline-peer problem.** Sender pushes to host even
   when receiver is offline. Receiver pulls when next online.
-- **Latency win.** Sender does ONE Tor dial (to the host, which is
-  always reachable) instead of N dials (one per offline recipient
-  retry).
+- **Solves the host-flake problem** (multi-host). One mailbox phone
+  reboots, runs out of battery, or has its Tor circuit drop — the
+  other hosts still have the ciphertext.
+- **Zero new infrastructure.** No VPS, no RPi, no Linux build, no
+  JVM Tor port. Every device in the system is a phone running the
+  same APK.
+
+### On-phone reliability hardening
+
+The work that turns "a phone" into "a credible mailbox host":
+
+| Concern | Fix |
+|---|---|
+| Battery optimization kills the foreground service | First-launch prompt for `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` when `MailboxSettings.isHost = true`; reprompt if revoked. |
+| Phone reboots → mailbox offline until user opens app | `BOOT_COMPLETED` broadcast receiver that starts `TransportForegroundService` in mailbox-host mode. |
+| OEM background killers (Samsung, Xiaomi, OPPO) | Detect manufacturer; on first launch in host mode, deep-link to the OEM's "don't kill this app" settings page with copy explaining why. [`dontkillmyapp.com`](https://dontkillmyapp.com) has the per-OEM links. |
+| Tor daemon dies | Restart on bootstrap failure with exponential backoff; surface state in the host's mailbox UI. |
+| Storage fills up | Cap already exists in v0.8.0; expose used / available in host UI. |
+| User doesn't realize their phone is acting as a mailbox | Persistent notification when in host mode, clear UI surface in Settings. |
+
+### Multi-host bindings
+
+Today: `MailboxBinding` is one cert per owner ("I, Alice, use H").
+Change to: an owner can publish N bindings, one per host. Senders
+treat them as a set and push to all reachable. Recipient pulls from
+whichever they can reach.
+
+Two viable shapes — pick at coding time:
+
+- **Multiple bindings per owner.** Schema and cert format unchanged;
+  the index just stops being unique-on-owner. Sender iterates.
+  Simplest.
+- **Single binding with a list of hosts.** Cert format gains a
+  `hosts: [{pub, onion}]` field. One cert to sign, one cert to
+  ingest. Cleaner UX but is a protocol bump.
+
+Recommend the first — no protocol bump, no schema migration, gracefully
+backwards-compatible with v0.8.x peers (they see one of the bindings,
+which is degraded but correct behaviour).
 
 ### Files affected
 
 | File | Change |
 |---|---|
-| `feature/messaging/mailbox/MailboxHost.kt` | Extract Android-Context dependencies (Hilt, Room) behind an interface so a JVM-only build can supply alternatives. |
-| New: `tools/keystone-mailbox/` (Gradle subproject) | JVM main(), embeds Tor (`kmp-tor-noexec-tor` on x86_64), persistent SQLite store, foreground HTTPS-on-onion listener, headless config (`.env` file). |
-| `docs/MAILBOX-HOSTING.md` | The community admin guide. |
-| `MailboxBinding` | No changes — already supports arbitrary `mailboxPub`/`mailboxOnion`. |
+| `feature/messaging/mailbox/MailboxSettings.kt` | Add `isHost` flow + first-host-launch prompts for battery + OEM killer settings. |
+| New: `app/.../mailbox/MailboxBootReceiver.kt` | `BOOT_COMPLETED` receiver that re-starts the foreground service in host mode if `MailboxSettings.isHost`. |
+| New: `feature/messaging/mailbox/HostReliability.kt` | OEM detection + deep-link helpers (Samsung, Xiaomi, OPPO, Huawei, Vivo). |
+| `feature/messaging/mailbox/MailboxBindingDao.kt` | Drop unique-on-`ownerPub` constraint; allow N bindings per owner. Migration. |
+| `feature/messaging/mailbox/MailboxClient.kt` | When pushing for a recipient, iterate all known bindings; push to each reachable host. When pulling, iterate own bindings; pull from whichever responds. |
+| `app/.../ui/mailbox/HostStatusScreen.kt` | Storage used, Tor state, restart-on-failure counter, "kill me" warnings if optimizations not exempt. |
 
 ### What's NEW vs. what's reused
 
@@ -253,41 +314,58 @@ mailbox already serves.
 | Storage cap + eviction | ✅ exists |
 | Pull cursor (replay defence) | ✅ exists (v0.8.3) |
 | Binding cert ingest with owner check | ✅ exists (v0.8.3 critical fix) |
-| JVM-only Room+SQLite path | ⚠ needs to be wired (Room runs on JVM via the desktop driver) |
-| Embedded Tor on the host | ⚠ needs kmp-tor JVM target or sidecar `tor` |
-| Persistent foreground HSv3 | ⚠ daemon mode (`.env`-driven config) |
-| Operator UI | optional — could be a small web dashboard on the host's loopback |
+| On-phone foreground service for mailbox | ✅ exists (extend `TransportForegroundService`) |
+| On-phone embedded Tor | ✅ exists (v0.6 work) |
+| Battery-opt exemption prompt | ⚠ new |
+| Boot-time auto-start receiver | ⚠ new |
+| OEM-killer deep-links | ⚠ new |
+| Multi-host bindings | ⚠ new (drop unique constraint + client iteration) |
+| Host status UI | ⚠ new |
 
 ### Cost
 
-**Medium.** The mailbox protocol is ~2000 LOC and most of it is reusable
-verbatim. The headless build adds maybe 800 LOC of JVM main + config +
-kmp-tor wiring. The community-operator docs are the longest part.
+**Small.** ~300–500 LOC of on-phone reliability + multi-host client
+iteration. No new Gradle subproject, no kmp-tor JVM port, no Linux
+build. Documentation is a "set up your spare phone as a mailbox"
+guide — a screen of text.
 
 ### The trust question
 
 A single hostile mailbox host builds a social graph of every binding
 to it (`{ownerPub, mailboxPub}`) and sees every Push (`fromPub`,
-`toPub` on the envelope). This is the residual metadata exposure
-mailboxes accept. **Sprint 4 (below) addresses it** via per-pair queue
-rotation.
+`toPub` on the envelope). Multi-host *worsens* this slightly — N
+hosts each see a subset of your traffic, and a colluding majority
+sees most of it. This is the residual metadata exposure mailboxes
+accept. **Sprint 4 (below) addresses it** via per-pair queue rotation.
 
-For now, the assumption is: the mailbox host is a trusted community
-member's machine, and the trust is at the community-membership level,
-not the per-pair level. This is the same trust profile a community
-member's phone-as-mailbox has today.
+For now, the assumption is: a mailbox host is a trusted community
+member's phone, and the trust is at the community-membership level,
+not the per-pair level. This is unchanged from v0.8.0.
 
 ### Expected outcome
 
 - "Wife paired with husband; wife's phone in pocket all day" works:
   husband's messages land in the community mailbox; wife pulls them
-  when she next opens the app, regardless of whether husband is still
-  online.
+  when she next opens the app, regardless of whether husband is
+  still online.
+- A spare Android phone on a charger at the community-builder's house
+  is the default mailbox shape. Multiple such phones gives redundancy
+  with zero per-host config — just install the APK, toggle "Act as
+  mailbox," scan the trust QR.
 - Tor cold-start cost amortizes across many cross-peer interactions:
-  one dial to the mailbox lets you push to *every* paired peer who
+  one dial to a mailbox lets you push to *every* paired peer who
   uses that mailbox.
 - Sender doesn't care if recipient is online: the protocol already
   handles "host accepts even if recipient is offline."
+
+### Out-of-scope but parking-lot
+
+A headless Linux/RPi/VPS build of `MailboxHost` remains *possible*
+for communities that have such infrastructure and want the
+operational simplicity. It is no longer on the critical path. If
+ever built, it would extract the Android-Context dependencies in
+`MailboxHost.kt` behind interfaces and add a JVM `main()` with
+embedded Tor — but only if and when a real community asks for it.
 
 ---
 
@@ -426,11 +504,13 @@ sprint we land first.** Not on the critical path but worth listing.
 - **WebSocket-over-Tor longevity on mobile** — the BLE foreground-
   service pattern *should* extend, but the first build will reveal
   the truth.
-- **Mailbox host JVM build** — Room on desktop JVM works via the
-  `androidx.sqlite-jdbc` driver (or `room-runtime` with a custom
-  `SupportSQLiteOpenHelper.Factory`); needs a real test build to
-  confirm we don't trip an Android-only API somewhere in the mailbox
-  code path.
+- **OEM background-killer landscape** — Samsung, Xiaomi, OPPO, Vivo,
+  Huawei all kill foreground services aggressively despite the
+  Android API contract. The on-phone mailbox needs to survive these.
+  `dontkillmyapp.com` is the canonical list; whether deep-linking
+  into each OEM's settings page is enough, or whether we need a
+  per-OEM keepalive trick, is something only field-testing on those
+  devices will reveal.
 
 ---
 
@@ -441,11 +521,16 @@ If you've got a few sessions to spend on this:
 1. **Tomorrow, half a day:** Sprint 1 (Noise-session reuse). Highest
    leverage, lowest risk, smallest diff. Tests against your existing
    two-device setup once the A02s is awake.
-2. **Next session:** Sprint 2 (headless mailbox). The wife-husband
-   case becomes "works whenever either of you opens the app," not
-   "works when you both happen to be online at the same time."
+2. **Next session:** Sprint 2 (on-phone mailbox hardening + multi-host
+   bindings). The wife-husband case becomes "works whenever either of
+   you opens the app," not "works when you both happen to be online
+   at the same time." No new infrastructure — a spare phone on a
+   charger is the deployment unit.
 3. **Sprint 2.5:** Hardware-verify the two-device Tor leg with
-   sprints 1+2 applied. Until this works, Sprint 3 is premature.
+   sprints 1+2 applied — and verify a spare phone configured as
+   mailbox host actually stays reachable across Doze + reboot +
+   OEM-killer attempts on the device families you care about.
+   Until this works, Sprint 3 is premature.
 4. **Then:** Sprint 3 (WebSocket-over-Tor). Sub-second cross-internet
    messaging.
 5. **Later:** Sprint 4 (queue rotation), HSv3 client auth.
@@ -458,17 +543,21 @@ without any new infrastructure or protocol surgery.
 
 ## Open questions for the human
 
-- **Always-online mailbox host — who runs it?** A community member's
-  RPi at home? A community-bought VPS? The latter is easier to keep
-  online but introduces a hosting cost.
-- **Single mailbox per community, or multiple?** Multiple gives
-  redundancy + load distribution + reduces single-host social-graph
-  leak. Single is simpler. SimpleX runs many relays by default;
-  Briar's mailbox is typically per-user.
+- **How many mailbox hosts per community is the recommended floor?**
+  One spare phone on a charger is workable. Two gives genuine
+  redundancy. Five+ pushes effective availability past 99% even with
+  flaky individual hosts. Recommend the docs/UX nudge toward "any
+  community member with a spare Android phone can run one — and the
+  more the merrier."
 - **Default cross-internet path = direct dial, or mailbox?** I've
   proposed mailbox-first above, with direct dial as fallback. The
   alternative — direct dial first, mailbox as failure fallback — is
   closer to the current code shape but loses the "works when peer
-  offline" property.
+  offline" property. With multi-host bindings, mailbox-first is
+  cheap enough that it should be the default.
+- **What happens when no mailbox is reachable?** Buffer outbound
+  locally and retry later? Surface "peer is offline and no mailbox
+  reachable" to the user? The current behaviour (silent retry) is
+  probably wrong once mailbox is the default path.
 
 Sleep on it.

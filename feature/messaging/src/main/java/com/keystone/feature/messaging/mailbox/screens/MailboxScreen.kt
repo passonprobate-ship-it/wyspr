@@ -39,8 +39,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.keystone.core.ui.QrRenderer
@@ -152,6 +158,7 @@ fun MailboxScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             ToggleCard(running = running, onToggle = hostViewModel::setHostEnabled)
+            if (running) BatteryOptCard()
             if (running || countHeld > 0) {
                 StatsCard(
                     bytesHeld = bytesHeld,
@@ -249,6 +256,83 @@ private fun BindingCard(
 }
 
 // ----- Be a mailbox panels (copied from BeMailboxScreen) -----
+
+/**
+ * Banner that prompts the user to grant a battery-optimization
+ * exemption. Only shown when the device is NOT already exempt — once
+ * the user accepts, the card disappears. Tapping "Allow" launches the
+ * standard system Settings intent (per-app battery exemption); the
+ * user grants it there and Android remembers it across reboots.
+ *
+ * Without this exemption, Doze will eventually kill the
+ * TransportForegroundService that hosts the mailbox, leaving us
+ * unreachable until the user opens the app again. Sprint 2 of
+ * TOR-ACROSS-WEB makes this the deployment-critical fix.
+ */
+@Composable
+private fun BatteryOptCard() {
+    val context = LocalContext.current
+    var isExempt by remember { mutableStateOf(context.isIgnoringBatteryOptimizations()) }
+    if (isExempt) return
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "Keep this mailbox awake",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Text(
+                "Android will eventually pause this app to save battery. " +
+                    "Grant a battery-optimization exemption so the mailbox stays " +
+                    "reachable. Plug the phone in and disable battery optimization " +
+                    "for the most reliable hosting.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+            )
+            Button(
+                onClick = {
+                    context.requestBatteryOptimizationExemption()
+                    // Re-read on return; the user may have toggled it
+                    // in Settings while we were paused.
+                    isExempt = context.isIgnoringBatteryOptimizations()
+                },
+            ) {
+                Text("Open battery settings")
+            }
+        }
+    }
+}
+
+/** True iff the calling app is whitelisted from Doze battery optimizations. */
+private fun Context.isIgnoringBatteryOptimizations(): Boolean {
+    val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return true
+    return pm.isIgnoringBatteryOptimizations(packageName)
+}
+
+/**
+ * Fire the system Settings intent for per-app battery-optimization
+ * exemption. We use ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (with
+ * the app's package URI) so the user sees the per-app prompt rather
+ * than the global list. Falls back to the global list if the targeted
+ * intent isn't supported on the device.
+ */
+private fun Context.requestBatteryOptimizationExemption() {
+    val direct = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+        data = Uri.parse("package:$packageName")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    val handled = direct.resolveActivity(packageManager) != null
+    val intent = if (handled) direct
+    else Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    runCatching { startActivity(intent) }
+}
 
 @Composable
 private fun ToggleCard(running: Boolean, onToggle: (Boolean) -> Unit) {
