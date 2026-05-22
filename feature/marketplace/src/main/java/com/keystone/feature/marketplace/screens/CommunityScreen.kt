@@ -5,23 +5,38 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -33,39 +48,22 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.keystone.core.transport.TorBackend
 import com.keystone.core.trust.TrustLevel
-import com.keystone.core.ui.components.BadgeStatus
-import com.keystone.core.ui.components.TrustBadge
+import com.keystone.core.ui.KeystoneAccent
 import com.keystone.feature.marketplace.CommunityViewModel
 import java.text.DateFormat
 import java.util.Date
 
 /**
- * Maps a [TrustLevel] to the visual conventions of [TrustBadge].
- * Roots and Full members render as the strongest tone (Verified);
- * Provisional as the in-progress tone (Live, with subtle pulse);
- * Quarantined as the warning tone; Unknown as Neutral.
+ * Community — flat searchable list of every paired peer with a small
+ * trust-level dot next to the name. WhatsApp's contact-list pattern,
+ * adapted to Keystone's trust graph: no more dense trust-tier sections,
+ * no nested cards — one row per peer.
+ *
+ * Self card sits at the top (compact), Tor status as a thin pill,
+ * search field, then the list. Trust-graph visualization stays
+ * accessible from the top-bar overflow icon.
  */
-private fun TrustLevel.toBadge(): Pair<String, BadgeStatus> = when (this) {
-    TrustLevel.Root -> "Root" to BadgeStatus.Verified
-    TrustLevel.Full -> "Full" to BadgeStatus.Verified
-    TrustLevel.Provisional -> "Provisional" to BadgeStatus.Live
-    TrustLevel.Quarantined -> "Quarantined" to BadgeStatus.Quarantined
-    TrustLevel.Unknown -> "Unknown" to BadgeStatus.Neutral
-}
-
-@Composable
-private fun TrustLevelBadge(level: TrustLevel) {
-    val (label, status) = level.toBadge()
-    TrustBadge(label = label, status = status)
-}
-
-/**
- * "My community" — read-only view of the local trust graph. Shows
- * the device's own identity + role, the community id, and the list
- * of peers paired with this device so far. Tapping the community id
- * copies it to the clipboard (the user might want to paste it on
- * another device when adding a second pairing).
- */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CommunityScreen(
     onBack: () -> Unit,
@@ -76,295 +74,260 @@ fun CommunityScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val torState by viewModel.torState.collectAsStateWithLifecycle()
     val onionAddress by viewModel.onionAddress.collectAsStateWithLifecycle()
+    var search by remember { mutableStateOf("") }
 
-    // Whole screen scrolls as a single surface — previously the
-    // inner peer LazyColumn grabbed all remaining vertical space,
-    // measuring the action buttons below it at 0px so the "View
-    // trust graph" / "Back" buttons were present but invisible
-    // and untappable on devices with more than a handful of peers.
-    // Replacing the LazyColumn with a plain Column inside a
-    // scrolling outer Column resolves it; peer counts here are
-    // bounded by the trust graph (handful of edges, not thousands)
-    // so lazy windowing is not load-bearing.
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text("My community", style = MaterialTheme.typography.headlineMedium)
-
-        TorStatusRow(torState, onionAddress)
-
-        // Promote the graph CTA above the peer list so it stays
-        // visible even before the user scrolls.
-        OutlinedButton(
-            onClick = onOpenGraph,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("View trust graph") }
-
+    Scaffold(
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text("Community", style = MaterialTheme.typography.titleLarge) },
+                actions = {
+                    IconButton(onClick = onOpenGraph) {
+                        Icon(Icons.Filled.AccountTree, contentDescription = "View trust graph")
+                    }
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+            )
+        },
+    ) { padding ->
         when (val s = state) {
-            CommunityViewModel.UiState.Loading -> LoadingPanel()
-            CommunityViewModel.UiState.NoCommunity -> EmptyPanel()
-            is CommunityViewModel.UiState.Ready -> ReadyPanel(s)
+            CommunityViewModel.UiState.Loading -> LoadingPanel(padding)
+            CommunityViewModel.UiState.NoCommunity -> EmptyPanel(padding)
+            is CommunityViewModel.UiState.Ready -> ReadyList(
+                state = s,
+                torState = torState,
+                onionAddress = onionAddress,
+                search = search,
+                onSearchChange = { search = it },
+                contentPadding = padding,
+            )
         }
-
-        OutlinedButton(
-            onClick = onBack,
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Back") }
     }
 }
 
 @Composable
-private fun TorStatusRow(state: TorBackend.State, onionAddress: String?) {
-    val (label, statusColor) = when (state) {
-        TorBackend.State.Idle -> "Tor: starting…" to MaterialTheme.colorScheme.outline
-        is TorBackend.State.Bootstrapping ->
-            "Tor: bootstrapping ${state.percent}%" to MaterialTheme.colorScheme.tertiary
-        TorBackend.State.Ready -> "Tor: ready — reachable anywhere" to MaterialTheme.colorScheme.primary
-        is TorBackend.State.Failed -> "Tor: ${state.message}" to MaterialTheme.colorScheme.error
-        TorBackend.State.Unavailable -> "Tor: unavailable on this build" to MaterialTheme.colorScheme.outline
+private fun ReadyList(
+    state: CommunityViewModel.UiState.Ready,
+    torState: TorBackend.State,
+    onionAddress: String?,
+    search: String,
+    onSearchChange: (String) -> Unit,
+    contentPadding: PaddingValues,
+) {
+    val filtered = remember(state.peers, search) {
+        val q = search.trim().lowercase()
+        if (q.isEmpty()) state.peers
+        else state.peers.filter { peer ->
+            peer.fingerprint.toString().lowercase().contains(q) ||
+                (peer.displayName?.lowercase()?.contains(q) == true)
+        }
     }
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(contentPadding),
+        contentPadding = PaddingValues(bottom = 16.dp),
+    ) {
+        item {
+            SelfHeader(state = state, torState = torState, onionAddress = onionAddress)
+        }
+        item {
+            OutlinedTextField(
+                value = search,
+                onValueChange = onSearchChange,
+                placeholder = { Text("Search by name or fingerprint") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
+        if (filtered.isEmpty()) {
+            item {
+                Text(
+                    if (search.isBlank()) "No paired peers yet"
+                    else "No peers match \"$search\"",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 24.dp),
+                )
+            }
+        } else {
+            items(filtered, key = { it.fingerprint.toString() }) { peer ->
+                PeerRow(peer)
+            }
+        }
+    }
+}
+
+/** Compact "you" header — name, fingerprint, trust badge, community ID
+ *  short hex (tap to copy), Tor status. One self-contained block. */
+@Composable
+private fun SelfHeader(
+    state: CommunityViewModel.UiState.Ready,
+    torState: TorBackend.State,
+    onionAddress: String?,
+) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.primaryContainer,
+        shape = RoundedCornerShape(0.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Surface(
-                    color = statusColor,
-                    shape = androidx.compose.foundation.shape.CircleShape,
-                    modifier = Modifier.size(8.dp),
-                ) {}
+                TrustDot(state.ownTrustLevel)
                 Text(
-                    label,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // The .onion is derived deterministically from the keystore,
-            // so it's known well before Tor has finished bootstrapping —
-            // showing it during Bootstrapping is intentional. We elide
-            // the middle so the address fits one line on phone widths.
-            val onion = onionAddress
-            if (onion != null) {
-                val display = onion.take(10) + "…" + onion.takeLast(6) + ".onion"
-                Text(
-                    display,
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun LoadingPanel() {
-    Text("Loading…", style = MaterialTheme.typography.bodyMedium)
-}
-
-@Composable
-private fun EmptyPanel() {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(
-            "No community on this device. Complete an onboarding " +
-                "handshake first.",
-            modifier = Modifier.padding(20.dp),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-    }
-}
-
-@Composable
-private fun ReadyPanel(state: CommunityViewModel.UiState.Ready) {
-    SelfCard(state)
-    CommunityIdRow(hex = state.communityIdHex, foundedAt = state.foundedAt)
-    StatsRow(peerCount = state.peers.size)
-
-    Text(
-        if (state.peers.isEmpty()) "No paired peers yet"
-        else "Paired peers (${state.peers.size})",
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(top = 4.dp),
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        for (peer in state.peers) PeerRow(peer)
-    }
-}
-
-@Composable
-private fun SelfCard(state: CommunityViewModel.UiState.Ready) {
-    Surface(
-        color = MaterialTheme.colorScheme.primaryContainer,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    "You",
-                    style = MaterialTheme.typography.labelLarge,
+                    "You — ${state.ownTrustLevel.shortLabel()}",
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
-                TrustLevelBadge(level = state.ownTrustLevel)
+                if (state.isFounder) {
+                    Text(
+                        " · founder",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                    )
+                }
             }
             Text(
                 state.ownFingerprint.toString(),
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 17.sp,
+                fontSize = 16.sp,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier
+                    .clickable {
+                        clipboard.setText(AnnotatedString(state.communityIdHex))
+                        android.widget.Toast.makeText(
+                            context,
+                            "Community ID copied",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+            ) {
+                Text(
+                    "Community ${state.communityIdHex.take(6)}…${state.communityIdHex.takeLast(6)} (tap to copy)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+                )
+            }
             Text(
-                if (state.isFounder) "Community founder" else "Community member",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-        }
-    }
-}
-
-@Composable
-private fun CommunityIdRow(hex: String, foundedAt: Long) {
-    val clipboard = LocalClipboardManager.current
-    val context = LocalContext.current
-    val shortHex = hex.take(8) + "…" + hex.takeLast(8)
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(10.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable {
-                clipboard.setText(AnnotatedString(hex))
-                android.widget.Toast.makeText(
-                    context,
-                    "Community ID copied",
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
-            },
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                "Community ID — tap to copy",
+                torStatusText(torState, onionAddress),
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                shortHex,
+                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
                 fontFamily = FontFamily.Monospace,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                "Founded " + DateFormat.getDateInstance().format(Date(foundedAt * 1000)),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp),
             )
         }
     }
 }
 
-@Composable
-private fun StatsRow(peerCount: Int) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        StatBox(label = "Paired peers", value = peerCount.toString())
+private fun torStatusText(state: TorBackend.State, onion: String?): String = when (state) {
+    TorBackend.State.Idle -> "Tor: starting…"
+    is TorBackend.State.Bootstrapping -> "Tor: bootstrapping ${state.percent}%"
+    TorBackend.State.Ready -> {
+        if (onion != null) "Tor ready · ${onion.take(8)}…${onion.takeLast(6)}.onion"
+        else "Tor ready"
     }
-}
-
-@Composable
-private fun StatBox(label: String, value: String) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(value, style = MaterialTheme.typography.headlineMedium)
-        }
-    }
+    is TorBackend.State.Failed -> "Tor: ${state.message}"
+    TorBackend.State.Unavailable -> "Tor: unavailable"
 }
 
 @Composable
 private fun PeerRow(peer: CommunityViewModel.PeerEntry) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(10.dp),
+    val displayName = peer.displayName?.takeIf { it.isNotBlank() }
+    val short = peer.fingerprint.toString().let { fp ->
+        val raw = fp.filter { it.isLetterOrDigit() }
+        if (raw.length < 10) fp
+        else raw.take(4) + "⋯" + raw.takeLast(4)
+    }
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(10.dp),
-            ),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(modifier = Modifier.padding(16.dp)) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    TrustLevelBadge(level = peer.trustLevel)
-                }
-                Text(
-                    peer.fingerprint.toString(),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                )
-                Text(
-                    "Paired " + DateFormat.getDateInstance().format(Date(peer.pairedAt * 1000)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                // Peer's HSv3 onion (Sprint 3+) — proves we have a way
-                // to reach this peer over Tor when BLE isn't available.
-                // Elide the middle so the 56-char address fits one line.
-                val onion = peer.peerOnion
-                if (onion != null) {
-                    val short = onion.take(8) + "…" + onion.takeLast(6) + ".onion"
-                    Text(
-                        "via Tor: $short",
-                        fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+        TrustDot(peer.trustLevel)
+        Spacer(modifier = Modifier.size(14.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                displayName ?: short,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = if (displayName != null) FontWeight.Normal else FontWeight.SemiBold,
+                fontFamily = if (displayName != null) FontFamily.Default else FontFamily.Monospace,
+            )
+            val sub = buildString {
+                append(peer.trustLevel.shortLabel())
+                if (peer.peerOnion != null) append(" · Tor")
+                append(" · paired ")
+                append(DateFormat.getDateInstance(DateFormat.SHORT).format(Date(peer.pairedAt * 1000)))
             }
+            Text(
+                sub,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
+    }
+}
+
+@Composable
+private fun TrustDot(level: TrustLevel) {
+    val color: Color = when (level) {
+        TrustLevel.Root, TrustLevel.Full -> KeystoneAccent.Verified
+        TrustLevel.Provisional -> KeystoneAccent.Pending
+        TrustLevel.Quarantined -> KeystoneAccent.Quarantine
+        TrustLevel.Unknown -> MaterialTheme.colorScheme.outline
+    }
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .background(color = color, shape = CircleShape),
+    )
+}
+
+private fun TrustLevel.shortLabel(): String = when (this) {
+    TrustLevel.Root -> "Root"
+    TrustLevel.Full -> "Full"
+    TrustLevel.Provisional -> "Provisional"
+    TrustLevel.Quarantined -> "Quarantined"
+    TrustLevel.Unknown -> "Unknown"
+}
+
+@Composable
+private fun LoadingPanel(padding: PaddingValues) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(padding),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text("Loading…", style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun EmptyPanel(padding: PaddingValues) {
+    Box(
+        modifier = Modifier.fillMaxSize().padding(padding),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "No community on this device. Complete an onboarding handshake first.",
+            modifier = Modifier.padding(horizontal = 32.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

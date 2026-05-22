@@ -67,9 +67,14 @@ class CommunityViewModel @Inject constructor(
         val ownPub = PublicKey(identity.publicKey)
         val graph = trustGraphService.snapshot()
 
+        // Pull friendly-name lookups in one query so per-peer projection
+        // doesn't N+1.
+        val contactsByPub = database.contactDao.all()
+            .associate { com.keystone.core.identity.PeerKey(it.peerPub) to it.displayName }
+
         val edges = graph?.snapshot()?.edges.orEmpty()
         val peers = buildList {
-            val seen = HashSet<List<Byte>>()
+            val seen = HashSet<com.keystone.core.identity.PeerKey>()
             for (edge in edges) {
                 // For each edge we project the *other* endpoint as a
                 // peer entry. An edge can name us as `from` or `to`.
@@ -78,7 +83,7 @@ class CommunityViewModel @Inject constructor(
                     edge.to.bytes.contentEquals(ownPub.bytes) -> edge.from
                     else -> continue
                 }
-                val key = other.bytes.toList()
+                val key = com.keystone.core.identity.PeerKey(other.bytes)
                 if (!seen.add(key)) continue
                 val level = graph?.trustLevel(other) ?: TrustLevel.Unknown
                 add(
@@ -88,6 +93,7 @@ class CommunityViewModel @Inject constructor(
                         trustLevel = level,
                         pairedAt = edge.establishedAt,
                         peerOnion = edge.peerOnion,
+                        displayName = contactsByPub[key]?.takeIf { it.isNotBlank() },
                     ),
                 )
             }
@@ -117,6 +123,8 @@ class CommunityViewModel @Inject constructor(
          * the QR we scanned.
          */
         val peerOnion: String? = null,
+        /** User-set friendly name from the contact table, or null. */
+        val displayName: String? = null,
     )
 
     sealed interface UiState {

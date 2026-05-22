@@ -54,6 +54,24 @@ class GroupConversationViewModel @Inject constructor(
     private val _state = MutableStateFlow<UiState>(UiState.Loading)
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    /** Composer draft and modal state — VM-owned so navigation away
+     *  (e.g., to view member list) doesn't drop user input. */
+    private val _draft = MutableStateFlow("")
+    val draft: StateFlow<String> = _draft.asStateFlow()
+
+    private val _memberListOpen = MutableStateFlow(false)
+    val memberListOpen: StateFlow<Boolean> = _memberListOpen.asStateFlow()
+
+    private val _renameOpen = MutableStateFlow(false)
+    val renameOpen: StateFlow<Boolean> = _renameOpen.asStateFlow()
+
+    fun updateDraft(value: String) { _draft.value = value }
+    fun clearDraft() { _draft.value = "" }
+    fun openMemberList() { _memberListOpen.value = true }
+    fun closeMemberList() { _memberListOpen.value = false }
+    fun openRename() { _renameOpen.value = true }
+    fun closeRename() { _renameOpen.value = false }
+
     @Volatile private var ownPub: ByteArray? = null
     @Volatile private var groupId: GroupId? = null
     @Volatile private var autoSyncJob: Job? = null
@@ -170,6 +188,7 @@ class GroupConversationViewModel @Inject constructor(
         val pub = ownPub ?: return
         val trimmed = body.trim()
         if (trimmed.isEmpty()) return
+        clearDraft()
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 runCatching {

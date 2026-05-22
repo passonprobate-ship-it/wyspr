@@ -94,8 +94,11 @@ fun ConversationScreen(
 ) {
     LaunchedEffect(peer.bytes.contentHashCode()) { viewModel.bind(peer) }
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var draft by remember { mutableStateOf("") }
-    var renameDialogOpen by remember { mutableStateOf(false) }
+    // Draft + rename modal state live on the VM so they survive
+    // configuration changes and navigation away (e.g., tap-to-rename
+    // from the title bar).
+    val draft by viewModel.draft.collectAsStateWithLifecycle()
+    val renameDialogOpen by viewModel.renameOpen.collectAsStateWithLifecycle()
 
     val currentDisplayName: String? =
         (state as? ConversationViewModel.UiState.Ready)?.displayName
@@ -103,64 +106,37 @@ fun ConversationScreen(
     if (renameDialogOpen) {
         RenameContactDialog(
             initial = currentDisplayName.orEmpty(),
-            onDismiss = { renameDialogOpen = false },
+            onDismiss = viewModel::closeRename,
             onConfirm = { newName ->
                 viewModel.renameContact(newName)
-                renameDialogOpen = false
+                viewModel.closeRename()
             },
         )
     }
+
+    val peerDetailsOpen by viewModel.peerDetailsOpen.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.clickable { renameDialogOpen = true },
-                    ) {
-                        val name = currentDisplayName?.takeIf { it.isNotBlank() }
-                        if (name != null) {
-                            Text(
-                                name,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 16.sp,
-                                maxLines = 1,
-                            )
-                            Text(
-                                peer.fingerprint.toString(),
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
-                        } else {
-                            Text(
-                                peer.fingerprint.toString(),
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                            )
-                            Text(
-                                "Tap to add a name",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
+                    // Name only (or compact fingerprint if no name set).
+                    // Tap the title → peer-details sheet with full
+                    // fingerprint, rename, and "view web page" actions.
+                    // Title bar stays uncluttered; details are a tap away.
+                    val name = currentDisplayName?.takeIf { it.isNotBlank() }
+                        ?: shortFingerprint(peer.fingerprint.toString())
+                    Text(
+                        name,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 17.sp,
+                        maxLines = 1,
+                        modifier = Modifier.clickable { viewModel.openPeerDetails() },
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = onViewPeerPage) {
-                        Icon(Icons.Filled.Public, contentDescription = "View peer's web page")
-                    }
-                    IconButton(onClick = { renameDialogOpen = true }) {
-                        Icon(Icons.Filled.Edit, contentDescription = "Rename contact")
                     }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
@@ -225,11 +201,10 @@ fun ConversationScreen(
             }
             ComposerRow(
                 draft = draft,
-                onDraftChange = { draft = it },
+                onDraftChange = viewModel::updateDraft,
                 onSend = {
                     if (draft.isNotBlank()) {
                         viewModel.send(draft)
-                        draft = ""
                     }
                 },
                 onShareLocation = shareLocation,
@@ -238,6 +213,71 @@ fun ConversationScreen(
             )
         }
     }
+
+    if (peerDetailsOpen) {
+        PeerDetailsSheet(
+            peer = peer,
+            displayName = currentDisplayName,
+            onDismiss = viewModel::closePeerDetails,
+            onRename = viewModel::openRename,
+            onViewPage = {
+                viewModel.closePeerDetails()
+                onViewPeerPage()
+            },
+        )
+    }
+}
+
+/**
+ * Bottom sheet that opens when the user taps the conversation title.
+ * Holds everything that used to clutter the top bar — full
+ * fingerprint, rename, and "view web page" action.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun PeerDetailsSheet(
+    peer: PublicKey,
+    displayName: String?,
+    onDismiss: () -> Unit,
+    onRename: () -> Unit,
+    onViewPage: () -> Unit,
+) {
+    val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)) {
+            Text(
+                displayName?.takeIf { it.isNotBlank() } ?: "Unnamed peer",
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 20.sp,
+            )
+            androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(8.dp))
+            Text(
+                peer.fingerprint.toString(),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(20.dp))
+            androidx.compose.material3.TextButton(onClick = onRename, modifier = Modifier.fillMaxWidth()) {
+                Text("Rename contact", modifier = Modifier.fillMaxWidth())
+            }
+            androidx.compose.material3.TextButton(onClick = onViewPage, modifier = Modifier.fillMaxWidth()) {
+                Text("View web page", modifier = Modifier.fillMaxWidth())
+            }
+            androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(16.dp))
+        }
+    }
+}
+
+/** Compact 4-then-4 fingerprint: `abcd⋯wxyz`. Used as a fallback
+ *  title when no friendly name is set. */
+private fun shortFingerprint(fp: String): String {
+    val raw = fp.filter { it.isLetterOrDigit() }
+    if (raw.length < 10) return fp
+    return raw.take(4) + "⋯" + raw.takeLast(4)
 }
 
 @Composable

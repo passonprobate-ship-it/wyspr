@@ -81,9 +81,11 @@ fun GroupConversationScreen(
 ) {
     LaunchedEffect(groupId.bytes.contentHashCode()) { viewModel.bind(groupId) }
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var draft by remember { mutableStateOf("") }
-    var memberDialogOpen by remember { mutableStateOf(false) }
-    var renameDialogOpen by remember { mutableStateOf(false) }
+    // Draft + modal state on the VM so they survive configuration
+    // changes and navigation away.
+    val draft by viewModel.draft.collectAsStateWithLifecycle()
+    val memberDialogOpen by viewModel.memberListOpen.collectAsStateWithLifecycle()
+    val renameDialogOpen by viewModel.renameOpen.collectAsStateWithLifecycle()
     var members by remember { mutableStateOf<List<GroupConversationViewModel.MemberView>>(emptyList()) }
 
     LaunchedEffect(memberDialogOpen) {
@@ -93,17 +95,17 @@ fun GroupConversationScreen(
     if (memberDialogOpen) {
         MemberListDialog(
             members = members,
-            onDismiss = { memberDialogOpen = false },
+            onDismiss = viewModel::closeMemberList,
         )
     }
     if (renameDialogOpen) {
         val current = (state as? GroupConversationViewModel.UiState.Ready)?.groupName.orEmpty()
         RenameGroupDialog(
             initial = current,
-            onDismiss = { renameDialogOpen = false },
+            onDismiss = viewModel::closeRename,
             onConfirm = { newName ->
                 viewModel.renameLocal(newName)
-                renameDialogOpen = false
+                viewModel.closeRename()
             },
         )
     }
@@ -113,22 +115,17 @@ fun GroupConversationScreen(
             CenterAlignedTopAppBar(
                 title = {
                     val s = state as? GroupConversationViewModel.UiState.Ready
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            s?.groupName ?: "Group",
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 16.sp,
-                            maxLines = 1,
-                        )
-                        s?.let {
-                            Text(
-                                "${it.memberCount} members",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.clickable { memberDialogOpen = true },
-                            )
-                        }
-                    }
+                    // Single-line group name. Tap the name → member
+                    // list (group "details" sheet). Rename moves to an
+                    // overflow action in the sheet rather than its
+                    // own top-bar button.
+                    Text(
+                        s?.groupName ?: "Group",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 17.sp,
+                        maxLines = 1,
+                        modifier = Modifier.clickable { viewModel.openMemberList() },
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
@@ -136,7 +133,7 @@ fun GroupConversationScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { renameDialogOpen = true }) {
+                    IconButton(onClick = viewModel::openRename) {
                         Icon(Icons.Filled.Edit, contentDescription = "Rename group locally")
                     }
                 },
@@ -206,11 +203,10 @@ fun GroupConversationScreen(
             }
             GroupComposerRow(
                 draft = draft,
-                onDraftChange = { draft = it },
+                onDraftChange = viewModel::updateDraft,
                 onSend = {
                     if (draft.isNotBlank()) {
                         viewModel.send(draft)
-                        draft = ""
                     }
                 },
                 onShareLocation = shareLocation,

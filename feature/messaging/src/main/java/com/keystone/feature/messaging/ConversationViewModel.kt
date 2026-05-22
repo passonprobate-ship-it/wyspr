@@ -41,6 +41,30 @@ class ConversationViewModel @Inject constructor(
     private val _state = MutableStateFlow<UiState>(UiState.Loading)
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    /** Composer draft — lives in the VM so typing survives navigation
+     *  away (e.g., tap-to-rename) and configuration changes. */
+    private val _draft = MutableStateFlow("")
+    val draft: StateFlow<String> = _draft.asStateFlow()
+
+    /** Modal state — title-bar tap shows the peer-detail sheet, rename
+     *  shows the rename dialog. Both moved off Composable-local
+     *  `remember` so they survive screen rotation. */
+    private val _peerDetailsOpen = MutableStateFlow(false)
+    val peerDetailsOpen: StateFlow<Boolean> = _peerDetailsOpen.asStateFlow()
+
+    private val _renameOpen = MutableStateFlow(false)
+    val renameOpen: StateFlow<Boolean> = _renameOpen.asStateFlow()
+
+    fun updateDraft(value: String) { _draft.value = value }
+    fun clearDraft() { _draft.value = "" }
+    fun openPeerDetails() { _peerDetailsOpen.value = true }
+    fun closePeerDetails() { _peerDetailsOpen.value = false }
+    fun openRename() {
+        _peerDetailsOpen.value = false
+        _renameOpen.value = true
+    }
+    fun closeRename() { _renameOpen.value = false }
+
     @Volatile private var ownPub: ByteArray? = null
     @Volatile private var peerPub: ByteArray? = null
     @Volatile private var autoSyncJob: Job? = null
@@ -152,6 +176,9 @@ class ConversationViewModel @Inject constructor(
         val peer = peerPub ?: return
         val trimmed = body.trim()
         if (trimmed.isEmpty()) return
+        // Clear the draft before the suspending DB write so a slow
+        // backend can't show stale text in the composer.
+        clearDraft()
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 runCatching {
