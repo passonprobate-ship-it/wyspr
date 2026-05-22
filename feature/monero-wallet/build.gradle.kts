@@ -58,6 +58,41 @@ dependencies {
     implementation("com.google.dagger:hilt-android:2.55")
     ksp("com.google.dagger:hilt-android-compiler:2.55")
 
-    // Coroutines for the RPC client.
+    // Coroutines (used by mollyim's suspend / Flow API).
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+
+    // The Monero wallet engine — mollyim's modern Kotlin SDK.
+    // Sandboxed native libwallet2 runs in a zero-privilege isolated
+    // Android process. Suspend / Flow public API. Pluggable HTTP
+    // stack — we route its network calls through TorBackend.socksPort
+    // via [TorRoutedHttpStack] so the light-wallet-server traffic
+    // never leaves our embedded Tor circuits.
+    //
+    // GPLv3 — shifts the combined APK licence as noted in the module
+    // kdoc above. Unblocked by the Kotlin 2.1.20 toolchain bump
+    // (commit f7652c4) — earlier 1.9.22 compiler couldn't read this
+    // dep's strict kotlin-stdlib:2.1.0 metadata.
+    implementation("im.molly:monero-wallet-sdk:1.0.0")
+
+    // OkHttp 4.10.0 — version-aligned with mollyim's transitive (its
+    // public API surfaces OkHttpClient on MoneroNodeClient.setHttpClient
+    // and singleNodeClient(), so we need our own consumer reference
+    // at the same version to avoid classloader-visibility mismatches).
+    implementation("com.squareup.okhttp3:okhttp:4.10.0")
+
+    // mollyim transitively pulls androidx.core 1.15.0 which requires
+    // compileSdk 35; we're on compileSdk 34 (AGP 8.2.0's max). Force
+    // the version Keystone uses everywhere else. Safe because mollyim
+    // only references core's RangeNotificationCompat-style stuff at
+    // runtime, all of which exists in 1.12.0.
+    implementation("androidx.core:core:1.12.0")
+    implementation("androidx.core:core-ktx:1.12.0")
+}
+
+// Constrain transitive androidx.core to 1.12.x — see above.
+configurations.configureEach {
+    resolutionStrategy {
+        force("androidx.core:core:1.12.0")
+        force("androidx.core:core-ktx:1.12.0")
+    }
 }

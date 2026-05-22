@@ -9,27 +9,24 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Drives the Monero wallet screen. v0.7.0a only exposes RPC-derived
- * state — Tor readiness + remote node chain tip + a "wallet engine
- * not bundled" hint. Balance and history are pushed to v0.7.0b.
+ * Drives the Monero wallet screen. Bootstraps the underlying
+ * [MoneroWalletService] on first ViewModel creation, then renders
+ * whatever state mollyim reports — Binding / Ready(balance, address)
+ * / Failed. UI is reactive over the single StateFlow.
  */
 @HiltViewModel
 class MoneroWalletViewModel @Inject constructor(
     private val service: MoneroWalletService,
 ) : ViewModel() {
 
-    val connection: StateFlow<MoneroWalletService.ConnectionStatus> = service.connection
+    val state: StateFlow<MoneroWalletService.WalletState> = service.walletState
 
     init {
-        viewModelScope.launch {
-            service.awaitTorThenRefresh()
-        }
+        viewModelScope.launch { service.bootstrap() }
     }
 
-    /** Pull-to-refresh + retry-after-failure entry point. */
-    fun refresh() {
-        viewModelScope.launch {
-            service.refreshNodeInfo()
-        }
+    /** Retry path for the Failed state. */
+    fun retry() {
+        viewModelScope.launch { service.bootstrap() }
     }
 }

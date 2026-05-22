@@ -13,33 +13,29 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.keystone.core.ui.components.KeystonePanel
-import com.keystone.feature.monero.MoneroWalletService.ConnectionStatus
+import com.keystone.feature.monero.MoneroWalletService.WalletState
+import com.keystone.feature.monero.atomicUnitsAsXmr
 
 /**
- * v0.7.0a Monero wallet screen.
+ * Sprint W1 Monero wallet screen.
  *
- * What it shows:
- *  - Connection status: waiting for Tor / connected / unreachable.
- *  - When connected: the remote node label, chain tip, sync flag.
- *  - A "wallet engine not yet bundled" panel — the on-device
- *    balance/history rows that come with the JNI binding in
- *    v0.7.0b.
+ * Renders one of four states from [WalletState]:
+ *  - Idle: brief placeholder before bootstrap fires.
+ *  - Binding: connecting to mollyim's in-process wallet service.
+ *  - Ready(balance, address, ...): the working wallet — balance,
+ *    receive address, tx count.
+ *  - Failed: error message with a Retry button.
  *
- * What it deliberately does not show:
- *  - A balance number. Surfacing a "0 XMR" until the engine lands
- *    would be misleading.
- *  - A send button. Same reasoning.
- *  - The user's own Monero address. We don't have one to derive
- *    until the engine lands.
+ * Send + tx history + restore-from-seed land in Sprints W2 / W3.
  */
 @Composable
 fun MoneroWalletScreen(
-    state: ConnectionStatus,
-    onRefresh: () -> Unit,
+    state: WalletState,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -54,106 +50,115 @@ fun MoneroWalletScreen(
             style = MaterialTheme.typography.headlineMedium,
         )
         Text(
-            text = "All network traffic routes through Keystone's embedded Tor proxy. " +
+            text = "All wallet traffic routes through Keystone's embedded Tor proxy. " +
                 "The remote node operator sees a Tor exit, never your IP.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        ConnectionPanel(state = state, onRefresh = onRefresh)
-
-        EngineNotBundledPanel()
-    }
-}
-
-@Composable
-private fun ConnectionPanel(
-    state: ConnectionStatus,
-    onRefresh: () -> Unit,
-) {
-    KeystonePanel(modifier = Modifier.fillMaxWidth()) {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = "Remote node",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            when (state) {
-                ConnectionStatus.Idle -> {
-                    Text(
-                        text = "Initializing…",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                ConnectionStatus.WaitingForTor -> {
-                    Text(
-                        text = "Waiting for Tor to finish bootstrapping. Hold tight — " +
-                            "first-time circuit build can take up to a minute.",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                is ConnectionStatus.Connected -> {
-                    Text(
-                        text = state.node.label,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        text = "${state.node.host}:${state.node.port}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    KeyValue("Chain tip", "${state.chainHeight}")
-                    if (state.targetHeight > 0L && state.targetHeight != state.chainHeight) {
-                        KeyValue("Target height", "${state.targetHeight}")
-                    }
-                    KeyValue("Node synchronized", if (state.daemonSynchronized) "yes" else "no")
-                    KeyValue("Network", state.nettype)
-                    KeyValue("Daemon version", state.version)
-                }
-                ConnectionStatus.AllNodesUnreachable -> {
-                    Text(
-                        text = "Every node in the default pool was unreachable through Tor. " +
-                            "Check that Tor has bootstrapped, or try again — public nodes " +
-                            "rotate frequently.",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                Button(onClick = onRefresh) { Text("Refresh") }
-            }
+        when (state) {
+            WalletState.Idle -> IdlePanel()
+            WalletState.Binding -> BindingPanel()
+            is WalletState.Ready -> ReadyPanel(state)
+            is WalletState.Failed -> FailedPanel(state.message, onRetry)
         }
     }
 }
 
 @Composable
-private fun EngineNotBundledPanel() {
-    KeystonePanel(
-        modifier = Modifier.fillMaxWidth(),
-        accent = MaterialTheme.colorScheme.tertiary,
-    ) {
+private fun IdlePanel() {
+    KeystonePanel(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "Starting wallet…",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+@Composable
+private fun BindingPanel() {
+    KeystonePanel(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                text = "On-device wallet engine: not bundled",
+                text = "Connecting to wallet service",
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.tertiary,
             )
             Text(
-                text = "Balance, history, receive, and send all require a native crypto " +
-                    "engine that scans blocks and signs transactions locally. The engine " +
-                    "lands in v0.7.0b once the GPL-licensed Monero JNI binding is wired in.",
+                text = "First-time setup generates a new wallet seed. This is fast — " +
+                    "block sync happens in the background once Tor is up.",
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReadyPanel(state: WalletState.Ready) {
+    KeystonePanel(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Balance",
+                style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                text = "Until then, this screen is a connectivity probe — proof the Tor leg " +
-                    "and the remote-node RPC plumbing work end-to-end on real hardware.",
+                text = "${state.balanceAtomicUnits.atomicUnitsAsXmr()} XMR",
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            if (state.pendingAtomicUnits > 0L) {
+                Text(
+                    text = "${state.pendingAtomicUnits.atomicUnitsAsXmr()} XMR pending",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            KeyValue("Confirmed", "${state.confirmedAtomicUnits.atomicUnitsAsXmr()} XMR")
+            KeyValue("Transactions seen", "${state.txCount}")
+        }
+    }
+    KeystonePanel(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = "Receive address",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = state.primaryAddress,
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            )
+            Text(
+                text = "Anyone with this address can send you XMR. Sprint W2 will " +
+                    "bind it to paired peers so you never have to share it manually.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun FailedPanel(message: String, onRetry: () -> Unit) {
+    KeystonePanel(
+        modifier = Modifier.fillMaxWidth(),
+        accent = MaterialTheme.colorScheme.error,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Wallet bring-up failed",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                Button(onClick = onRetry) { Text("Retry") }
+            }
         }
     }
 }

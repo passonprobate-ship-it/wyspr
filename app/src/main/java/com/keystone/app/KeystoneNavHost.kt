@@ -18,6 +18,7 @@ import com.keystone.core.identity.GroupId
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.marketplace.MarketplaceRoot
+import com.keystone.feature.monero.MoneroWalletRoot
 import com.keystone.feature.marketplace.screens.CommunityGraphScreen
 import com.keystone.feature.messaging.mailbox.screens.MailboxScreen
 import com.keystone.feature.messaging.mailbox.screens.ScanMailboxQrScreen
@@ -99,7 +100,7 @@ fun KeystoneNavHost(
                 biometricPrompt = biometricPrompt,
                 onOpenMailbox = { navController.navigate(Routes.Mailbox) },
                 onOpenMyPage = { navController.navigate(Routes.MyPage) },
-                onOpenWallet = { navController.navigate(Routes.Marketplace) },
+                onOpenWallet = { navController.navigate(Routes.Monero) },
                 onOpenFindPeers = { navController.navigate(Routes.PairPeer) },
                 onOpenShareApp = { navController.navigate(Routes.ShareApp) },
                 onOpenCommunityGraph = { navController.navigate(Routes.MyCommunityGraph) },
@@ -198,6 +199,9 @@ fun KeystoneNavHost(
                 startFresh = true,
             )
         }
+        composable(Routes.Monero) {
+            MoneroWalletRoot()
+        }
         composable(Routes.Marketplace) {
             MarketplaceRoot(
                 biometricPrompt = biometricPrompt,
@@ -245,6 +249,8 @@ object Routes {
     const val UpdateFromPeer = "update_from_peer"
     const val Mailbox = "mailbox"
     const val MailboxScan = "mailbox_scan"
+    /** Sprint W1: mollyim-backed Monero wallet. */
+    const val Monero = "monero"
     /** Full-screen conversation routes — pushed on top of the
      *  bottom-nav shell so the nav bar is hidden during chat. */
     const val Conversation = "conversation"

@@ -17,10 +17,10 @@ import com.keystone.feature.monero.ui.MoneroWalletViewModel
 @Composable
 fun MoneroWalletRoot(modifier: Modifier = Modifier) {
     val viewModel: MoneroWalletViewModel = hiltViewModel()
-    val state by viewModel.connection.collectAsStateWithLifecycle()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     MoneroWalletScreen(
         state = state,
-        onRefresh = { viewModel.refresh() },
+        onRetry = { viewModel.retry() },
         modifier = modifier.fillMaxSize(),
     )
 }

@@ -1,124 +1,195 @@
 package com.keystone.feature.monero
 
+import android.content.Context
 import android.util.Log
-import com.keystone.core.transport.TorBackend
-import com.keystone.feature.monero.rpc.MoneroRpcClient
+import com.keystone.feature.monero.persistence.EncryptedWalletDataStore
+import dagger.hilt.android.qualifiers.ApplicationContext
+import im.molly.monero.sdk.MoneroAmount
+import im.molly.monero.sdk.MoneroNetwork
+import im.molly.monero.sdk.MoneroNodeClient
+import im.molly.monero.sdk.MoneroWallet
+import im.molly.monero.sdk.RemoteNode
+import im.molly.monero.sdk.WalletProvider
+import im.molly.monero.sdk.service.InProcessWalletService
+import im.molly.monero.sdk.singleNodeClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import okhttp3.OkHttpClient
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Top-level façade for the Monero wallet feature. UI talks here; here
- * talks to the RPC client, the node round-robin, the crypto engine,
- * and the keystore-bound wallet file.
+ * Top-level Monero wallet facade. UI talks here; here talks to
+ * mollyim's [WalletProvider] (obtained from
+ * [InProcessWalletService.Companion.connect]) and surfaces the
+ * wallet's state via [walletState] as a single StateFlow for
+ * Compose consumption.
  *
- * v0.7.0a slice only covers the RPC-discoverable parts of the wallet
- * (node connectivity, chain tip, sync status). Balance, history,
- * send, and receive routes land in v0.7.0b once the crypto engine is
- * bundled. See [MoneroCryptoEngine] kdoc and NEXT-STEPS.md §10.
+ * Lifecycle:
+ *
+ *  - First [bootstrap] call connects to mollyim's
+ *    InProcessWalletService and either opens an existing wallet
+ *    (if the keystore-wrapped file already exists on disk) or
+ *    creates a brand-new one.
+ *  - The opened [MoneroWallet]'s `ledger()` Flow drives
+ *    [walletState] updates (balance, address, sync height).
+ *
+ * Threat model: every network call mollyim makes goes through
+ * [com.keystone.feature.monero.network.TorSocksOkHttp]'s OkHttp
+ * client. The wallet engine itself runs in-process for v1.
+ * Switching to [im.molly.monero.sdk.service.SandboxedWalletService]
+ * is a future hardening sprint (requires manifest isolated-process
+ * plumbing).
+ *
+ * Pre-W1 v0.7.0a scaffolding: this used a custom Tor RPC client +
+ * round-robin over a hand-curated node list. mollyim makes that
+ * scaffolding redundant — `MoneroNodeClient` now handles node
+ * communication. The existing [MoneroNodeRegistry] still provides
+ * the default node URL the user dials by default.
  */
 @Singleton
 class MoneroWalletService @Inject constructor(
-    private val torBackend: TorBackend,
-    private val rpc: MoneroRpcClient,
-    @Suppress("unused") private val keyStore: MoneroKeyStore,
-    @Suppress("unused") private val crypto: MoneroCryptoEngine,
+    @ApplicationContext private val context: Context,
+    private val dataStore: EncryptedWalletDataStore,
+    private val httpClient: OkHttpClient,
 ) {
 
-    /** Stable node pool for the v0.7.0a scaffold. */
-    private val nodes: List<MoneroNode> = MoneroNodeRegistry.defaults
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mutex = Mutex()
 
-    /** Round-robin starting index, randomised once per process. */
-    @Volatile
-    private var nextNodeIndex: Int = nodes.indices.random()
-
-    private val _connection = MutableStateFlow<ConnectionStatus>(ConnectionStatus.Idle)
+    @Volatile private var provider: WalletProvider? = null
+    @Volatile private var wallet: MoneroWallet? = null
+    @Volatile private var nodeClient: MoneroNodeClient? = null
 
     /**
-     * Live connection state for the UI. Updated by [refreshNodeInfo]
-     * — that's the only mutator. The status carries the chain tip
-     * and the node identity so the UI never needs to read RPC state
-     * directly.
+     * Currently selected Monero node. Defaults to the first entry in
+     * [MoneroNodeRegistry.defaults]. Future polish sprint will let
+     * the user pick or supply a custom node URL.
      */
-    val connection: StateFlow<ConnectionStatus> = _connection.asStateFlow()
+    private val currentNode: MoneroNode = MoneroNodeRegistry.defaults.first()
+
+    private val _walletState = MutableStateFlow<WalletState>(WalletState.Idle)
+    val walletState: StateFlow<WalletState> = _walletState.asStateFlow()
 
     /**
-     * Refresh the chain-tip view by walking the node list until one
-     * responds. Caller is expected to be on a coroutine; this method
-     * suspends through [MoneroRpcClient.getInfo].
-     *
-     * The Tor SOCKS port is sampled at call time — if the embedded
-     * Tor daemon hasn't finished bootstrapping yet, sets the status
-     * to [ConnectionStatus.WaitingForTor] and returns without
-     * touching the network.
+     * Bootstrap the wallet. Idempotent — repeated calls return
+     * immediately if a wallet is already open. The first call
+     * connects to mollyim's wallet service, then either restores
+     * from disk (if a wallet file exists) or creates a brand-new
+     * one with a random seed.
      */
-    suspend fun refreshNodeInfo() {
-        val torSocksPort = torBackend.socksPort.value
-        if (torSocksPort == null || torBackend.state.value !is TorBackend.State.Ready) {
-            _connection.value = ConnectionStatus.WaitingForTor
-            return
+    suspend fun bootstrap() = mutex.withLock {
+        if (wallet != null) return@withLock
+        try {
+            _walletState.value = WalletState.Binding
+            val prov = InProcessWalletService.connect(context)
+            provider = prov
+
+            val remote = RemoteNode(
+                url = "http://${currentNode.host}:${currentNode.port}",
+                network = MoneroNetwork.Mainnet,
+                username = "",
+                password = "",
+            )
+            val client = remote.singleNodeClient(httpClient = httpClient)
+            nodeClient = client
+
+            val w = if (dataStore.exists()) {
+                Log.i(TAG, "bootstrap: opening existing wallet from disk")
+                prov.openWallet(MoneroNetwork.Mainnet, dataStore, client)
+            } else {
+                Log.i(TAG, "bootstrap: creating brand-new wallet (no file on disk yet)")
+                val w = prov.createNewWallet(MoneroNetwork.Mainnet, dataStore, client)
+                w.save()  // persist seed immediately
+                w
+            }
+            wallet = w
+            startLedgerCollector(w)
+        } catch (t: Throwable) {
+            Log.w(TAG, "bootstrap failed: ${t::class.simpleName}: ${t.message}", t)
+            _walletState.value = WalletState.Failed(t.message ?: "bootstrap failed")
         }
+    }
 
-        val attemptOrder = nodes.indices.map { (nextNodeIndex + it) % nodes.size }
-        nextNodeIndex = (nextNodeIndex + 1) % nodes.size
+    /**
+     * Free up the wallet binding. Called from process shutdown;
+     * idempotent.
+     */
+    fun shutdown() {
+        runCatching { wallet?.close() }
+        wallet = null
+        runCatching { nodeClient?.close() }
+        nodeClient = null
+        runCatching { provider?.close() }
+        provider = null
+        scope.cancel()
+    }
 
-        for (idx in attemptOrder) {
-            val node = nodes[idx]
+    private fun startLedgerCollector(w: MoneroWallet) {
+        scope.launch {
             try {
-                val info = rpc.getInfo(node, torSocksPort)
-                _connection.value = ConnectionStatus.Connected(
-                    node = node,
-                    chainHeight = info.height,
-                    targetHeight = info.targetHeight,
-                    daemonSynchronized = info.synchronized,
-                    outgoingConnections = info.outgoingConnections,
-                    nettype = info.nettype,
-                    version = info.version,
+                val primaryAddress = w.publicAddress.address
+                _walletState.value = WalletState.Ready(
+                    primaryAddress = primaryAddress,
+                    balanceAtomicUnits = 0L,
+                    confirmedAtomicUnits = 0L,
+                    pendingAtomicUnits = 0L,
+                    txCount = 0,
                 )
-                return
+                w.ledger().collectLatest { ledger ->
+                    val balance = ledger.getBalance()
+                    _walletState.value = WalletState.Ready(
+                        primaryAddress = primaryAddress,
+                        balanceAtomicUnits = balance.totalAmount.atomicUnits,
+                        confirmedAtomicUnits = balance.confirmedAmount.atomicUnits,
+                        pendingAtomicUnits = balance.pendingAmount.atomicUnits,
+                        txCount = ledger.transactions.size,
+                    )
+                }
             } catch (t: Throwable) {
-                Log.w(LOG_TAG, "Node $node unreachable: ${t.javaClass.simpleName}")
-                // Try the next one. We deliberately don't surface
-                // per-node errors to the UI — repeated round-robin
-                // failures get summarised as AllNodesUnreachable.
+                Log.w(TAG, "ledger collector ended: ${t::class.simpleName}: ${t.message}")
+                _walletState.value = WalletState.Failed(t.message ?: "ledger collector failed")
             }
         }
-        _connection.value = ConnectionStatus.AllNodesUnreachable
     }
 
     /**
-     * Wait for Tor to reach [TorBackend.State.Ready] then do an
-     * initial node refresh. Intended to be called once from the
-     * Compose entry point.
+     * Single-source-of-truth view of the wallet. UI subscribes to
+     * one StateFlow and renders the appropriate state.
      */
-    suspend fun awaitTorThenRefresh() {
-        torBackend.state.first { it is TorBackend.State.Ready }
-        refreshNodeInfo()
-    }
-
-    /**
-     * UI-facing view of the wallet's RPC layer. Real balance /
-     * history come from the crypto engine once it's bound.
-     */
-    sealed interface ConnectionStatus {
-        data object Idle : ConnectionStatus
-        data object WaitingForTor : ConnectionStatus
-        data class Connected(
-            val node: MoneroNode,
-            val chainHeight: Long,
-            val targetHeight: Long,
-            val daemonSynchronized: Boolean,
-            val outgoingConnections: Int,
-            val nettype: String,
-            val version: String,
-        ) : ConnectionStatus
-        data object AllNodesUnreachable : ConnectionStatus
+    sealed interface WalletState {
+        /** Service not connected yet — nothing has happened. */
+        data object Idle : WalletState
+        /** Currently connecting to mollyim's wallet service. */
+        data object Binding : WalletState
+        /** Wallet open and ready. balance / address / counts surfaced. */
+        data class Ready(
+            val primaryAddress: String,
+            val balanceAtomicUnits: Long,
+            val confirmedAtomicUnits: Long,
+            val pendingAtomicUnits: Long,
+            val txCount: Int,
+        ) : WalletState
+        /** Connect, open, or ledger collect failed. UI shows error + retry. */
+        data class Failed(val message: String) : WalletState
     }
 
     private companion object {
-        const val LOG_TAG = "MoneroWalletService"
+        const val TAG = "MoneroWalletService"
     }
 }
+
+/** Format atomic units (piconero) as a human-readable XMR decimal string. */
+fun Long.atomicUnitsAsXmr(): String =
+    java.math.BigDecimal(this)
+        .divide(java.math.BigDecimal(1_000_000_000_000L))
+        .toPlainString()

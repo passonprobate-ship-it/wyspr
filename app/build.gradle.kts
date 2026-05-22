@@ -110,6 +110,18 @@ android {
     }
 }
 
+// mollyim/monero-wallet-sdk transitively pulls androidx.core 1.15.0,
+// which requires compileSdk 35. Keystone is on compileSdk 34 (AGP 8.2.0's
+// max recommended). Force core back to the version every other Keystone
+// module uses — mollyim doesn't actually reach for 1.15-only APIs at
+// runtime. Drop these when we bump AGP / compileSdk together.
+configurations.configureEach {
+    resolutionStrategy {
+        force("androidx.core:core:1.12.0")
+        force("androidx.core:core-ktx:1.12.0")
+    }
+}
+
 dependencies {
     // ──── Keystone modules ──────────────────────────────────────────────
     implementation(project(":core:crypto"))
