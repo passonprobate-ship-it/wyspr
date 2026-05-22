@@ -71,6 +71,10 @@ fun ConversationListScreen(
     onBack: () -> Unit,
     onOpenSettings: () -> Unit = {},
     onOpenFindPeers: () -> Unit = {},
+    /** Slot for the app shell to inject a banner above the list — used
+     *  by the "peer has newer Keystone" prompt. Empty by default so the
+     *  feature module stays self-contained for tests. */
+    bannerSlot: @Composable () -> Unit = {},
     viewModel: ConversationListViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(Unit) { viewModel.start() }
@@ -115,6 +119,9 @@ fun ConversationListScreen(
                     color = MaterialTheme.colorScheme.primary,
                 )
             }
+            // Shell-supplied banner slot (e.g., "peer has newer
+            // Keystone"). Empty by default.
+            bannerSlot()
 
             when (val s = state) {
                 ConversationListViewModel.UiState.Loading -> LoadingPanel()

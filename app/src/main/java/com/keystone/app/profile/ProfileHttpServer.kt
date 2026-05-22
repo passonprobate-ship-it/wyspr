@@ -121,6 +121,16 @@ class ProfileHttpServer @Inject constructor(
                         val html = renderHtml()
                         writeOk(client, html)
                     }
+                    path == "/version.json" -> {
+                        // Lightweight version probe for paired peers.
+                        // Used by the "peer has a newer build" banner.
+                        // Safe to expose: just the public version code +
+                        // semver string. Both come from BuildConfig at
+                        // compile time.
+                        val json = """{"versionCode":${com.keystone.app.BuildConfig.VERSION_CODE},""" +
+                            """"versionName":"${com.keystone.app.BuildConfig.VERSION_NAME}"}"""
+                        writeOkJson(client, json)
+                    }
                     path == "/favicon.ico" -> writeNoContent(client)
                     else -> writeNotFound(client)
                 }
@@ -165,6 +175,21 @@ class ProfileHttpServer @Inject constructor(
         // execution as a defence-in-depth even though we never emit
         // <script>.
         out.write("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; img-src data:\r\n")
+        out.write("\r\n")
+        out.flush()
+        client.getOutputStream().write(body)
+        client.getOutputStream().flush()
+    }
+
+    private fun writeOkJson(client: Socket, json: String) {
+        val body = json.toByteArray(Charsets.UTF_8)
+        val out = OutputStreamWriter(client.getOutputStream(), Charsets.ISO_8859_1)
+        out.write("HTTP/1.1 200 OK\r\n")
+        out.write("Content-Type: application/json; charset=utf-8\r\n")
+        out.write("Content-Length: ${body.size}\r\n")
+        out.write("Connection: close\r\n")
+        out.write("X-Content-Type-Options: nosniff\r\n")
+        out.write("Cache-Control: no-store\r\n")
         out.write("\r\n")
         out.flush()
         client.getOutputStream().write(body)

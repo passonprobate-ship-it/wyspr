@@ -20,6 +20,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.keystone.app.profile.PeerUpdatesBanner
 import com.keystone.core.identity.GroupId
 import com.keystone.core.identity.PublicKey
 import com.keystone.core.ui.settings.BiometricSettings
@@ -82,6 +83,7 @@ fun MainShell(
                     onBack = {},
                     onOpenSettings = { tab = Tab.Settings },
                     onOpenFindPeers = onOpenFindPeers,
+                    bannerSlot = { PeerUpdatesBanner(onPairPeer = onOpenFindPeers) },
                 )
                 Tab.Community -> CommunityScreen(
                     onBack = { /* root tab */ },
