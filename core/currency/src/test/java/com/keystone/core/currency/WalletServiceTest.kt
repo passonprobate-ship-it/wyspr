@@ -515,6 +515,14 @@ class WalletServiceTest {
                 override suspend fun deleteForPeer(peerPub: ByteArray) = throw NotImplementedError()
                 override suspend fun deleteAll() = throw NotImplementedError()
             }
+        override val peerSubAddressMintDao: com.keystone.core.database.dao.PeerSubAddressMintDao =
+            object : com.keystone.core.database.dao.PeerSubAddressMintDao {
+                override suspend fun forPeer(peerPub: ByteArray, chain: String) =
+                    throw NotImplementedError()
+                override suspend fun all() = throw NotImplementedError()
+                override suspend fun upsert(entity: com.keystone.core.database.entities.PeerSubAddressMintEntity) =
+                    throw NotImplementedError()
+            }
     }
 
     private class FakeAccountDao(private val rows: MutableMap<String, AccountEntity>) : AccountDao {

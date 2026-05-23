@@ -17,10 +17,15 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import im.molly.monero.sdk.FeePriority
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -104,6 +109,8 @@ fun SendXmrScreen(
                 val scope = androidx.compose.runtime.rememberCoroutineScope()
                 BoundPanel(
                     bound = bound,
+                    feePriority = state.feePriority,
+                    onFeePriorityChange = viewModel::setFeePriority,
                     onSend = { atomic ->
                         scope.launch {
                             // Biometric confirm BEFORE building the
@@ -153,9 +160,12 @@ private fun MyAddressPanel(myAddress: String?) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BoundPanel(
     bound: String,
+    feePriority: FeePriority,
+    onFeePriorityChange: (FeePriority) -> Unit,
     onSend: (Long) -> Unit,
     lastResult: MoneroWalletService.SendResult?,
 ) {
@@ -180,6 +190,10 @@ private fun BoundPanel(
                 placeholder = { Text("0.00") },
                 suffix = { Text("XMR") },
             )
+            FeeTierPicker(
+                selected = feePriority,
+                onSelect = onFeePriorityChange,
+            )
             val atomic = amountStr.toBigDecimalOrNull()
                 ?.multiply(java.math.BigDecimal(1_000_000_000_000L))
                 ?.toLong() ?: 0L
@@ -195,6 +209,50 @@ private fun BoundPanel(
             }
         }
     }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FeeTierPicker(
+    selected: FeePriority,
+    onSelect: (FeePriority) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = "Fee priority",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FeePriority.entries.forEach { tier ->
+                FilterChip(
+                    selected = tier == selected,
+                    onClick = { onSelect(tier) },
+                    label = { Text(labelFor(tier)) },
+                    colors = FilterChipDefaults.filterChipColors(),
+                )
+            }
+        }
+        Text(
+            text = subtitleFor(selected),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun labelFor(tier: FeePriority): String = when (tier) {
+    FeePriority.Low -> "Low"
+    FeePriority.Medium -> "Medium"
+    FeePriority.High -> "High"
+    FeePriority.Urgent -> "Urgent"
+}
+
+private fun subtitleFor(tier: FeePriority): String = when (tier) {
+    FeePriority.Low -> "Cheapest fee — confirmation may take 20+ minutes."
+    FeePriority.Medium -> "Sensible default — confirms within a couple of blocks."
+    FeePriority.High -> "Pay extra to land in the next block or two."
+    FeePriority.Urgent -> "Highest fee tier — same-block inclusion when network allows."
 }
 
 @Composable

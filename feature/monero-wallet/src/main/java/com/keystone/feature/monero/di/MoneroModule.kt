@@ -7,6 +7,7 @@ import com.keystone.feature.monero.MoneroKeyStore
 import com.keystone.feature.monero.MoneroOwnPaymentAddressProvider
 import com.keystone.feature.monero.network.TorSocksOkHttp
 import com.keystone.feature.monero.persistence.EncryptedWalletDataStore
+import com.keystone.feature.monero.persistence.SeedStorage
 import dagger.Binds
 import dagger.Module
 import dagger.Provides
@@ -79,4 +80,17 @@ object MoneroModule {
         @ApplicationContext context: Context,
         keyStore: MoneroKeyStore,
     ): EncryptedWalletDataStore = EncryptedWalletDataStore(context, keyStore)
+
+    /**
+     * Encrypted file-backed store for the 32-byte spend secret —
+     * the bytes the 25-word mnemonic reveals. Lives alongside the
+     * wallet blob, wrapped with the same keystore-derived key.
+     * Lets the reveal-seed and restore-from-seed flows work.
+     */
+    @Provides
+    @Singleton
+    fun provideSeedStorage(
+        @ApplicationContext context: Context,
+        keyStore: MoneroKeyStore,
+    ): SeedStorage = SeedStorage(context, keyStore)
 }

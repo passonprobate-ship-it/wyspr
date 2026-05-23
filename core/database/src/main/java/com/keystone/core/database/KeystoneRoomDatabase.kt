@@ -17,6 +17,7 @@ import com.keystone.core.database.dao.MailboxPullCursorDao
 import com.keystone.core.database.dao.MailboxStoredDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.PeerPaymentAddressDao
+import com.keystone.core.database.dao.PeerSubAddressMintDao
 import com.keystone.core.database.dao.RevocationDao
 import com.keystone.core.database.dao.SeenCertNonceDao
 import com.keystone.core.database.dao.TrustEdgeDao
@@ -34,6 +35,7 @@ import com.keystone.core.database.entities.MailboxPullCursorEntity
 import com.keystone.core.database.entities.MailboxStoredEntity
 import com.keystone.core.database.entities.MessageEntity
 import com.keystone.core.database.entities.PeerPaymentAddressEntity
+import com.keystone.core.database.entities.PeerSubAddressMintEntity
 import com.keystone.core.database.entities.RevocationEntity
 import com.keystone.core.database.entities.SeenCertNonceEntity
 import com.keystone.core.database.entities.TrustEdgeEntity
@@ -93,8 +95,9 @@ import com.keystone.core.database.entities.UserProfileEntity
         HandshakeQuarantineEntity::class,
         SeenCertNonceEntity::class,
         PeerPaymentAddressEntity::class,
+        PeerSubAddressMintEntity::class,
     ],
-    version = 15,
+    version = 16,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {
@@ -115,6 +118,7 @@ abstract class KeystoneRoomDatabase : RoomDatabase() {
     abstract fun handshakeQuarantineDao(): HandshakeQuarantineDao
     abstract fun seenCertNonceDao(): SeenCertNonceDao
     abstract fun peerPaymentAddressDao(): PeerPaymentAddressDao
+    abstract fun peerSubAddressMintDao(): PeerSubAddressMintDao
 }
 
 /**
@@ -357,6 +361,33 @@ internal val MIGRATION_14_15 = object : Migration(14, 15) {
             "CREATE INDEX IF NOT EXISTS " +
                 "`index_peer_payment_address_peer_pub_chain_revoked_at` " +
                 "ON `peer_payment_address`(`peer_pub`, `chain`, `revoked_at`)"
+        )
+    }
+}
+
+/**
+ * v15 → v16: Sprint W4. Add `peer_subaddress_mint` — one row per
+ * (peerPub, chain) recording the unique subaddress we minted for
+ * that peer. Lets us advertise a relationship-scoped XMR address
+ * instead of the primary so an on-chain observer can't link
+ * payments from different paired peers.
+ */
+internal val MIGRATION_15_16 = object : Migration(15, 16) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `peer_subaddress_mint` (" +
+                "`peer_pub` BLOB NOT NULL, " +
+                "`chain` TEXT NOT NULL, " +
+                "`account_index` INTEGER NOT NULL, " +
+                "`sub_address_index` INTEGER NOT NULL, " +
+                "`address` TEXT NOT NULL, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`peer_pub`, `chain`))"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS " +
+                "`index_peer_subaddress_mint_chain_account_index_sub_address_index` " +
+                "ON `peer_subaddress_mint`(`chain`, `account_index`, `sub_address_index`)"
         )
     }
 }

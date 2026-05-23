@@ -13,6 +13,7 @@ import com.keystone.core.database.dao.MailboxPullCursorDao
 import com.keystone.core.database.dao.MailboxStoredDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.PeerPaymentAddressDao
+import com.keystone.core.database.dao.PeerSubAddressMintDao
 import com.keystone.core.database.dao.RevocationDao
 import com.keystone.core.database.dao.SeenCertNonceDao
 import com.keystone.core.database.dao.TrustEdgeDao
@@ -78,6 +79,8 @@ class FakeDatabase : KeystoneDatabase {
         get() = TODO("SeenCertNonceDao not faked")
     override val peerPaymentAddressDao: PeerPaymentAddressDao
         get() = TODO("PeerPaymentAddressDao not faked")
+    override val peerSubAddressMintDao: PeerSubAddressMintDao
+        get() = TODO("PeerSubAddressMintDao not faked")
 
     override suspend fun open() {
         open = true

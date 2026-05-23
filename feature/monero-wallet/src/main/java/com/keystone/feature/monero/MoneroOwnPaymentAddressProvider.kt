@@ -5,22 +5,32 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * [OwnPaymentAddressProvider] backed by the live wallet state. When
- * the wallet is open and ready, advertises the primary Monero
- * receive address to paired peers via the messaging sync round's
- * Push frame. When the wallet isn't yet bootstrapped (cold start,
- * before the user has visited the Wallet tab) the list is empty —
- * peers get the address on the next round after bootstrap.
+ * [OwnPaymentAddressProvider] backed by the live wallet state.
  *
- * Sprint W3 hardening to land: per-peer subaddress minting
- * (`MoneroWallet.findUnusedSubAddress`) so each peer gets a
- * relationship-scoped address that's unlinkable from other peers'
- * on-chain. For v1 we share the primary address — privacy
- * regression vs. subaddress-per-peer, gain in simplicity.
+ * Two code paths:
+ *
+ *  - [ownAddressesFor] (Sprint W4): given a known peerPub, mints a
+ *    relationship-scoped subaddress via [SubAddressMintService] and
+ *    advertises it. The peerPub → (account, sub) mapping is cached
+ *    in `peer_subaddress_mint` so the same peer sees the same
+ *    address across rounds, but different peers see different
+ *    addresses. Improves chain-side privacy — observers can't
+ *    link payments received from peer A and peer B to the same
+ *    wallet.
+ *  - [ownAddresses] (fallback): when no peer context is available
+ *    (e.g. callers that haven't migrated to the per-peer form yet)
+ *    advertise the primary address. This is a privacy regression
+ *    vs. subaddress-per-peer, but the messaging sync engine always
+ *    has a peer in hand so it uses the per-peer form in practice.
+ *
+ * Either form returns an empty list when the wallet isn't open
+ * (cold start before the user has visited the Wallet tab); peers
+ * pick up the address on the next round after bootstrap.
  */
 @Singleton
 class MoneroOwnPaymentAddressProvider @Inject constructor(
     private val walletService: MoneroWalletService,
+    private val subAddressMintService: SubAddressMintService,
 ) : OwnPaymentAddressProvider {
 
     override suspend fun ownAddresses(): List<OwnPaymentAddressProvider.Entry> {
@@ -31,6 +41,24 @@ class MoneroOwnPaymentAddressProvider @Inject constructor(
             OwnPaymentAddressProvider.Entry(
                 chain = PaymentAddressService.CHAIN_MONERO,
                 address = address,
+            ),
+        )
+    }
+
+    override suspend fun ownAddressesFor(
+        peerPub: ByteArray,
+    ): List<OwnPaymentAddressProvider.Entry> {
+        // Wallet must be open to mint. Empty list fast-paths the
+        // cold-start case: peers pick up the address on the next
+        // round after bootstrap.
+        if (walletService.walletState.value !is MoneroWalletService.WalletState.Ready) {
+            return emptyList()
+        }
+        val sub = subAddressMintService.mintFor(peerPub) ?: return emptyList()
+        return listOf(
+            OwnPaymentAddressProvider.Entry(
+                chain = PaymentAddressService.CHAIN_MONERO,
+                address = sub,
             ),
         )
     }

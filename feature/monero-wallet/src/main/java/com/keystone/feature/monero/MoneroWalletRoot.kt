@@ -11,16 +11,26 @@ import com.keystone.feature.monero.ui.MoneroWalletViewModel
 
 /**
  * Entry composable for the Monero wallet feature. Wired into
- * `KeystoneNavHost` as `Routes.Monero`. Owns nothing but the
- * ViewModel binding — the screen does the rendering.
+ * `KeystoneNavHost` as `Routes.Monero`. Holds the ViewModel
+ * binding and surfaces the Wallet-tab actions
+ * (reveal-seed / restore-from-seed) to the host nav graph so
+ * those routes can be pushed on top of the wallet screen.
  */
 @Composable
-fun MoneroWalletRoot(modifier: Modifier = Modifier) {
+fun MoneroWalletRoot(
+    onRevealSeed: () -> Unit = {},
+    onRestoreWallet: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     val viewModel: MoneroWalletViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val seedBackupAcknowledged by viewModel.seedBackupAcknowledged.collectAsStateWithLifecycle()
     MoneroWalletScreen(
         state = state,
+        seedBackupAcknowledged = seedBackupAcknowledged,
         onRetry = { viewModel.retry() },
+        onRevealSeed = onRevealSeed,
+        onRestoreWallet = onRestoreWallet,
         modifier = modifier.fillMaxSize(),
     )
 }

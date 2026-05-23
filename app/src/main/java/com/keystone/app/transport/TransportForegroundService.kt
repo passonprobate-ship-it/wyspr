@@ -129,6 +129,7 @@ class TransportForegroundService : Service() {
             Reason.Handshake -> "Keystone" to "Pairing in progress"
             Reason.Sharing -> "Keystone" to "Sharing app with a peer"
             Reason.Transport -> "Keystone" to "Connection active"
+            Reason.WalletSync -> "Keystone" to "Wallet syncing in background"
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
@@ -144,7 +145,7 @@ class TransportForegroundService : Service() {
             .build()
     }
 
-    enum class Reason { Handshake, Sharing, Transport }
+    enum class Reason { Handshake, Sharing, Transport, WalletSync }
 
     companion object {
         private const val ACTION_START = "com.keystone.transport.START"

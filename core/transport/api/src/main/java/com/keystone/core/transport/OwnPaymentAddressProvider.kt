@@ -27,8 +27,24 @@ interface OwnPaymentAddressProvider {
      * state asynchronously. Implementations should be cheap —
      * returning quickly without blocking on I/O matters because
      * this is called inside the sync round's hot path.
+     *
+     * Generic / fallback form. Prefer [ownAddressesFor] when the
+     * caller knows the peer — the per-peer form lets the
+     * implementation mint a relationship-scoped subaddress instead
+     * of broadcasting the same primary address to everyone.
      */
     suspend fun ownAddresses(): List<Entry>
+
+    /**
+     * Per-peer addresses. When known, the Monero implementation
+     * mints (or recalls) a unique subaddress per [peerPub] so the
+     * peer sees a relationship-scoped address — on-chain observers
+     * can't link payments received from peer A and peer B to the
+     * same wallet via address reuse. Defaults to [ownAddresses] so
+     * implementations that don't (yet) support per-peer scoping
+     * keep working.
+     */
+    suspend fun ownAddressesFor(peerPub: ByteArray): List<Entry> = ownAddresses()
 
     /** One advertisement entry: chain identifier + encoded address. */
     data class Entry(val chain: String, val address: String) {

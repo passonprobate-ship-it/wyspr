@@ -28,6 +28,14 @@ class SendXmrViewModel @Inject constructor(
         val peerBoundAddress: String? = null,
         val displayName: String? = null,
         val lastSendResult: MoneroWalletService.SendResult? = null,
+        /**
+         * Sprint W4: user-selected fee tier for the in-flight
+         * compose. Defaults to Medium — same as the engine's
+         * default — and persists across recompose. Send passes
+         * this through to [MoneroWalletService.sendTo].
+         */
+        val feePriority: im.molly.monero.sdk.FeePriority =
+            im.molly.monero.sdk.FeePriority.Medium,
     )
 
     private val _state = MutableStateFlow(State())
@@ -92,9 +100,15 @@ class SendXmrViewModel @Inject constructor(
     fun send(amountAtomicUnits: Long) {
         val pp = peerPub ?: return
         if (amountAtomicUnits <= 0L) return
+        val priority = _state.value.feePriority
         viewModelScope.launch {
-            val result = walletService.sendTo(pp, amountAtomicUnits)
+            val result = walletService.sendTo(pp, amountAtomicUnits, priority)
             _state.value = _state.value.copy(lastSendResult = result)
         }
+    }
+
+    /** Pick a different fee tier; reflected in the next [send] call. */
+    fun setFeePriority(priority: im.molly.monero.sdk.FeePriority) {
+        _state.value = _state.value.copy(feePriority = priority)
     }
 }

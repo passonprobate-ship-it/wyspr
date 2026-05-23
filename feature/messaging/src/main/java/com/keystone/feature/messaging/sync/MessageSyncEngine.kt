@@ -187,11 +187,13 @@ internal class MessageSyncEngine(
         // rows are skipped (already confirmed received).
         val mailboxEnvelopes = sealForMailboxPeer(pending)
 
-        // Sprint W3: advertise our payment addresses to this peer.
-        // Sourced from the OwnPaymentAddressProvider — the Monero
-        // wallet provider returns our XMR primary address when the
-        // wallet is bootstrapped, empty list otherwise.
-        val paymentAddresses = ownPaymentAddressProvider.ownAddresses()
+        // Sprint W3/W4: advertise our payment addresses to this peer.
+        // Sourced via the per-peer form so the Monero provider mints
+        // a relationship-scoped subaddress for THIS peer (W4) — the
+        // peer therefore sees a different XMR address from every
+        // other paired peer, which prevents on-chain linkage via
+        // address reuse.
+        val paymentAddresses = ownPaymentAddressProvider.ownAddressesFor(peerPub.bytes)
             .map { MessageSyncFrame.PaymentAddressEntry(it.chain, it.address) }
 
         // Even when all lists are empty we still send a Push so the

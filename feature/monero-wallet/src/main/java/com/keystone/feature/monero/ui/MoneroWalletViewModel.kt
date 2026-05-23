@@ -3,6 +3,7 @@ package com.keystone.feature.monero.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.keystone.feature.monero.MoneroWalletService
+import com.keystone.feature.monero.persistence.WalletPrefs
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -17,9 +18,11 @@ import javax.inject.Inject
 @HiltViewModel
 class MoneroWalletViewModel @Inject constructor(
     private val service: MoneroWalletService,
+    walletPrefs: WalletPrefs,
 ) : ViewModel() {
 
     val state: StateFlow<MoneroWalletService.WalletState> = service.walletState
+    val seedBackupAcknowledged: StateFlow<Boolean> = walletPrefs.seedBackupAcknowledged
 
     init {
         viewModelScope.launch { service.bootstrap() }

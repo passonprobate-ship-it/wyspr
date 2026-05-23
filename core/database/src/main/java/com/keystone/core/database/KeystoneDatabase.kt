@@ -13,6 +13,7 @@ import com.keystone.core.database.dao.MailboxPullCursorDao
 import com.keystone.core.database.dao.MailboxStoredDao
 import com.keystone.core.database.dao.MessageDao
 import com.keystone.core.database.dao.PeerPaymentAddressDao
+import com.keystone.core.database.dao.PeerSubAddressMintDao
 import com.keystone.core.database.dao.RevocationDao
 import com.keystone.core.database.dao.SeenCertNonceDao
 import com.keystone.core.database.dao.TrustEdgeDao
@@ -75,4 +76,5 @@ interface KeystoneDatabase {
     val handshakeQuarantineDao: HandshakeQuarantineDao
     val seenCertNonceDao: SeenCertNonceDao
     val peerPaymentAddressDao: PeerPaymentAddressDao
+    val peerSubAddressMintDao: PeerSubAddressMintDao
 }

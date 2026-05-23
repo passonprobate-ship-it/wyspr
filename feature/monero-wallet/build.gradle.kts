@@ -88,6 +88,10 @@ dependencies {
     // runtime, all of which exists in 1.12.0.
     implementation("androidx.core:core:1.12.0")
     implementation("androidx.core:core-ktx:1.12.0")
+
+    // EncryptedSharedPreferences for the seed-backup-acked flag.
+    // Same version pin the rest of the codebase uses.
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 }
 
 // Constrain transitive androidx.core to 1.12.x — see above.

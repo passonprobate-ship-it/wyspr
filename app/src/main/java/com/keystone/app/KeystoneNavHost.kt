@@ -19,6 +19,8 @@ import com.keystone.core.identity.PublicKey
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.marketplace.MarketplaceRoot
 import com.keystone.feature.monero.MoneroWalletRoot
+import com.keystone.feature.monero.ui.RestoreWalletScreen
+import com.keystone.feature.monero.ui.SeedRevealScreen
 import com.keystone.feature.monero.ui.SendXmrScreen
 import com.keystone.feature.marketplace.screens.CommunityGraphScreen
 import com.keystone.feature.messaging.mailbox.screens.MailboxScreen
@@ -202,7 +204,27 @@ fun KeystoneNavHost(
             )
         }
         composable(Routes.Monero) {
-            MoneroWalletRoot()
+            MoneroWalletRoot(
+                onRevealSeed = { navController.navigate(Routes.SeedReveal) },
+                onRestoreWallet = { navController.navigate(Routes.RestoreWallet) },
+            )
+        }
+        composable(Routes.SeedReveal) {
+            SeedRevealScreen(
+                onBack = { navController.popBackStack() },
+                biometricPrompt = biometricPrompt,
+            )
+        }
+        composable(Routes.RestoreWallet) {
+            RestoreWalletScreen(
+                onBack = { navController.popBackStack() },
+                onRestored = {
+                    // Pop back to the wallet root so the user sees
+                    // the freshly-restored balance / address.
+                    navController.popBackStack(Routes.Monero, inclusive = false)
+                },
+                biometricPrompt = biometricPrompt,
+            )
         }
         composable(
             route = "${Routes.SendXmr}/{peerHex}",
@@ -275,6 +297,10 @@ object Routes {
     const val Monero = "monero"
     /** Sprint W2: send XMR to a paired peer. Path: send_xmr/{peerHex}. */
     const val SendXmr = "send_xmr"
+    /** Sprint W4: reveal the 25-word Monero seed (biometric-gated). */
+    const val SeedReveal = "seed_reveal"
+    /** Sprint W4: restore wallet from 25-word seed or 64-hex spend secret. */
+    const val RestoreWallet = "restore_wallet"
     /** Full-screen conversation routes — pushed on top of the
      *  bottom-nav shell so the nav bar is hidden during chat. */
     const val Conversation = "conversation"
