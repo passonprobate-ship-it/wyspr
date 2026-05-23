@@ -1,4 +1,4 @@
-# Keystone — Private Groups
+# Wyspr — Private Groups
 
 Multi-party end-to-end encrypted threads on top of the already-shipped
 1:1 messaging stack. Same trust graph, same Noise transport, same
@@ -42,7 +42,7 @@ the same id:
 
 ```
 groupId = BLAKE2s-256(
-    "KEYSTONE/v1/group-id"
+    "WYSPR/v1/group-id"
     || creatorPub      // 32 bytes, Ed25519
     || nameBytes       // canonical UTF-8 of the user-chosen name
     || createdAt       // u64 big-endian seconds

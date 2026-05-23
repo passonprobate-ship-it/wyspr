@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "keystone"
+rootProject.name = "wyspr"
 
 include(":app")
 

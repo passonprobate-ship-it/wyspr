@@ -7,10 +7,10 @@ plugins {
 }
 
 // :feature:monero-wallet is the Monero wallet utility module. It is
-// the only Keystone module that intentionally depends on real
+// the only Wyspr module that intentionally depends on real
 // cryptocurrency code, and the only module whose distribution
 // licence concerns shift the combined APK to GPLv3 once the
-// monerujo JNI binding lands (v0.7.0b). The rest of Keystone is
+// monerujo JNI binding lands (v0.7.0b). The rest of Wyspr is
 // Apache-2.0 and may be reused under those terms.
 //
 // Architecture: remote-node-over-Tor only. The module never speaks
@@ -20,7 +20,7 @@ plugins {
 // (to be added) for the formal write-up.
 
 android {
-    namespace = "com.keystone.feature.monero"
+    namespace = "com.wyspr.feature.monero"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {
@@ -83,7 +83,7 @@ dependencies {
 
     // mollyim transitively pulls androidx.core 1.15.0 which requires
     // compileSdk 35; we're on compileSdk 34 (AGP 8.2.0's max). Force
-    // the version Keystone uses everywhere else. Safe because mollyim
+    // the version Wyspr uses everywhere else. Safe because mollyim
     // only references core's RangeNotificationCompat-style stuff at
     // runtime, all of which exists in 1.12.0.
     implementation("androidx.core:core:1.12.0")

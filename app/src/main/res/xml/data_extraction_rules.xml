@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Keystone does not participate in any backup or device-transfer flow.
+  Wyspr does not participate in any backup or device-transfer flow.
   Both cloud and device-to-device extraction are explicitly forbidden.
 -->
 <data-extraction-rules>

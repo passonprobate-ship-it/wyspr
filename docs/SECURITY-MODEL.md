@@ -1,4 +1,4 @@
-# Keystone — Security Model
+# Wyspr — Security Model
 
 ## 1. Threat Model
 
@@ -21,7 +21,7 @@ We **do not** defend against:
 
 ## 2. Identity
 
-Each Keystone install generates **one long-term identity key pair** on first
+Each Wyspr install generates **one long-term identity key pair** on first
 launch:
 
 - **Algorithm**: Ed25519 (signing) + X25519 (Noise key agreement), with the
@@ -31,8 +31,8 @@ launch:
   exposes it, falling back to `TEE`. Software-only storage is rejected at
   install time; the app refuses to run.
 - **Subkey derivation**: HKDF-SHA256 over a keystore-wrapped seed, with
-  the info string `"KEYSTONE/v1/<purpose>"` as the only domain separator.
-  Live consumers: `KEYSTONE/v1/db` (SQLCipher key) and `KEYSTONE/v1/tor-hs`
+  the info string `"WYSPR/v1/<purpose>"` as the only domain separator.
+  Live consumers: `WYSPR/v1/db` (SQLCipher key) and `WYSPR/v1/tor-hs`
   (HSv3 hidden-service Ed25519 seed). Never reuse an info string.
 - **Fingerprint**: First 16 bytes of `SHA-256(pub || domain_separator)`,
   rendered as five space-separated groups of base32 (e.g.
@@ -219,22 +219,22 @@ from scratch with a clean key pair.
 ### 3.7 Long-Range Connectivity (Tor Hidden Services)
 
 After the in-person QR handshake, two peers may need to communicate
-when out of BLE range. Keystone uses **embedded Tor hidden services**
-so neither device exposes a public IP or a Keystone-operated rendezvous.
+when out of BLE range. Wyspr uses **embedded Tor hidden services**
+so neither device exposes a public IP or a Wyspr-operated rendezvous.
 
 - Each install runs its own Tor daemon (kmp-tor `-exec` resource —
   the binary is extracted to `nativeLibraryDir` on install and
   `fork()`s as a subprocess).
 - The HSv3 Ed25519 service key is derived deterministically from
-  the keystore identity (`KEYSTONE/v1/tor-hs` HKDF subkey), so the
+  the keystore identity (`WYSPR/v1/tor-hs` HKDF subkey), so the
   `.onion` is stable across reinstalls as long as the keystore
   identity survives. Wiping the identity changes the `.onion`.
 - The address is shared **only** through the QR handshake — never
   broadcast, never published to any directory. Possession of a
-  `.onion` from a Keystone QR therefore implies the holder has
+  `.onion` from a Wyspr QR therefore implies the holder has
   already passed the physical-trust check.
 - Tor's own threat model still applies: a global passive adversary
-  who sees both ends of a circuit can correlate timing. Keystone
+  who sees both ends of a circuit can correlate timing. Wyspr
   treats `.onion`-routed traffic as confidentiality-preserving but
   not unlinkable against that adversary class.
 
@@ -293,10 +293,10 @@ don't want.
 ## 4. Data at Rest
 
 - **Database**: SQLCipher with a 256-bit key derived from the hardware-
-  keystore identity key via HKDF (`KEYSTONE/v1/db` subkey). The database
+  keystore identity key via HKDF (`WYSPR/v1/db` subkey). The database
   cannot be opened on another device, even with the file copied off.
 - **Tor hidden-service key**: HSv3 Ed25519 seed derived from the
-  `KEYSTONE/v1/tor-hs` subkey; written to Tor's `HiddenServiceDir`
+  `WYSPR/v1/tor-hs` subkey; written to Tor's `HiddenServiceDir`
   with POSIX 0700 permissions; never persisted in plaintext outside
   that directory.
 - **Vault payloads**: Sealed with XChaCha20-Poly1305; the symmetric key
@@ -313,7 +313,7 @@ don't want.
 
 ## 5. Data in Transit
 
-All payload bytes between any two Keystone nodes traverse a Noise_XX_25519_
+All payload bytes between any two Wyspr nodes traverse a Noise_XX_25519_
 ChaChaPoly_BLAKE2s session. Transport-layer headers are minimal and
 carry no identity:
 
@@ -322,9 +322,9 @@ carry no identity:
 ```
 
 The MAC layer (BLE advertising, WiFi Direct beacons) advertises an
-opaque service UUID derived as `BLAKE2s(community_id || "KEYSTONE-SVC")`
+opaque service UUID derived as `BLAKE2s(community_id || "WYSPR-SVC")`
 truncated to 16 bytes — see PROTOCOLS.md §6. A passive observer cannot
-distinguish two Keystone nodes from one another without joining.
+distinguish two Wyspr nodes from one another without joining.
 
 For long-range traffic, the same Noise frames flow inside a Tor
 circuit terminating at the peer's hidden service. The transport layer
@@ -332,10 +332,10 @@ SOCKS5-connects through the local Tor daemon's auto-assigned listener.
 
 ## 6. Software Distribution
 
-Keystone never depends on an app store. Two delivery paths exist; both
+Wyspr never depends on an app store. Two delivery paths exist; both
 keep distribution peer-to-peer.
 
-- **Peer share (initial install).** A user opens "Share Keystone" and the
+- **Peer share (initial install).** A user opens "Share Wyspr" and the
   device stands up an on-device HTTPS server bound to its private-network
   IP, using a per-session self-signed certificate. A QR encodes the URL.
   The recipient scans, reviews a one-page mini-site, and downloads the
@@ -372,7 +372,7 @@ The following are **bugs to avoid**, not features to add:
   lost identity. This is a feature.
 - **Outbound to arbitrary hosts.** Peer-pull updates MUST traverse the
   SSRF gate. Loosening the allowlist to public IPs would convert
-  Keystone into an attacker-controlled fetcher.
+  Wyspr into an attacker-controlled fetcher.
 
 ## 8. Open Questions
 
@@ -407,7 +407,7 @@ trusted to host the bytes:
 
 | Tier | Channel | Operator trust |
 |---|---|---|
-| 1 | F-Droid + community mirrors | Single signing key (Keystone maintainer) |
+| 1 | F-Droid + community mirrors | Single signing key (Wyspr maintainer) |
 | 2 | Peer share (`feature:onboarding/share/`) | The trusted peer in front of you |
 | 3 | Onion mirror (future, v0.7.4) | Any peer with a known `.onion` |
 
@@ -425,7 +425,7 @@ We will never ship to Google Play — see docs/FDROID.md §4.
 
 ## 10. Cryptocurrency Wallet (Monero)
 
-Keystone bundles a Monero wallet as a utility module
+Wyspr bundles a Monero wallet as a utility module
 (`:feature:monero-wallet`, v0.7.0a scaffold landed; JNI crypto
 engine scheduled for v0.7.0b).
 
@@ -441,7 +441,7 @@ Komodo.
 |---|---|
 | Remote-node operator correlates the user's IP with view-key registration | Mandatory routing through the embedded Tor SOCKS proxy. Node never sees device IP. |
 | Hostile remote node returns false chain tip / withholds inbound transactions | Round-robin across a curated node pool; majority-rules tip check; tx submission to ≥2 nodes (v0.8.2). |
-| Spend key on disk → wallet drain on device compromise | Encrypted under the `KEYSTONE/v1/monero` HKDF subkey of the hardware-keystore identity. Wallet file unrecoverable after a keystore reset. |
+| Spend key on disk → wallet drain on device compromise | Encrypted under the `WYSPR/v1/monero` HKDF subkey of the hardware-keystore identity. Wallet file unrecoverable after a keystore reset. |
 | View-key leak reveals every incoming payment | Per-community sub-wallets so a compromised view key exposes only one community's payment history. |
 | DNS leak of remote-node hostname | RPC client uses SOCKS5 DOMAINNAME (ATYP=0x03) — Tor resolves the hostname; the device's stub resolver never sees it. |
 | Hostile node streams gigabytes to OOM the wallet UI | Response body capped at 256 KB per request. |
@@ -459,5 +459,5 @@ Komodo.
 ### 10.3 Licence note
 
 The combined APK shifts to GPLv3 once the JNI crypto binding is
-bundled in v0.7.0b. Keystone's other modules remain Apache-2.0;
+bundled in v0.7.0b. Wyspr's other modules remain Apache-2.0;
 GPL contagion is contained to the distributed binary.

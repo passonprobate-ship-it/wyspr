@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.feature.marketplace"
+    namespace = "com.wyspr.feature.marketplace"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

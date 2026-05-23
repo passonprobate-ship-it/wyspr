@@ -1,14 +1,14 @@
-# Keystone — F-Droid Release Process
+# Wyspr — F-Droid Release Process
 
-F-Droid is Keystone's canonical Android distribution channel. It is
+F-Droid is Wyspr's canonical Android distribution channel. It is
 the only major Android app store consistent with the project's
 anti-platform posture: F-Droid does not require a Google account,
 does not link installs to a real identity, and builds every listed
 app from source in their own infrastructure.
 
-This document is for the Keystone maintainer cutting a release. It
+This document is for the Wyspr maintainer cutting a release. It
 covers (1) what F-Droid expects, (2) the deviations from F-Droid's
-reproducible-build rules that Keystone currently ships with and
+reproducible-build rules that Wyspr currently ships with and
 how we plan to close them, and (3) the step-by-step release
 checklist.
 
@@ -16,10 +16,10 @@ checklist.
 
 Two artefacts:
 
-1. **The build recipe** at `metadata/com.keystone.yml`. This file
+1. **The build recipe** at `metadata/com.wyspr.yml`. This file
    is drafted in this repo and submitted as a PR to
    [`f-droid/fdroiddata`](https://gitlab.com/fdroid/fdroiddata).
-   F-Droid's CI uses it to build Keystone in their sandbox.
+   F-Droid's CI uses it to build Wyspr in their sandbox.
 
 2. **Fastlane metadata** at `fastlane/metadata/android/en-US/`:
    - `title.txt` — store title.
@@ -34,7 +34,7 @@ The submission PR points at the tag; F-Droid handles the rest.
 ## 2. Reproducible-build deviations
 
 F-Droid's strongest guarantee is that the APK they distribute was
-built bit-for-bit from the source they show you. Keystone fails this
+built bit-for-bit from the source they show you. Wyspr fails this
 check today because two of our dependencies arrive as pre-built
 native binaries:
 
@@ -51,7 +51,7 @@ pre-built AARs from Maven Central / JitPack.
 ### Plan to close the gap
 
 For the first listing we **accept the deviation** and document it
-above. F-Droid will publish Keystone but the reproducible-build
+above. F-Droid will publish Wyspr but the reproducible-build
 badge will be missing.
 
 To earn the badge later we have two paths, in order of effort:
@@ -71,7 +71,7 @@ Tracked as a separate effort in NEXT-STEPS.md §9.
 
 ## 3. Release checklist
 
-For every release Keystone ships to F-Droid:
+For every release Wyspr ships to F-Droid:
 
 1. **Bump the version.** Edit `app/build.gradle.kts`:
    - `versionCode` — strictly increasing integer. Convention:
@@ -84,7 +84,7 @@ For every release Keystone ships to F-Droid:
    it to ~5 lines, focused on user-visible changes.
 
 3. **Update `CurrentVersion` / `CurrentVersionCode` in
-   `metadata/com.keystone.yml`** to match. Add a new `Builds:` entry
+   `metadata/com.wyspr.yml`** to match. Add a new `Builds:` entry
    with the new `versionName` / `versionCode` / `commit: vN.N.N`.
 
 4. **Run the full build.** From the repo root:
@@ -104,8 +104,8 @@ For every release Keystone ships to F-Droid:
 
 6. **Submit the fdroiddata PR.**
    - Fork `f-droid/fdroiddata` on GitLab.
-   - Copy `metadata/com.keystone.yml` from this repo into
-     `fdroiddata/metadata/com.keystone.yml`.
+   - Copy `metadata/com.wyspr.yml` from this repo into
+     `fdroiddata/metadata/com.wyspr.yml`.
    - Open a PR. F-Droid's CI runs the build in their sandbox and
      comments on the PR with the diff. Address any feedback.
 
@@ -118,11 +118,11 @@ For every release Keystone ships to F-Droid:
 We will never ship to the Play Store. Reasons:
 
 - **Developer account.** Google Play requires a real identity tied to
-  a billing account. Keystone's threat model assumes the developer
+  a billing account. Wyspr's threat model assumes the developer
   may be a target — and the developer's identity must not be
   required to ship the binary.
 - **Play Integrity.** Google's hardware attestation gates apps and
-  exposes a fingerprint of the device to the app. Keystone refuses
+  exposes a fingerprint of the device to the app. Wyspr refuses
   to participate in remote attestation as a user.
 - **In-app review / takedown risk.** Play can pull the app on a
   trademark complaint, a policy "violation" related to encryption
@@ -130,7 +130,7 @@ We will never ship to the Play Store. Reasons:
   cannot be removed in the same way because its repo is mirrored by
   every running client.
 
-Distribution paths Keystone supports:
+Distribution paths Wyspr supports:
 
 | Path | Tier | Who hosts |
 |---|---|---|

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.transport.reticulum"
+    namespace = "com.wyspr.core.transport.reticulum"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

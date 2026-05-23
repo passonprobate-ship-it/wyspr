@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.feature.messaging"
+    namespace = "com.wyspr.feature.messaging"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

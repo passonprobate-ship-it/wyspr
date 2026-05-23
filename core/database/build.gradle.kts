@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.database"
+    namespace = "com.wyspr.core.database"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

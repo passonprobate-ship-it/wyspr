@@ -1,4 +1,4 @@
-# Keystone — Protocols
+# Wyspr — Protocols
 
 This document specifies the on-the-wire and on-disk formats. Implementations
 in any module MUST match this spec; if they diverge, the spec is wrong, fix
@@ -44,7 +44,7 @@ Channel binding:
   differs, the session terminates.
 - For the handshake initiated from a QR scan, both QR nonces and the
   community id are mixed into the prologue:
-  `prologue = "KEYSTONE/v1" || community_id || nonce_inviter || nonce_invitee || eph_pub_inviter || eph_pub_invitee`
+  `prologue = "WYSPR/v1" || community_id || nonce_inviter || nonce_invitee || eph_pub_inviter || eph_pub_invitee`
   This binds the cryptographic session to the physical-world act of
   scanning.
 
@@ -329,7 +329,7 @@ The BLE service UUID and WiFi Direct service-info hash are both derived
 deterministically from `community_id`:
 
 ```
-service_uuid = UUID(BLAKE2s-256(community_id || "KEYSTONE-SVC")[0..16])
+service_uuid = UUID(BLAKE2s-256(community_id || "WYSPR-SVC")[0..16])
 ```
 
 BLAKE2s is provided by noise-java's `Blake2sMessageDigest` (already on
@@ -337,14 +337,14 @@ the classpath via Noise). RFC 7693 vectors are exercised by
 `ServiceUuidTest`.
 
 This means a passive scanner with no `community_id` cannot identify
-Keystone nodes by advertisement alone. They appear as devices serving
+Wyspr nodes by advertisement alone. They appear as devices serving
 an arbitrary 128-bit UUID. (A scanner who has joined any community can
 of course detect *their* community's UUID; this is the intended outcome.)
 
 ## 7. Long-Range Transport (Tor Hidden Services)
 
 Two peers who completed an in-person QR handshake can reconnect over
-the public internet without exposing IPs or relying on any Keystone
+the public internet without exposing IPs or relying on any Wyspr
 infrastructure.
 
 ### 7.1 Hidden service key derivation
@@ -354,7 +354,7 @@ Ed25519 key seed is derived from the device's keystore identity:
 
 ```
 hs_seed = HKDF-SHA256(
-    ikm  = keystoreManager.deriveSubkey("KEYSTONE/v1/tor-hs"),
+    ikm  = keystoreManager.deriveSubkey("WYSPR/v1/tor-hs"),
     info = "..."
 )
 ```
@@ -387,7 +387,7 @@ beacon, no third-party rendezvous.
 
 ### 8.1 Peer APK share
 
-When a user opens "Share Keystone", the device:
+When a user opens "Share Wyspr", the device:
 
 1. Starts the foreground transport service (so the share survives
    backgrounding).
@@ -411,14 +411,14 @@ A user pastes or scans a peer's share URL. The client:
    public IPv4.
 2. Fetches `/version.json`. Compares `versionCode` to the local
    build.
-3. If newer, streams `/keystone.apk` with on-the-fly SHA-256
+3. If newer, streams `/wyspr.apk` with on-the-fly SHA-256
    computation against the digest in `/version.json`.
 4. On match, hands the APK to the system `PackageInstaller`. The
    system layer will reject the install if the signer differs from
-   the installed Keystone.
+   the installed Wyspr.
 5. If the user has not granted `REQUEST_INSTALL_PACKAGES`, surface
    a dedicated state prompting them to enable "Install unknown apps"
-   for Keystone.
+   for Wyspr.
 
 Layer-2 (automatic discovery through the BLE trust channel) and
 Layer-3 (K-quorum verification of the APK over the trust graph)

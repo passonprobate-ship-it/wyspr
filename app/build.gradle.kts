@@ -27,11 +27,11 @@ fun signingProp(key: String): String? {
 }
 
 android {
-    namespace = "com.keystone.app"
+    namespace = "com.wyspr.app"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.keystone"
+        applicationId = "com.wyspr"
         minSdk = 26
         targetSdk = 34
         versionCode = 20
@@ -43,12 +43,12 @@ android {
             // Resolve relative to the project root so `keystore/...` works
             // regardless of which gradle subproject the task was invoked
             // from. Absolute paths from properties are honoured as-is.
-            val storePath = signingProp("KEYSTONE_STORE_FILE")
-                ?: "keystore/keystone-release.jks"
+            val storePath = signingProp("WYSPR_STORE_FILE")
+                ?: "keystore/wyspr-release.jks"
             storeFile = rootProject.file(storePath)
-            storePassword = signingProp("KEYSTONE_STORE_PASSWORD") ?: ""
-            keyAlias = signingProp("KEYSTONE_KEY_ALIAS") ?: ""
-            keyPassword = signingProp("KEYSTONE_KEY_PASSWORD") ?: ""
+            storePassword = signingProp("WYSPR_STORE_PASSWORD") ?: ""
+            keyAlias = signingProp("WYSPR_KEY_ALIAS") ?: ""
+            keyPassword = signingProp("WYSPR_KEY_PASSWORD") ?: ""
         }
     }
 
@@ -75,7 +75,7 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
-        // Fail the build on warnings; Keystone runs hot, no laxity.
+        // Fail the build on warnings; Wyspr runs hot, no laxity.
         allWarningsAsErrors = true
     }
 
@@ -111,8 +111,8 @@ android {
 }
 
 // mollyim/monero-wallet-sdk transitively pulls androidx.core 1.15.0,
-// which requires compileSdk 35. Keystone is on compileSdk 34 (AGP 8.2.0's
-// max recommended). Force core back to the version every other Keystone
+// which requires compileSdk 35. Wyspr is on compileSdk 34 (AGP 8.2.0's
+// max recommended). Force core back to the version every other Wyspr
 // module uses — mollyim doesn't actually reach for 1.15-only APIs at
 // runtime. Drop these when we bump AGP / compileSdk together.
 configurations.configureEach {
@@ -123,7 +123,7 @@ configurations.configureEach {
 }
 
 dependencies {
-    // ──── Keystone modules ──────────────────────────────────────────────
+    // ──── Wyspr modules ──────────────────────────────────────────────
     implementation(project(":core:crypto"))
     implementation(project(":core:identity"))
     implementation(project(":core:trust"))
@@ -185,13 +185,13 @@ dependencies {
     // must be present for the runtime to pick the right path on
     // each device.
     //
-    // Pinned to 2.0.0 + resource 408.13.2 because Keystone runs on
+    // Pinned to 2.0.0 + resource 408.13.2 because Wyspr runs on
     // Kotlin 1.9.22 (tied to Compose Compiler 1.5.10). Every kmp-tor
     // release after 2.0.x is built against Kotlin 2.1+ and pulls in
     // a kotlin-stdlib whose binary metadata version (2.x) the 1.9
     // compiler cannot read. 2.0.0 was built with 1.9.24, so its
     // class metadata is binary-compatible with our compiler.
-    // Re-evaluate the moment Keystone upgrades past Kotlin 2.0.
+    // Re-evaluate the moment Wyspr upgrades past Kotlin 2.0.
     implementation("io.matthewnelson.kmp-tor:runtime:2.0.0")
     implementation("io.matthewnelson.kmp-tor:resource-exec-tor:408.13.2")
     implementation("io.matthewnelson.kmp-tor:resource-noexec-tor:408.13.2")

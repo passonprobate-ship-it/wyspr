@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.transport.api"
+    namespace = "com.wyspr.core.transport.api"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

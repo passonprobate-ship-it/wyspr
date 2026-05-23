@@ -1,8 +1,8 @@
-# Keystone
+# Wyspr
 
 > An operational toolkit for resilient, high-trust communities.
 
-**Keystone** is a privacy-first, decentralized Android application. It is designed
+**Wyspr** is a privacy-first, decentralized Android application. It is designed
 for groups that cannot rely on commercial messaging platforms — communities where
 exclusion of unvetted actors, censorship-resistance, and offline operation are
 non-negotiable.
@@ -22,7 +22,7 @@ authenticated, and every byte of payload data is end-to-end encrypted.
    discover one another via local mesh (Bluetooth LE, WiFi Direct) and exchange
    data directly. Long-range sync rides over user-controlled transports
    (embedded Tor hidden services, friend-to-friend relays) — never a
-   Keystone-operated backend. Software is distributed peer-to-peer: an
+   Wyspr-operated backend. Software is distributed peer-to-peer: an
    on-device HTTPS share server hands an APK to a new recruit; updates can
    be pulled from any peer's `/version.json`.
 
@@ -41,7 +41,7 @@ each `feature/*` module is a self-contained Utility Module that can be enabled,
 disabled, or replaced without touching the rest of the system.
 
 ```
-keystone/
+wyspr/
 ├── app/                            Application shell, DI graph root,
 │                                    embedded Tor backend, transport
 │                                    foreground service
@@ -113,7 +113,7 @@ End-to-end handshake landed in v0.1 and has expanded since:
   per-session self-signed cert; recipient scans a QR and downloads directly.
   Layer-1 update pull: `/version.json` + SHA-256-verified streaming
   download → system PackageInstaller.
-- **F-Droid release plumbing (v0.6.7)** — `metadata/com.keystone.yml`
+- **F-Droid release plumbing (v0.6.7)** — `metadata/com.wyspr.yml`
   draft manifest + `fastlane/metadata/android/en-US/` description and
   changelog in the repo, ready to submit to `f-droid/fdroiddata`. See
   `docs/FDROID.md` for the maintainer release process and the

@@ -1,0 +1,222 @@
+package com.wyspr.feature.messaging
+
+import com.wyspr.core.crypto.KeystoreManager
+import com.wyspr.core.database.WysprDatabase
+import com.wyspr.core.database.entities.MessageEntity
+import com.wyspr.core.identity.PublicKey
+import javax.inject.Inject
+import javax.inject.Singleton
+import kotlinx.coroutines.flow.Flow
+
+/**
+ * Application-level service that wraps the [MessageDao] with the
+ * domain-shaped operations the messaging feature needs: send a
+ * fresh outbound message, observe the thread for a peer, observe
+ * the conversation-list summary, mark inbound messages as read.
+ *
+ * Sprint 1 is local-only — `send` queues a message as `pending` in
+ * the DB. Sprint 2 will add a sync push to a paired peer when both
+ * devices are in BLE range, transitioning rows from `pending` to
+ * `sent` and (on ACK) `delivered`.
+ */
+@Singleton
+class MessageStore @Inject constructor(
+    private val database: WysprDatabase,
+    private val keystore: KeystoreManager,
+) {
+
+    /** Reactive view of a single thread (oldest first). */
+    fun threadFlow(peerPub: PublicKey): Flow<List<MessageEntity>> {
+        ensureOpen()
+        return database.messageDao.threadFlow(peerPub.bytes)
+    }
+
+    /** Reactive view of the most recent message per thread. */
+    fun latestPerThreadFlow(): Flow<List<MessageEntity>> {
+        ensureOpen()
+        return database.messageDao.latestPerThreadFlow()
+    }
+
+    /**
+     * Compose and persist a new outbound message. The envelope is
+     * signed by the local keystore now (Sprint 1) so that when
+     * Sprint 2 ships networking, the bytes the peer receives are
+     * the bytes the sender signed — no retroactive re-signing.
+     */
+    suspend fun send(
+        toPub: PublicKey,
+        body: String,
+        clockSeconds: Long = System.currentTimeMillis() / 1000,
+    ): MessageEntity {
+        ensureOpen()
+        val ownPub = PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
+        val envelope = MessageEnvelope.issue(
+            keystore = keystore,
+            fromPub = ownPub,
+            toPub = toPub,
+            body = body,
+            now = clockSeconds,
+        )
+        val entity = MessageEntity(
+            id = envelope.id,
+            threadPub = toPub.bytes,
+            fromPub = envelope.fromPub.bytes,
+            toPub = envelope.toPub.bytes,
+            createdAt = envelope.createdAt,
+            receivedAt = null,
+            body = envelope.body,
+            status = STATUS_PENDING,
+            signature = envelope.signature,
+        )
+        database.messageDao.upsert(entity)
+        return entity
+    }
+
+    /**
+     * Pending outbound messages from the local identity addressed to
+     * a specific [peerPub]. Used by the sync engine to build a Push
+     * frame on session establishment.
+     */
+    suspend fun pendingOutboundFor(ownPub: PublicKey, peerPub: PublicKey): List<MessageEntity> {
+        ensureOpen()
+        return database.messageDao.pendingOutboundFromTo(ownPub.bytes, peerPub.bytes)
+    }
+
+    /** Most-recent message in a thread — used to populate notification previews. */
+    suspend fun latestFromPeer(peerPub: PublicKey): MessageEntity? {
+        ensureOpen()
+        return database.messageDao.threadSnapshot(peerPub.bytes).lastOrNull()
+    }
+
+    /** Number of inbound messages from [peerPub] still in "received" state. */
+    suspend fun unreadInboundFrom(peerPub: PublicKey): Int {
+        ensureOpen()
+        return database.messageDao.threadSnapshot(peerPub.bytes)
+            .count { it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED }
+    }
+
+    /**
+     * Inbound messages from [peerPub] the user has now viewed but
+     * for which we haven't yet sent a read receipt to the sender.
+     * Sprint 4 read-receipt path picks these up at sync time.
+     */
+    suspend fun pendingReadAckFor(peerPub: PublicKey): List<MessageEntity> {
+        ensureOpen()
+        return database.messageDao.pendingReadAckFor(peerPub.bytes)
+    }
+
+    /**
+     * Flip every inbound from [peerPub] currently in "received" to
+     * "received_viewed". Called from the ConversationViewModel when
+     * the user opens the chat — they've now seen these messages.
+     */
+    suspend fun markInboundViewed(peerPub: PublicKey) {
+        ensureOpen()
+        // SQL-side filter + bulk UPDATE in one round-trip. Previously
+        // loaded the whole thread into memory and ran one UPDATE per
+        // row inside the sync engine's critical section.
+        val unreadIds = database.messageDao
+            .threadSnapshot(peerPub.bytes)
+            .asSequence()
+            .filter { it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED }
+            .map { it.id }
+            .toList()
+        if (unreadIds.isEmpty()) return
+        database.messageDao.bulkTransitionStatus(
+            ids = unreadIds,
+            fromStatus = STATUS_RECEIVED,
+            newStatus = STATUS_RECEIVED_VIEWED,
+        )
+    }
+
+    /**
+     * Mark the read receipt for [ids] as having been delivered to
+     * the sender (transitioning to the final inbound terminal state).
+     */
+    suspend fun markReadAcked(ids: List<ByteArray>) {
+        ensureOpen()
+        if (ids.isEmpty()) return
+        // One UPDATE for the whole list. The previous per-id loop ran
+        // inside the sync round's critical section.
+        database.messageDao.bulkTransitionStatus(
+            ids = ids,
+            fromStatus = STATUS_RECEIVED_VIEWED,
+            newStatus = STATUS_RECEIVED_ACKED,
+        )
+    }
+
+    /**
+     * The peer told us they've read the outbound messages with
+     * these ids — flip OUR records from "sent" to "read". Idempotent.
+     */
+    suspend fun applyPeerReadReceipts(ids: List<ByteArray>): List<ByteArray> {
+        ensureOpen()
+        if (ids.isEmpty()) return emptyList()
+        // Bulk UPDATE that only flips rows currently in sent OR
+        // delivered → read. Refusing pending/received protects against
+        // a misbehaving peer trying to flip statuses on messages we
+        // haven't sent yet or our own inbound. One round-trip instead
+        // of N round-trips inside the sync engine's critical section.
+        database.messageDao.bulkTransitionStatus2(
+            ids = ids,
+            fromStatusA = STATUS_SENT,
+            fromStatusB = STATUS_DELIVERED,
+            newStatus = STATUS_READ,
+        )
+        return database.messageDao.idsWithStatus(ids, STATUS_READ)
+    }
+
+    /** Sprint 2 — push a [MessageEntity] over a Noise link. */
+    suspend fun markSent(id: ByteArray) {
+        ensureOpen()
+        database.messageDao.updateStatus(id, STATUS_SENT)
+    }
+
+    /** Sprint 2 — peer ACKed. */
+    suspend fun markDelivered(id: ByteArray) {
+        ensureOpen()
+        database.messageDao.updateStatus(id, STATUS_DELIVERED)
+    }
+
+    /**
+     * Ingest a fully-verified inbound envelope. Stores with
+     * status="received" and thread keyed on the SENDER's pubkey
+     * (the local device is the recipient). Idempotent on id.
+     */
+    suspend fun ingest(envelope: MessageEnvelope, receivedAtSeconds: Long) {
+        ensureOpen()
+        val existing = database.messageDao.byId(envelope.id)
+        if (existing != null) return
+        val entity = MessageEntity(
+            id = envelope.id,
+            threadPub = envelope.fromPub.bytes,
+            fromPub = envelope.fromPub.bytes,
+            toPub = envelope.toPub.bytes,
+            createdAt = envelope.createdAt,
+            receivedAt = receivedAtSeconds,
+            body = envelope.body,
+            status = STATUS_RECEIVED,
+            signature = envelope.signature,
+        )
+        database.messageDao.upsert(entity)
+    }
+
+    private fun ensureOpen() {
+        // The Compose layer waits for openOnce() at app startup; if
+        // someone reaches here before that completes, fail loudly
+        // rather than silently miss messages.
+        check(database.isOpen) { "WysprDatabase not open" }
+    }
+
+    companion object {
+        // Outbound terminal sequence: pending → sent → (delivered) → read
+        const val STATUS_PENDING = "pending"
+        const val STATUS_SENT = "sent"
+        const val STATUS_DELIVERED = "delivered"
+        const val STATUS_READ = "read"
+        // Inbound terminal sequence: received → received_viewed → received_acked
+        const val STATUS_RECEIVED = "received"
+        const val STATUS_RECEIVED_VIEWED = "received_viewed"
+        const val STATUS_RECEIVED_ACKED = "received_acked"
+    }
+}

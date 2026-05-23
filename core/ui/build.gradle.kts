@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.ui"
+    namespace = "com.wyspr.core.ui"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

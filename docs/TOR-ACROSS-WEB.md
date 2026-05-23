@@ -1,7 +1,7 @@
 # Tor across the open web — research + plan
 
 **Status:** plan, drafted 2026-05-21 from three parallel research streams.
-**Problem being solved:** the Tor leg between two paired Keystone peers who
+**Problem being solved:** the Tor leg between two paired Wyspr peers who
 are not on the same WiFi takes 30–60s on cold start and ~30s on first
 peer-dial, and the auto-sync loop wastes most of that work by rebuilding
 the circuit + redoing Noise XX every 8 seconds.
@@ -45,7 +45,7 @@ peers across internet, paired → Tor direct dial *  (current: 30s/round)
 
 The single most important architectural insight from the survey:
 **every comparable app keeps the cryptographic tunnel alive for the
-contact-lifetime, not the round-lifetime.** Keystone's
+contact-lifetime, not the round-lifetime.** Wyspr's
 `MessageSyncService.runOnce` currently does the opposite. Fixing that
 one thing is the largest single-PR win available.
 
@@ -59,7 +59,7 @@ for cross-internet messaging:
 
 1. **Long-lived sessions, never per-round.** Briar's BTP, Session's
    path persistence, Cwtch's HSv3 introductions — none of them rebuild
-   the cryptographic tunnel per message. Keystone is the outlier here,
+   the cryptographic tunnel per message. Wyspr is the outlier here,
    and the cost is exactly the latency the user is complaining about.
 
 2. **"Messages live at the recipient,"** in some form: Session's
@@ -67,21 +67,21 @@ for cross-internet messaging:
    group server, Briar's optional self-hosted mailbox. The
    architectural answer to "what about when the peer is offline" is
    always "park the ciphertext somewhere the recipient can fetch
-   later." Keystone already has this primitive (`MailboxEnvelope` +
+   later." Wyspr already has this primitive (`MailboxEnvelope` +
    `MailboxHost`), it's just not yet the default cross-internet path.
 
 3. **Decouple identity from address.** SimpleX rotates queue IDs;
-   Cwtch lets you rotate HSv3 keys. Keystone pins `peerOnion` per
+   Cwtch lets you rotate HSv3 keys. Wyspr pins `peerOnion` per
    `TrustEdge` at handshake and never rotates. A medium-term hardening
    target (see Sprint 4 below).
 
 4. **Polling beats poking on mobile.** Every project accepts that
    battery + radio + NAT make "push from peer" impractical. Schedule
    pulls with a cadence that tightens when the app is in focus.
-   Keystone's current 8-second auto-sync is roughly the right
+   Wyspr's current 8-second auto-sync is roughly the right
    foreground cadence but the wrong background one.
 
-These four patterns map directly onto Keystone code paths and dictate
+These four patterns map directly onto Wyspr code paths and dictate
 the sprint plan that follows.
 
 ---
@@ -96,7 +96,7 @@ six. Documenting the rule-outs because they're tempting:
   requirement directly.** Bottom of the list despite the latency
   appeal.
 - **Plain HTTPS to a federated relay (Nostr-shaped)** — the relay
-  sees the full social graph mapped to long-term Keystone pubkeys.
+  sees the full social graph mapped to long-term Wyspr pubkeys.
   This is the worst metadata profile in the option set; only
   acceptable if accessed over Tor, at which point it collapses into
   the mailbox-at-onion design.
@@ -113,7 +113,7 @@ six. Documenting the rule-outs because they're tempting:
   obfuscation. Keep the stub for the LoRa future, don't build it now.
 - **I2P / Matrix / Status (Waku) / libp2p** — variously: too slow on
   mobile, federated-but-metadata-leaky, project flux, or just
-  protocol toolkits we'd have to reimplement Keystone on top of.
+  protocol toolkits we'd have to reimplement Wyspr on top of.
 
 The three options that survived (mailbox-at-onion, WebSocket-over-Tor,
 queue rotation) are all evolutions of code already in the tree.
@@ -387,7 +387,7 @@ pull only when notified.
 
 ### Why this works on mobile despite Doze
 
-Foreground service is already a pattern in Keystone
+Foreground service is already a pattern in Wyspr
 (`TransportForegroundService`). When the user has the app open (or
 something in the trust graph is actively messaging), the WS stays up.
 When the user backgrounds the app long enough for the OS to kill the
@@ -397,7 +397,7 @@ WS, the existing `WorkManager` periodic pull catches up on next wake.
 
 | File | Change |
 |---|---|
-| `tools/keystone-mailbox/` (Sprint 2's host) | Add Ktor / OkHttp-server WS endpoint. Per-subscriber identity = ownerPub on the binding. |
+| `tools/wyspr-mailbox/` (Sprint 2's host) | Add Ktor / OkHttp-server WS endpoint. Per-subscriber identity = ownerPub on the binding. |
 | `feature/messaging/mailbox/MailboxClient.kt` (new) | Long-lived WS client over a SOCKS5 dial of the mailbox's `.onion`. |
 | `feature/messaging/sync/MessageSyncService.kt` | When a binding exists, prefer the WS subscription over polling. Polling stays as a fallback for after a Doze kill. |
 | `TransportForegroundService` | Add a "mailbox subscription active" ref-count slot alongside BLE + Tor radios. |
@@ -440,7 +440,7 @@ opaque, but the social graph leaks.
 - Periodic rotation: receivers issue a new queue ID periodically,
   push the new ID to active senders via the existing message flow.
 
-### What this changes in Keystone
+### What this changes in Wyspr
 
 - `MailboxEnvelope` gains a `queueId: bytes(16)` field. Replaces or
   augments `toPub` for routing (a host still needs `fromPub` for the

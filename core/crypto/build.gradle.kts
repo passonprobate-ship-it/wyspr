@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.crypto"
+    namespace = "com.wyspr.core.crypto"
     compileSdk = 34
     defaultConfig {
         minSdk = 26

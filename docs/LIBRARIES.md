@@ -1,4 +1,4 @@
-# Keystone — Library Stack
+# Wyspr — Library Stack
 
 Every dependency is a piece of trust surface. This document records what we
 use, why we picked it, and what we deliberately rejected.
@@ -43,7 +43,7 @@ primitives).
 |---------|---------|---------|---------|-------|
 | BLE GATT | Platform `android.bluetooth.*` | n/a | n/a | Direct platform APIs — the Jetpack `androidx.bluetooth` lib was unstable when we evaluated and ships less surface than we need (no GATT server). |
 | WiFi Direct | Platform `android.net.wifi.p2p.WifiP2pManager` | n/a | n/a | Discovery half implemented; `connect()` deferred to a later sprint. |
-| Tor (embedded) | `io.matthewnelson.kmp-tor:runtime` + `:resource-exec-tor` + `:resource-noexec-tor` | `2.0.0` + `408.13.2` × 2 | Apache-2.0 / BSD-3 (tor) | Bundles a real `tor` binary, extracted to `nativeLibraryDir` on install and `fork()`ed at runtime; the `-noexec` companion is a shim picked on devices that block fork. Pinned to 2.0.0 because everything later is built against Kotlin 2.1+ whose stdlib metadata our 1.9.22 compiler cannot read. Re-evaluate the moment Keystone upgrades past Kotlin 2.0. JNI extraction requires `packaging { jniLibs { useLegacyPackaging = true } }`. |
+| Tor (embedded) | `io.matthewnelson.kmp-tor:runtime` + `:resource-exec-tor` + `:resource-noexec-tor` | `2.0.0` + `408.13.2` × 2 | Apache-2.0 / BSD-3 (tor) | Bundles a real `tor` binary, extracted to `nativeLibraryDir` on install and `fork()`ed at runtime; the `-noexec` companion is a shim picked on devices that block fork. Pinned to 2.0.0 because everything later is built against Kotlin 2.1+ whose stdlib metadata our 1.9.22 compiler cannot read. Re-evaluate the moment Wyspr upgrades past Kotlin 2.0. JNI extraction requires `packaging { jniLibs { useLegacyPackaging = true } }`. |
 | Reticulum / LoRa | (none — placeholder) | — | — | `:core:transport:reticulum` is a stub. No maintained Kotlin/JVM Reticulum client exists; the wiring will most likely come via JNI to the C port or a localhost bridge to a paired Reticulum daemon on an ironmesh node. |
 | QR rendering | `com.google.zxing:core` | `3.5.2` | Apache-2.0 | Used by `core:ui/QrRenderer`. Lives in `:core:ui` because we render fingerprints + share URLs in multiple features. |
 | QR scanning | `androidx.camera:camera-core` / `-camera2` / `-lifecycle` / `-view` + `com.google.zxing:core` | CameraX `1.3.1` | Apache-2.0 | CameraX lives only in `:feature:onboarding` (`ScanPeerQrScreen`, peer-share-mini-site URL pickup). Scanning is hardened against phone-screen reading conditions: ZXing TRY_HARDER hints, multi-frame retry, glare/low-light tolerance. |
@@ -52,7 +52,7 @@ primitives).
 
 - **libp2p-jvm** (`tech.libp2p:jvm-libp2p`) — production-grade and tempting,
   but the Android story is thin, transitive deps are large, and we don't
-  need DHT / pubsub. Keystone is friend-to-friend, not open-world.
+  need DHT / pubsub. Wyspr is friend-to-friend, not open-world.
 - **Google Nearby Connections** — depends on Google Play Services, which
   means depending on Google. Disqualified by Pillar 1.
 - **Bridgefy SDK** — proprietary, phoned home in past versions, audit
@@ -65,7 +65,7 @@ primitives).
 | Concern | Library | Version | License | Notes |
 |---------|---------|---------|---------|-------|
 | Relational store | `androidx.room:room-runtime` / `-ktx` / `-compiler` | `2.6.1` | Apache-2.0 | Standard Room. Migrations are additive — see PROTOCOLS.md §3.4 for the live schema versions. |
-| Encrypted SQLite | `net.zetetic:sqlcipher-android` | `4.6.x` | BSD-3 | Backs Room via `SupportOpenHelperFactory`. Key derived from `KEYSTONE/v1/db` HKDF subkey of the hardware-keystore identity. |
+| Encrypted SQLite | `net.zetetic:sqlcipher-android` | `4.6.x` | BSD-3 | Backs Room via `SupportOpenHelperFactory`. Key derived from `WYSPR/v1/db` HKDF subkey of the hardware-keystore identity. |
 | Preferences | `androidx.datastore:datastore-preferences` | `1.0.0` | Apache-2.0 | UI prefs only — never identity or trust state. |
 
 ### UI / DI / Lifecycle
@@ -113,7 +113,7 @@ Anything from this list MUST NOT be added without explicit security review.
 - Facebook SDK, Twitter Kit, any social SDK
 - Any analytics library, including "self-hosted" ones we haven't audited
 - AppsFlyer, Branch, Adjust, or any attribution SDK
-- Stripe / Braintree client SDKs (Keystone doesn't take payments; if it
+- Stripe / Braintree client SDKs (Wyspr doesn't take payments; if it
   ever does, the integration is server-side via a user-controlled VPS)
 
 CI grep that fails the build on any banned identifier is still

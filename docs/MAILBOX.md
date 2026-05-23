@@ -1,6 +1,6 @@
-# Keystone — Mailboxes
+# Wyspr — Mailboxes
 
-A mailbox is a Keystone device that volunteers to **hold encrypted
+A mailbox is a Wyspr device that volunteers to **hold encrypted
 messages for community members until they come online**. Solves the
 "both peers must be online at the same time" failure mode without
 introducing any central server.

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.identity"
+    namespace = "com.wyspr.core.identity"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

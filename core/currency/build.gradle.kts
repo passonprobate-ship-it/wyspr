@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.currency"
+    namespace = "com.wyspr.core.currency"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

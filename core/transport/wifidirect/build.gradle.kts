@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.transport.wifidirect"
+    namespace = "com.wyspr.core.transport.wifidirect"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

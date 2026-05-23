@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.trust"
+    namespace = "com.wyspr.core.trust"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

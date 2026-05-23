@@ -1,4 +1,4 @@
-# Keystone — Next Steps
+# Wyspr — Next Steps
 
 Refreshed 2026-05-19 against `android` branch (v0.6.7).
 
@@ -41,7 +41,7 @@ null and parks when Tor isn't ready or no `peerOnion` is known.
 - Wait for both `EmbeddedTorBackend.state` to reach `Ready`.
 - Disable BLE on both devices (Settings → Bluetooth off).
 - Send a message from one device; tap "Sync now" on the other.
-  Expect the message to arrive; capture `logcat -s "Keystone"
+  Expect the message to arrive; capture `logcat -s "Wyspr"
   "TorHsTransport" "EmbeddedTorBackend"` for the round.
 - Verify in logs that the winning branch was `connect: dialing
   *.onion:9091 via SOCKS :…` (initiator) or that the accept loop
@@ -111,7 +111,7 @@ above; this section is the BLE/handshake portion only.)
 **Smallest next step.**
 - Install latest debug APK on two Android-26+ devices.
 - Inviter+Invitee handshake; capture
-  `logcat -s "Keystone" "BluetoothGatt" "Noise" "EmbeddedTorBackend"`.
+  `logcat -s "Wyspr" "BluetoothGatt" "Noise" "EmbeddedTorBackend"`.
 - Verify the `trust_edge` row carries `peerOnion` on both sides.
 - Verify Tor bootstrap reaches `Ready` within ~60s on each device
   (battery, no captive portal).
@@ -203,7 +203,7 @@ abort before sending a cert.
 
 ### 7.1 Service UUID → BLAKE2s — DONE
 `ServiceUuid.forCommunity` now uses `BLAKE2s-256(community_id ||
-"KEYSTONE-SVC")[0..16]` via noise-java's `Blake2sMessageDigest`.
+"WYSPR-SVC")[0..16]` via noise-java's `Blake2sMessageDigest`.
 RFC 7693 vectors tested.
 
 ### 7.2 Forward secrecy on identity reset
@@ -231,7 +231,7 @@ The v0.1 design system is in. What's still un-themed:
 - `core:ui/QrRenderer` — currently renders pure black-on-white. Add
   the same monospace label rendering below the QR.
 - The `marketplace` Wallet screens were built before the new theme.
-  Apply `KeystonePanel` + `TrustBadge` throughout.
+  Apply `WysprPanel` + `TrustBadge` throughout.
 - Onboarding screens at small widths (320dp) — manual pass on a
   Pixel 4a-class device for error/empty states.
 - A11y — nothing has been checked. Fingerprint groups should each
@@ -248,7 +248,7 @@ The v0.1 design system is in. What's still un-themed:
   build flags still pending.
 - **CI.** No CI today. Minimum: `assembleDebug` + the unit-test
   modules on every push, plus a grep for the forbidden-deps list.
-- **F-Droid manifest — DRAFTED (v0.6.7).** `metadata/com.keystone.yml`
+- **F-Droid manifest — DRAFTED (v0.6.7).** `metadata/com.wyspr.yml`
   + `fastlane/metadata/android/en-US/` are in the repo. Submission
   to `f-droid/fdroiddata` happens after a clean release-APK
   smoke-test on real hardware. The reproducible-build deviations
@@ -266,7 +266,7 @@ The v0.1 design system is in. What's still un-themed:
 
 ## 10. Monero wallet (Utility Module — new, v0.7.0)
 
-**Why.** Keystone already ships a community-internal scrip ledger
+**Why.** Wyspr already ships a community-internal scrip ledger
 (`:core:currency` + `:feature:marketplace`) for in-circle value
 transfer. A real cryptocurrency wallet is a different concern: cross-
 community value, sovereign storage of savings, payments to anyone in
@@ -279,7 +279,7 @@ gaps).
 **Architecture.** Remote-node-over-Tor only. No on-device chain — a
 running daemon and 200 GB of blocks would shred phone battery and
 storage. The remote node sees nothing meaningful (Monero blinds
-everything), and mandatory routing through Keystone's embedded Tor
+everything), and mandatory routing through Wyspr's embedded Tor
 SOCKS proxy hides the user's IP from the node operator. Multi-node
 round-robin so a single hostile node can't lie about the chain tip.
 
@@ -290,17 +290,17 @@ round-robin so a single hostile node can't lie about the chain tip.
   Apache-2.0 clean.
 
 **GPL decision.** monerujo brings real send/receive but the resulting
-APK is GPLv3 — the rest of Keystone is Apache-2.0 and only the
+APK is GPLv3 — the rest of Wyspr is Apache-2.0 and only the
 distributed *combined binary* shifts to GPL. F-Droid is fine with
 this. Needs a top-level decision before adding the dep.
 
 **Module shape.**
 ```
 feature/monero-wallet/
-  src/main/java/com/keystone/feature/monero/
+  src/main/java/com/wyspr/feature/monero/
     MoneroWalletService.kt      # façade, Hilt-injected
     MoneroNode.kt               # remote-node round-robin
-    MoneroKeyStore.kt           # KEYSTONE/v1/monero subkey wrap
+    MoneroKeyStore.kt           # WYSPR/v1/monero subkey wrap
     rpc/                        # JSON-RPC over Tor SOCKS
     ui/                         # Compose screens
 ```
@@ -309,7 +309,7 @@ The module *does not* touch `:core:currency` or `:feature:marketplace`.
 **Threat model adds (will land in SECURITY-MODEL.md §11).**
 - Node operator can correlate connection IP with view-key
   registrations → mandatory embedded-Tor SOCKS for every RPC call.
-- Spend key on disk → encrypted with a `KEYSTONE/v1/monero` keystore
+- Spend key on disk → encrypted with a `WYSPR/v1/monero` keystore
   subkey; wallet file stored in SQLCipher-backed Room.
 - Hostile remote node lies about chain tip → multi-node round-robin
   with majority-rules tip-check; tx submission to ≥2 nodes.
@@ -331,7 +331,7 @@ The module *does not* touch `:core:currency` or `:feature:marketplace`.
   attempt after Tor finishes bootstrapping.
 - `MoneroCryptoEngine` interface defined; `NotImplementedMoneroCryptoEngine`
   bound by Hilt until v0.7.0b lands the JNI engine.
-- `MoneroKeyStore` derives the `KEYSTONE/v1/monero` subkey for
+- `MoneroKeyStore` derives the `WYSPR/v1/monero` subkey for
   wallet-file encryption — seam established now, used later.
 - Compose UI shows Tor + remote-node status + a clear
   "wallet engine not bundled" panel. No misleading "0 XMR" rows.

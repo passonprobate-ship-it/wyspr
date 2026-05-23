@@ -1,6 +1,6 @@
-# Keystone — Gem (in-community currency)
+# Wyspr — Gem (in-community currency)
 
-This document is the spec for **Gem**, Keystone's in-community currency.
+This document is the spec for **Gem**, Wyspr's in-community currency.
 Implementations in `core:currency` (primitives), `feature:marketplace`
 (wallet UX), and `core:sync` (envelope propagation) MUST match this
 document; if they diverge, fix the doc first.
@@ -18,7 +18,7 @@ document; if they diverge, fix the doc first.
 - Service providers (relay nodes, mirrors, anyone running a useful daemon
   for the group) can be paid in-protocol without manual bookkeeping.
 - Double-spend is detected and punished, without requiring global consensus.
-- The whole system works inside one Keystone community, with no cross-
+- The whole system works inside one Wyspr community, with no cross-
   community settlement and no bridge to external chains.
 
 ### Non-Goals
@@ -346,7 +346,7 @@ via signed `Migration` envelopes (out of scope here, v2 work).
    service-kind and not yet specified. This is the single biggest design
    gap before currency ships in production.
 4. **Cross-community settlement.** Out of scope for v1. If multiple
-   Keystone communities want to trade, the right primitive is probably a
+   Wyspr communities want to trade, the right primitive is probably a
    bilateral channel anchored in both communities' trust graphs — but
    that's a separate doc.
 5. **Recovery from total loss.** Currently impossible by design. Whether

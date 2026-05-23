@@ -47,7 +47,7 @@
         library manifests (which both set required="true"). Without the
         tools:replace, manifest merger picks the more restrictive value
         and the merged manifest gates installation behind both hardware
-        features. We want Keystone to be installable on any Android 8+
+        features. We want Wyspr to be installable on any Android 8+
         device — BLE is the primary transport but isn't a hard
         prerequisite (a future build could add a Tor-only fallback).
     -->
@@ -77,8 +77,8 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
-        android:name=".KeystoneApplication"
-        android:label="Keystone"
+        android:name=".WysprApplication"
+        android:label="Wyspr"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="false"
@@ -86,7 +86,7 @@
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:supportsRtl="true"
         android:hasFragileUserData="true"
-        android:theme="@style/Theme.Keystone"
+        android:theme="@style/Theme.Wyspr"
         tools:targetApi="34">
 
         <activity
@@ -95,7 +95,7 @@
             android:launchMode="singleTask"
             android:screenOrientation="portrait"
             android:excludeFromRecents="true"
-            android:theme="@style/Theme.Keystone">
+            android:theme="@style/Theme.Wyspr">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

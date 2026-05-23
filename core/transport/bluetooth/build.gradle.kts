@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.transport.bluetooth"
+    namespace = "com.wyspr.core.transport.bluetooth"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

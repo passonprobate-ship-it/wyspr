@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.core.sync"
+    namespace = "com.wyspr.core.sync"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {

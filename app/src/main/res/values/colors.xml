@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!--
-        Icon palette. The bg matches KeystoneTheme's `surface` token
-        (`#0A0F0D`); the accent matches KeystoneTheme's `accent`
-        (`#80E0C0`); the keystone-highlight is a lighter tint used
-        only as fill on the wedge so the eye is drawn to the centre
-        of the icon at small sizes.
+        Wyspr icon palette. `bg` matches WysprTheme's `surface`
+        token (`#0A0F0D`); `accent` matches WysprTheme's `accent`
+        (`#80E0C0`) and is used for the bubble outline; `wave` is
+        a lighter mint tint used for the whisper-wave glyphs so
+        the eye is drawn to the centre of the icon at small sizes.
     -->
     <color name="ic_launcher_bg">#0A0F0D</color>
     <color name="ic_launcher_accent">#80E0C0</color>
-    <color name="ic_launcher_keystone">#B9F2DA</color>
+    <color name="ic_launcher_wyspr">#B9F2DA</color>
+    <color name="ic_launcher_wave">#B9F2DA</color>
 </resources>

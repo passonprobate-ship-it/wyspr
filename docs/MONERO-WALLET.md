@@ -1,13 +1,13 @@
 # Monero wallet — research + plan
 
 **Status:** drafted 2026-05-22 after Sprint 1–3 of TOR-ACROSS-WEB shipped. **Sprint W1 blocked on toolchain upgrade — see "Blocked: Kotlin 2.1 toolchain bump" below.**
-**Problem being solved:** Keystone's `core/currency` module ("Gem")
+**Problem being solved:** Wyspr's `core/currency` module ("Gem")
 implements a working signed-ledger account-balance system, but Gem
 has no real-world value and every transfer is plaintext on the
 community sync wire — sender, recipient, and amount visible to any
 community member. Users have repeatedly asked for two things:
 
-1. **Real-value private payments** so Keystone is useful as money,
+1. **Real-value private payments** so Wyspr is useful as money,
    not just a community-internal scoring mechanic.
 2. **"Auto-send to a paired peer"** so the user never sees a
    payment address — the trust-graph friendly name is the only
@@ -138,7 +138,7 @@ on-chain.
 
 ## Sprint W1 — Wallet bring-up
 
-**Goal:** real Monero wallet running inside Keystone, syncing with
+**Goal:** real Monero wallet running inside Wyspr, syncing with
 the network, balance visible in the UI. No send flow yet, no peer
 binding. Just "the app holds a wallet, it knows the balance, it
 shows a receive address."
@@ -150,7 +150,7 @@ shows a receive address."
 - `MoneroWalletService @Singleton`:
     - `create(seedWords: List<String>?)` — restore-from-seed or
       generate-new. Stores wallet bytes encrypted on-disk via the
-      same keystore subkey pattern as `KeystoneDatabaseImpl`.
+      same keystore subkey pattern as `WysprDatabaseImpl`.
     - `state: StateFlow<WalletState>` — Locked / Synced(height,
       balance, unlockedBalance) / Syncing(percent) / Failed(msg).
     - `primaryAddress: StateFlow<String?>` — the main wallet address
@@ -368,7 +368,7 @@ feature ("auto-send to a paired peer"). W3 is polish on top.
 
 **Discovered 2026-05-22 during W1 bring-up.** `im.molly:monero-wallet-sdk:1.0.0`
 declares `org.jetbrains.kotlin:kotlin-stdlib:{strictly 2.1.0}` as a
-hard dependency. Keystone is pinned at Kotlin 1.9.22. The 1.9
+hard dependency. Wyspr is pinned at Kotlin 1.9.22. The 1.9
 compiler cannot read 2.1-built artifact metadata — compile fails as
 soon as we add the dep.
 
@@ -444,5 +444,5 @@ rather than 6 months from now when something else forces it.
 
 [mollyim-sdk]: https://github.com/mollyim/monero-wallet-sdk
 [arrr-sdk]: https://github.com/piratenetwork/pirate-android-wallet-sdk/
-[hsqrcodec]: ../core/trust/src/main/java/com/keystone/core/trust/HandshakeQrCodec.kt
+[hsqrcodec]: ../core/trust/src/main/java/com/wyspr/core/trust/HandshakeQrCodec.kt
 [monerujo]: https://github.com/m2049r/xmrwallet

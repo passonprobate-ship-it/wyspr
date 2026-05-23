@@ -1,11 +1,11 @@
-# Keystone — Project Notes
+# Wyspr — Project Notes
 
 ## Project Info
 - **Framework**: Android (Kotlin, Jetpack Compose, Material3)
-- **Package**: `com.keystone`
+- **Package**: `com.wyspr`
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
-- **Port**: 5034 (daemon registration only — Keystone has no server component)
+- **Port**: 5034 (daemon registration only — Wyspr has no server component)
 - **Status**: 2026-05-21 — **v0.8.3 is the WhatsApp-shaped UX
   overhaul.** Three-tab bottom navigation (Chats / Community /
   Settings) replaces the tile-grid home; conversations are
@@ -14,7 +14,7 @@
   refresh are gone (silent background auto-sync + a hairline top
   indicator). Reply quoting landed (long-press → Reply →
   composer shows quote card → bubble shows pill, tap pill scrolls
-  to original) — encoded inline as `keystone:reply:<id>:<body>`
+  to original) — encoded inline as `wyspr:reply:<id>:<body>`
   so no protocol bump. Contact notes (local-only free-form text
   per peer), pair-a-new-peer re-entry into the QR handshake, a
   peer-has-newer-version banner that polls `/version.json` over
@@ -25,7 +25,7 @@
   verification of the latest UI is the v0.8.4 sprint.
 
   Earlier (2026-05-21): **v0.8.0 shipped async mailbox delivery**
-  (`docs/MAILBOX.md`). A mailbox is a Keystone device that
+  (`docs/MAILBOX.md`). A mailbox is a Wyspr device that
   volunteers to hold sealed-box-encrypted envelopes for community
   peers while the recipient is offline; the host can route but
   cannot read. Same trust graph, same Noise transport, same
@@ -37,23 +37,27 @@
   stack; landed pairing, then messaging, with hardware proof at
   each step. Two paired phones now exchange Push / Ack / Read / End
   frames over Noise XX over BLE GATT, with friendly contact names
-  and skip-onboarding UX. See [[keystone-messaging-works]] in
-  auto-memory for the full bug list and [[keystone-ble-flow-control]]
+  and skip-onboarding UX. See [[wyspr-messaging-works]] in
+  auto-memory for the full bug list and [[wyspr-ble-flow-control]]
   for the BLE pattern that hid the rest.
 
 ## Philosophy (read this before changing anything)
 
-Keystone is designed for groups that distrust the platform layer. Every
+Wyspr is private, censorship-resistant messaging and payments. Every
 architectural decision should be evaluated against three questions:
 
-1. **Does this require trusting a third party?** If yes, reject it or
-   abstract it behind a swappable interface.
-2. **Does this leak metadata?** Plaintext over the wire, even non-payload
-   metadata, is a liability. Default to authenticated encryption everywhere.
-3. **Does this expand the trust surface?** New libraries, new transports,
+1. **Is it private by default?** No opt-in privacy modes. No "we promise
+   not to look." The wire format must hide content AND metadata, and the
+   protocol must work without revealing IP, identity, or social graph to
+   any third party.
+2. **Is it censorship-resistant?** No single chokepoint that can disable
+   the network — no central server, no app-store dependency, no fixed
+   set of relays. Pairing happens device-to-device; transports route
+   through Tor or local radio; the app updates peer-to-peer.
+3. **Does it expand the trust surface?** New libraries, new transports,
    new permissions all enlarge attack surface. Justify every addition.
 
-The integrity of the private network beats every other concern, including
+Privacy and censorship-resistance beat every other concern, including
 developer convenience and feature velocity.
 
 ## Module Graph
@@ -91,7 +95,7 @@ depends on `KeystoreManager` for HSv3 key derivation and on the Android
 ## Build Pipeline
 
 ```bash
-cd /var/www/scws/projects/keystone
+cd /var/www/scws/projects/wyspr
 ./gradlew :app:assembleDebug \
   -Pandroid.aapt2FromMavenOverride=/usr/bin/aapt2
 ```
@@ -152,7 +156,7 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
 - `core/transport/api/.../TorBackend.kt` — facade for the embedded Tor
   daemon (state, onion address, SOCKS port, target port)
 - `core/transport/api/.../ServiceUuid.kt` — BLAKE2s(community ||
-  "KEYSTONE-SVC") derivation
+  "WYSPR-SVC") derivation
 - `core/transport/bluetooth/.../BleTransport.kt` — GATT server + client,
   MTU negotiation, chunked framing
 - `feature/messaging/.../MessageEnvelope.kt` + `.../sync/MessageSyncWire.kt` —
@@ -162,7 +166,7 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
 - `feature/onboarding/.../share/PeerUpdateViewModel.kt` — Layer-1 peer
   update with SSRF gate (RFC 1918 + CGNAT only)
 - `app/.../transport/EmbeddedTorBackend.kt` — kmp-tor wiring, HSv3 key
-  derivation from `KEYSTONE/v1/tor-hs` subkey
+  derivation from `WYSPR/v1/tor-hs` subkey
 - `app/.../transport/TorHsKey.kt` — Tor v3 ed25519 expanded-key
   derivation (RFC for HSv3 onion service)
 - `app/.../transport/TorHiddenServiceTransport.kt` — loopback listener
@@ -184,7 +188,7 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
 - `app/.../transport/TransportForegroundService.kt` — reference-counted
   foreground service keeping BLE / share / Tor radio work alive across
   backgrounding
-- `core/ui/.../KeystoneTheme.kt` — design system; new screens must use it
+- `core/ui/.../WysprTheme.kt` — design system; new screens must use it
 
 ## What Is Built
 
@@ -225,7 +229,7 @@ Headline fixes (all in this commit):
   local stack's ack between chunks. Android's BLE only queues 1-3
   outstanding NO_RESPONSE writes per peer; a 13KB Push frame
   chunking to ~27 writes silently dropped the tail without this.
-  See [[keystone-ble-flow-control]] in auto-memory.
+  See [[wyspr-ble-flow-control]] in auto-memory.
 - `BleOutboundChunker` payload clamped to 512 (`GATT_MAX_ATTR_LEN`).
 - `MessageSyncEngine.exchangeReadReceipts` split by role; the
   symmetric send-first form deadlocked.
@@ -250,13 +254,13 @@ encrypted DB.
 - `AndroidKeystoreManager` — StrongBox-preferred, TEE-floor, software-
   refused. HKDF-SHA256 subkey derivation. Derives X25519 from Ed25519
   for Noise.
-- `KeystoneDatabaseImpl` — Room + SQLCipher keyed off
-  `KEYSTONE/v1/db` subkey.
+- `WysprDatabaseImpl` — Room + SQLCipher keyed off
+  `WYSPR/v1/db` subkey.
 - `HandshakeProtocolImpl` — full Noise XX state machine for both
   Inviter and Invitee; channel binding via QR nonces; signed cert
   exchange; quarantine on every abort reason.
 - `NoiseSessionImpl` — `Noise_XX_25519_ChaChaPoly_BLAKE2s` via
-  noise-java; prologue mixes `"KEYSTONE/v1" || community_id ||
+  noise-java; prologue mixes `"WYSPR/v1" || community_id ||
   nonce_inviter || nonce_invitee || eph_pubs`.
 - `HandshakeQrCodec`, `InvitationCertificate`, `RevocationCertificate`
   — canonical CBOR over the shared `Cbor` codec.
@@ -264,8 +268,8 @@ encrypted DB.
   fallback, length-prefixed framing chunked at MTU − 3.
 - `SyncEngine` — HaveSet → Want → Push round; CBOR codec; per-community
   filtering (used today by the currency module).
-- Design system — `KeystoneTheme` + `core:ui/components/{TrustBadge,
-  KeystonePanel, StepIndicator, PulsingDot}`.
+- Design system — `WysprTheme` + `core:ui/components/{TrustBadge,
+  WysprPanel, StepIndicator, PulsingDot}`.
 - Hilt — `CryptoModule`, `TransportModule`, `TorBackendModule` provide
   every singleton.
 
@@ -282,7 +286,7 @@ encrypted DB.
   allocation, MTU fallback, characteristic `PROPERTY_WRITE_NO_RESPONSE`,
   disconnect-before-resume on `openGattClient`, `computeIfAbsent` link
   creation, clock-skew tolerance on cert verify.
-- App icon (keystone-arch adaptive: foreground + background +
+- App icon (wyspr-arch adaptive: foreground + background +
   monochrome themed variant).
 
 ### v0.3 — My Community + peer software distribution
@@ -294,7 +298,7 @@ encrypted DB.
 - **Layer-1 peer update** — `PeerUpdateViewModel` resolves a peer's
   share URL through an SSRF gate (RFC 1918 + CGNAT 100.64/10; rejects
   loopback / link-local / multicast / IPv6 / public v4), fetches
-  `/version.json`, streams `/keystone.apk` with on-the-fly SHA-256
+  `/version.json`, streams `/wyspr.apk` with on-the-fly SHA-256
   verification, hands off to system `PackageInstaller`. Dedicated
   consent-prompt UI for `canRequestPackageInstalls()` denial.
 - Notification permission prompt on first launch.
@@ -329,7 +333,7 @@ encrypted DB.
   Boots a real `tor` subprocess from the `-exec` resource pack.
   Picks a SOCKS port automatically. Publishes an HSv3 service whose
   Ed25519 key is derived deterministically from the
-  `KEYSTONE/v1/tor-hs` keystore subkey — the `.onion` survives
+  `WYSPR/v1/tor-hs` keystore subkey — the `.onion` survives
   reinstalls as long as the keystore identity does.
 - **Sprint 3 — address exchange.** `HandshakeQr` schema v2 adds an
   optional `onion: bstr(56)` field. `HandshakeProtocolImpl` samples
@@ -368,7 +372,7 @@ problem, not a code bug:
 - Both phones in the 2026-05-22 test had `cached-microdesc-consensus`
   files from earlier in the day in `cache/torservice/` BUT no Tor
   NOTICE traffic since launch — the daemon was running but offline
-- **Force-stopping Keystone and relaunching cured it on the S23**
+- **Force-stopping Wyspr and relaunching cured it on the S23**
   (bootstrap → 100% in ~2s); A02s is slower and may need multiple
   restarts
 - This is the same Tor leg that's been blocking Sprint 1's hardware
@@ -391,7 +395,7 @@ Defensive fixes worth landing (hardware-test session required):
    can spot stuck state visually
 
 Workaround until then: when sync over Tor doesn't work, **force-stop
-Keystone and relaunch**. The HSv3 identity is keystore-derived so
+Wyspr and relaunch**. The HSv3 identity is keystore-derived so
 the onion address survives.
 
 ### 2026-05-22 — Sprint 2 (partial) of TOR-ACROSS-WEB: multi-host mailbox + battery-opt prompt
@@ -448,8 +452,8 @@ flips true.
 Files touched:
 - `core/database/.../entities/MailboxBindingEntity.kt`
 - `core/database/.../dao/MailboxBindingDao.kt`
-- `core/database/.../KeystoneRoomDatabase.kt` (v14 + MIGRATION_13_14)
-- `core/database/.../KeystoneDatabaseImpl.kt` (register migration)
+- `core/database/.../WysprRoomDatabase.kt` (v14 + MIGRATION_13_14)
+- `core/database/.../WysprDatabaseImpl.kt` (register migration)
 - `feature/messaging/.../mailbox/MailboxBindingService.kt`
 - `feature/messaging/.../mailbox/MailboxClientViewModel.kt`
 - `feature/messaging/.../sync/MessageSyncEngine.kt`
@@ -492,7 +496,7 @@ no `TransportSelector` changes.
 
 Hardware proof still owed: two-device test with BLE off, observing
 round 1 cost (~30s cold) followed by round 2 sub-second. Apply the
-[[keystone-feedback-verify-baseline]] rule — code that builds is not
+[[wyspr-feedback-verify-baseline]] rule — code that builds is not
 the same as code that works.
 
 ## What's NOT Built Yet (see NEXT-STEPS.md for the full plan)
@@ -526,9 +530,9 @@ the Tor leg WITH BLE OFF, followed by revocation propagation
 (NEXT-STEPS.md §1, §2).
 
 Auto-memory references for this work:
-- [[keystone-messaging-works]] — 22-build journey, all fixes
-- [[keystone-ble-flow-control]] — the BLE pattern that hid the rest
-- [[keystone-first-pairing-milestone]] — earlier same-day milestone
-- [[keystone-sign-padding-bug]] — 5-year-old root cause
-- [[keystone-feedback-verify-baseline]] — apply same skepticism to
+- [[wyspr-messaging-works]] — 22-build journey, all fixes
+- [[wyspr-ble-flow-control]] — the BLE pattern that hid the rest
+- [[wyspr-first-pairing-milestone]] — earlier same-day milestone
+- [[wyspr-sign-padding-bug]] — 5-year-old root cause
+- [[wyspr-feedback-verify-baseline]] — apply same skepticism to
   remaining unverified layers (Tor, revocation, Monero, vault).

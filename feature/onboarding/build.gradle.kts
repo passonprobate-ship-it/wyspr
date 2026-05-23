@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "com.keystone.feature.onboarding"
+    namespace = "com.wyspr.feature.onboarding"
     compileSdk = 34
     defaultConfig { minSdk = 26 }
     compileOptions {
