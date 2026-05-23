@@ -254,6 +254,12 @@ class MessageStore @Inject constructor(
         }
     }
 
+    suspend fun search(query: String): List<MessageEntity> {
+        ensureOpen()
+        if (query.isBlank()) return emptyList()
+        return database.messageDao.search(query.trim())
+    }
+
     fun reactionsForMessages(msgIds: List<ByteArray>): Flow<List<ReactionEntity>> {
         ensureOpen()
         return database.reactionDao.forMessagesFlow(msgIds)

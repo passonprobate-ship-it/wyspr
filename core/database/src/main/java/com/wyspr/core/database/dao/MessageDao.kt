@@ -111,4 +111,13 @@ interface MessageDao {
 
     @Query("SELECT * FROM message WHERE id = :id LIMIT 1")
     suspend fun byId(id: ByteArray): MessageEntity?
+
+    @Query(
+        "SELECT * FROM message WHERE body LIKE '%' || :query || '%' " +
+            "AND body NOT LIKE 'wyspr:img:%' " +
+            "AND body NOT LIKE 'wyspr:audio:%' " +
+            "AND body NOT LIKE 'wyspr:react:%' " +
+            "ORDER BY created_at DESC LIMIT :limit",
+    )
+    suspend fun search(query: String, limit: Int = 50): List<MessageEntity>
 }

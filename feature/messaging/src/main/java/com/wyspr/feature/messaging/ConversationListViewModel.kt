@@ -51,6 +51,48 @@ class ConversationListViewModel @Inject constructor(
     private val _state = MutableStateFlow<UiState>(UiState.Loading)
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _searchResults = MutableStateFlow<List<SearchHit>>(emptyList())
+    val searchResults: StateFlow<List<SearchHit>> = _searchResults.asStateFlow()
+
+    private val _searchActive = MutableStateFlow(false)
+    val searchActive: StateFlow<Boolean> = _searchActive.asStateFlow()
+
+    fun openSearch() { _searchActive.value = true }
+    fun closeSearch() {
+        _searchActive.value = false
+        _searchQuery.value = ""
+        _searchResults.value = emptyList()
+    }
+
+    fun updateSearchQuery(query: String) {
+        _searchQuery.value = query
+        if (query.isBlank()) {
+            _searchResults.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            val results = withContext(Dispatchers.IO) {
+                val msgs = messageStore.search(query)
+                val contacts = database.contactDao.all()
+                val nameByPub = contacts
+                    .mapNotNull { c -> c.displayName?.takeIf { it.isNotBlank() }?.let { c.peerPub.asPeerKey() to it } }
+                    .toMap()
+                msgs.map { m ->
+                    val threadKey = m.threadPub.asPeerKey()
+                    SearchHit(
+                        message = m,
+                        peerDisplayName = nameByPub[threadKey],
+                        bodyPreview = formatListPreview(m.body),
+                    )
+                }
+            }
+            _searchResults.value = results
+        }
+    }
+
     /**
      * Sync banner: tri-state announcement at the top of the list
      * surfacing the current/last attempt. Null when nothing has
@@ -229,6 +271,12 @@ class ConversationListViewModel @Inject constructor(
         val lastBodyPreview: String?,
         val lastAt: Long?,
         val lastFromSelf: Boolean?,
+    )
+
+    data class SearchHit(
+        val message: MessageEntity,
+        val peerDisplayName: String?,
+        val bodyPreview: String,
     )
 
     private fun formatListPreview(body: String): String {

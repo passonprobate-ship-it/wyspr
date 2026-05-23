@@ -18,10 +18,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -82,17 +85,55 @@ fun ConversationListScreen(
     val sync by viewModel.sync.collectAsStateWithLifecycle()
     val syncing = sync is ConversationListViewModel.SyncBanner.Running
     var fabSheetOpen by remember { mutableStateOf(false) }
+    val searchActive by viewModel.searchActive.collectAsStateWithLifecycle()
+    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text("Chats", style = MaterialTheme.typography.titleLarge)
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-            )
+            if (searchActive) {
+                CenterAlignedTopAppBar(
+                    title = {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = viewModel::updateSearchQuery,
+                            placeholder = { Text("Search messages…") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(20.dp),
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = viewModel::closeSearch) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close search")
+                        }
+                    },
+                    actions = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.updateSearchQuery("") }) {
+                                Icon(Icons.Filled.Close, contentDescription = "Clear")
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                )
+            } else {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Text("Chats", style = MaterialTheme.typography.titleLarge)
+                    },
+                    actions = {
+                        IconButton(onClick = viewModel::openSearch) {
+                            Icon(Icons.Filled.Search, contentDescription = "Search messages")
+                        }
+                    },
+                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                )
+            }
         },
         floatingActionButton = {
             FloatingActionButton(
@@ -123,7 +164,39 @@ fun ConversationListScreen(
             // Wyspr"). Empty by default.
             bannerSlot()
 
-            when (val s = state) {
+            if (searchActive && searchQuery.isNotBlank()) {
+                if (searchResults.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "No messages found",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(horizontal = 20.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 8.dp),
+                    ) {
+                        items(searchResults, key = { it.message.id.contentHashCode() }) { hit ->
+                            SearchResultRow(
+                                hit = hit,
+                                onClick = {
+                                    viewModel.closeSearch()
+                                    onOpenThread(PublicKey(hit.message.threadPub))
+                                },
+                            )
+                        }
+                    }
+                }
+            } else when (val s = state) {
                 ConversationListViewModel.UiState.Loading -> LoadingPanel()
                 ConversationListViewModel.UiState.NoPeers -> EmptyPanel(onOpenFindPeers)
                 is ConversationListViewModel.UiState.Ready -> {
@@ -544,6 +617,65 @@ private fun LeaveGroupDialog(
             TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
+}
+
+@Composable
+private fun SearchResultRow(
+    hit: ConversationListViewModel.SearchHit,
+    onClick: () -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FingerprintChip(
+                hit.message.threadPub.let { pub ->
+                    PublicKey(pub).fingerprint.toString()
+                },
+            )
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val name = hit.peerDisplayName ?: shortFingerprint(
+                        PublicKey(hit.message.threadPub).fingerprint.toString(),
+                    )
+                    Text(
+                        name,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                    Text(
+                        DateFormat.getTimeInstance(DateFormat.SHORT).format(
+                            Date(hit.message.createdAt * 1000),
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Text(
+                    hit.bodyPreview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
 }
 
 @Composable
