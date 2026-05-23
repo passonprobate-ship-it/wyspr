@@ -250,7 +250,11 @@ class MessageStore @Inject constructor(
     suspend fun deleteExpiredMessages(): Int {
         ensureOpen()
         val now = System.currentTimeMillis() / 1000
-        return database.messageDao.deleteExpired(now)
+        val count = database.messageDao.deleteExpired(now)
+        if (count > 0) {
+            database.walCheckpointTruncate()
+        }
+        return count
     }
 
     /**

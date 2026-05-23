@@ -43,7 +43,7 @@ interface GroupMessageDao {
      * iterates these per peer to push the appropriate messages each
      * member hasn't yet received.
      */
-    @Query("SELECT * FROM group_message WHERE status = 'pending' AND from_pub = :selfPub ORDER BY created_at ASC")
+    @Query("SELECT * FROM group_message WHERE status IN ('pending', 'sent') AND from_pub = :selfPub ORDER BY created_at ASC")
     suspend fun pendingOutboundFrom(selfPub: ByteArray): List<GroupMessageEntity>
 
     /**

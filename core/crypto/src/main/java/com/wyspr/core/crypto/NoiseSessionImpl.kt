@@ -58,9 +58,6 @@ class NoiseSessionImpl(
         val (xPub, xSec) = keystore.deriveStaticX25519()
         try {
             val localDh: DHState = hs.localKeyPair
-            // setPrivateKey derives the public from the private internally;
-            // both will match xPub bit-for-bit, but we assert on length to
-            // catch curve mismatches early.
             check(localDh.privateKeyLength == xSec.size) {
                 "library private-key length mismatch: expected ${localDh.privateKeyLength}, got ${xSec.size}"
             }
@@ -96,17 +93,46 @@ class NoiseSessionImpl(
     override fun encrypt(plaintext: ByteArray): ByteArray {
         check(_state == NoiseSession.State.Transport) { "Noise not in transport mode" }
         val cs = sendCipher ?: error("send cipher not initialised")
-        val out = ByteArray(plaintext.size + cs.macLength)
-        val n = cs.encryptWithAd(null, plaintext, 0, out, 0, plaintext.size)
-        return out.copyOf(n)
+        if (plaintext.size <= NOISE_MAX_PLAINTEXT) {
+            val out = ByteArray(plaintext.size + cs.macLength)
+            val n = cs.encryptWithAd(null, plaintext, 0, out, 0, plaintext.size)
+            return out.copyOf(n)
+        }
+        val bos = java.io.ByteArrayOutputStream(plaintext.size + 256)
+        bos.write(CHUNK_MAGIC)
+        var offset = 0
+        while (offset < plaintext.size) {
+            val len = minOf(NOISE_MAX_PLAINTEXT, plaintext.size - offset)
+            val out = ByteArray(len + cs.macLength)
+            val n = cs.encryptWithAd(null, plaintext, offset, out, 0, len)
+            writeU32(bos, n)
+            bos.write(out, 0, n)
+            offset += len
+        }
+        return bos.toByteArray()
     }
 
     override fun decrypt(ciphertext: ByteArray): ByteArray {
         check(_state == NoiseSession.State.Transport) { "Noise not in transport mode" }
         val cs = receiveCipher ?: error("receive cipher not initialised")
-        val out = ByteArray(ciphertext.size)
-        val n = cs.decryptWithAd(null, ciphertext, 0, out, 0, ciphertext.size)
-        return out.copyOf(n)
+        if (!startsWithChunkMagic(ciphertext)) {
+            val out = ByteArray(ciphertext.size)
+            val n = cs.decryptWithAd(null, ciphertext, 0, out, 0, ciphertext.size)
+            return out.copyOf(n)
+        }
+        val bos = java.io.ByteArrayOutputStream(ciphertext.size)
+        var pos = CHUNK_MAGIC.size
+        while (pos < ciphertext.size) {
+            require(pos + 4 <= ciphertext.size) { "truncated chunk header" }
+            val chunkLen = readU32(ciphertext, pos)
+            pos += 4
+            require(pos + chunkLen <= ciphertext.size) { "chunk overruns input" }
+            val out = ByteArray(chunkLen)
+            val n = cs.decryptWithAd(null, ciphertext, pos, out, 0, chunkLen)
+            bos.write(out, 0, n)
+            pos += chunkLen
+        }
+        return bos.toByteArray()
     }
 
     override val handshakeHash: ByteArray
@@ -144,6 +170,33 @@ class NoiseSessionImpl(
         val pair = hs.split()
         sendCipher = pair.sender
         receiveCipher = pair.receiver
+        hs.destroy()
+        handshake = null
         _state = NoiseSession.State.Transport
+    }
+
+    companion object {
+        private const val NOISE_MAX_MESSAGE = 65535
+        private const val NOISE_MAX_PLAINTEXT = NOISE_MAX_MESSAGE - 16
+        private val CHUNK_MAGIC = byteArrayOf(0xFF.toByte(), 0x57, 0x43, 0x48)
+
+        private fun startsWithChunkMagic(data: ByteArray): Boolean {
+            if (data.size < CHUNK_MAGIC.size) return false
+            return data[0] == CHUNK_MAGIC[0] && data[1] == CHUNK_MAGIC[1] &&
+                data[2] == CHUNK_MAGIC[2] && data[3] == CHUNK_MAGIC[3]
+        }
+
+        private fun writeU32(out: java.io.ByteArrayOutputStream, value: Int) {
+            out.write((value ushr 24) and 0xFF)
+            out.write((value ushr 16) and 0xFF)
+            out.write((value ushr 8) and 0xFF)
+            out.write(value and 0xFF)
+        }
+
+        private fun readU32(data: ByteArray, offset: Int): Int =
+            ((data[offset].toInt() and 0xFF) shl 24) or
+                ((data[offset + 1].toInt() and 0xFF) shl 16) or
+                ((data[offset + 2].toInt() and 0xFF) shl 8) or
+                (data[offset + 3].toInt() and 0xFF)
     }
 }

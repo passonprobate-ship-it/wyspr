@@ -224,7 +224,7 @@ internal class MessageSyncEngine(
         }
         for (msg in pendingGroups) {
             if (msg.id.toList() in ackedIds) {
-                groupStore.markGroupSent(msg.id)
+                groupStore.markGroupDeliveredTo(msg.id, peerPub, nowSeconds())
                 count++
             }
         }

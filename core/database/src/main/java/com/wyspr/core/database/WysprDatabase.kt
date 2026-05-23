@@ -15,6 +15,7 @@ import com.wyspr.core.database.dao.MailboxStoredDao
 import com.wyspr.core.database.dao.MessageDao
 import com.wyspr.core.database.dao.PeerPaymentAddressDao
 import com.wyspr.core.database.dao.PeerSubAddressMintDao
+import com.wyspr.core.database.dao.GroupMessageDeliveryDao
 import com.wyspr.core.database.dao.ReactionDao
 import com.wyspr.core.database.dao.RevocationDao
 import com.wyspr.core.database.dao.SeenCertNonceDao
@@ -58,6 +59,13 @@ interface WysprDatabase {
      */
     suspend fun wipe()
 
+    /**
+     * Force a WAL checkpoint and truncate the WAL file so deleted
+     * rows are not recoverable from the write-ahead log. Called after
+     * purging disappearing messages.
+     */
+    suspend fun walCheckpointTruncate()
+
     /** Available after open(). */
     val isOpen: Boolean
 
@@ -81,4 +89,5 @@ interface WysprDatabase {
     val peerSubAddressMintDao: PeerSubAddressMintDao
     val addressBookDao: AddressBookDao
     val reactionDao: ReactionDao
+    val groupMessageDeliveryDao: GroupMessageDeliveryDao
 }

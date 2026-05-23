@@ -10,6 +10,9 @@ import com.wyspr.core.identity.CommunityId
 import com.wyspr.core.identity.Identity
 import com.wyspr.core.identity.IdentityIssuer
 import com.wyspr.core.transport.Link
+import com.wyspr.core.transport.PeerEndpoint
+import com.wyspr.core.transport.TorBackend
+import com.wyspr.core.transport.Transport
 import com.wyspr.core.transport.TransportLifecycle
 import com.wyspr.core.transport.bluetooth.BleTransport
 import com.wyspr.core.trust.HandshakeProtocol
@@ -55,6 +58,8 @@ class OnboardingViewModel @Inject constructor(
     private val communityService: CommunityService,
     private val bleTransport: BleTransport,
     private val transportLifecycle: TransportLifecycle,
+    private val torBackend: TorBackend,
+    @com.wyspr.core.transport.TorTransport private val torTransport: Transport,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState>(UiState.Booting)
@@ -78,7 +83,15 @@ class OnboardingViewModel @Inject constructor(
         viewModelScope.launch {
             val onboarded = withContext(Dispatchers.IO) {
                 runCatching {
-                    if (!database.isOpen) database.open()
+                    if (!database.isOpen) {
+                        try {
+                            database.open()
+                        } catch (e: Exception) {
+                            android.util.Log.w(TAG, "DB open failed at boot, wiping stale file", e)
+                            database.wipe()
+                            database.open()
+                        }
+                    }
                     database.trustEdgeDao.count() > 0
                 }.getOrDefault(false)
             }
@@ -146,7 +159,13 @@ class OnboardingViewModel @Inject constructor(
                         "This device has no hardware-backed keystore. Wyspr cannot run safely here."
                     }
                     val identity = IdentityIssuer.issue(keystore)
-                    database.open()
+                    try {
+                        database.open()
+                    } catch (e: Exception) {
+                        android.util.Log.w(TAG, "DB open failed, wiping stale file and retrying", e)
+                        database.wipe()
+                        database.open()
+                    }
                     val communityId = communityService.activeCommunityIdOrNull()
                         ?: communityService.foundNewCommunity(identity.publicKey.bytes)
                     val qr = handshake.mintInviterQr(communityId)
@@ -210,7 +229,8 @@ class OnboardingViewModel @Inject constructor(
             return
         }
         val now = System.currentTimeMillis() / 1000
-        if (!peerQr.isFresh(now)) {
+        val maxAge = if (peerQr.onionAddress != null) REMOTE_QR_MAX_AGE_SECONDS else HandshakeQr.MAX_AGE_SECONDS
+        if (!peerQr.isFresh(now, maxAgeSeconds = maxAge)) {
             _state.value = UiState.Result(
                 identity = s.identity, backing = s.backing,
                 localQr = s.qr, localQrBase32 = s.base32,
@@ -261,7 +281,8 @@ class OnboardingViewModel @Inject constructor(
                 q to HandshakeQrCodec.toBase32(HandshakeQrCodec.encode(q))
             }
             val now = System.currentTimeMillis() / 1000
-            if (!peerQr.isFresh(now)) {
+            val maxAge = if (peerQr.onionAddress != null) REMOTE_QR_MAX_AGE_SECONDS else HandshakeQr.MAX_AGE_SECONDS
+            if (!peerQr.isFresh(now, maxAgeSeconds = maxAge)) {
                 _state.value = UiState.Result(
                     identity = s.identity, backing = s.backing,
                     localQr = newLocalQr, localQrBase32 = newBase32,
@@ -412,17 +433,19 @@ class OnboardingViewModel @Inject constructor(
      * neither side is dialing — surfaces as a [TransportFailed] result
      * instead of an indefinitely frozen "establishing trust" screen.
      */
-    @Suppress("UNUSED_PARAMETER")
     private suspend fun openLinkFor(
         communityId: CommunityId,
         peerQr: HandshakeQr,
         role: HandshakeProtocol.Role,
     ): Link {
         Log.d(TAG, "openLinkFor: role=$role community=${communityId.bytes.take(4).joinToString("") { "%02x".format(it) }}…")
-        // peerQr is captured here so future versions can do a pre-noise
-        // filter (e.g. compute the expected service UUID, or pin the
-        // peer address against the QR's identityPub via a fingerprint
-        // index). v0.1 trusts Noise's channel-binding check downstream.
+
+        val peerOnion = peerQr.onionAddress
+        if (peerOnion != null && torBackend.state.value is TorBackend.State.Ready) {
+            Log.d(TAG, "openLinkFor: peer has .onion, attempting Tor handshake")
+            return openLinkOverTor(communityId, peerOnion, role)
+        }
+
         bleTransport.start(communityId)
         return withTimeout(LINK_TIMEOUT_MS) {
             when (role) {
@@ -436,6 +459,34 @@ class OnboardingViewModel @Inject constructor(
                 HandshakeProtocol.Role.Invitee -> {
                     bleTransport.acceptedLinks().first().also {
                         Log.d(TAG, "openLinkFor: accepted inbound link")
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun openLinkOverTor(
+        communityId: CommunityId,
+        peerOnion: String,
+        role: HandshakeProtocol.Role,
+    ): Link {
+        torTransport.start(communityId)
+        return withTimeout(TOR_LINK_TIMEOUT_MS) {
+            when (role) {
+                HandshakeProtocol.Role.Inviter -> {
+                    val endpoint = PeerEndpoint(
+                        kind = Transport.Kind.TorHiddenService,
+                        opaqueAddress = peerOnion,
+                    )
+                    Log.d(TAG, "openLinkOverTor: dialing $peerOnion")
+                    torTransport.connect(endpoint).also {
+                        Log.d(TAG, "openLinkOverTor: Tor link established")
+                    }
+                }
+                HandshakeProtocol.Role.Invitee -> {
+                    Log.d(TAG, "openLinkOverTor: waiting for inbound Tor connection")
+                    torTransport.acceptedLinks().first().also {
+                        Log.d(TAG, "openLinkOverTor: accepted inbound Tor link")
                     }
                 }
             }
@@ -459,7 +510,9 @@ class OnboardingViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         cancelHandshake()
-        viewModelScope.launch { runCatching { bleTransport.stop() } }
+        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching { bleTransport.stop() }
+        }
     }
 
     enum class Role { Inviter, Invitee }
@@ -550,5 +603,7 @@ class OnboardingViewModel @Inject constructor(
          * names that explicitly.
          */
         private const val LINK_TIMEOUT_MS = 30_000L
+        private const val TOR_LINK_TIMEOUT_MS = 60_000L
+        private const val REMOTE_QR_MAX_AGE_SECONDS = 30L * 60
     }
 }

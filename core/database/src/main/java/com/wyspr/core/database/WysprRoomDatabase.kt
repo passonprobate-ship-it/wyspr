@@ -39,6 +39,8 @@ import com.wyspr.core.database.entities.MailboxStoredEntity
 import com.wyspr.core.database.entities.MessageEntity
 import com.wyspr.core.database.entities.PeerPaymentAddressEntity
 import com.wyspr.core.database.entities.PeerSubAddressMintEntity
+import com.wyspr.core.database.dao.GroupMessageDeliveryDao
+import com.wyspr.core.database.entities.GroupMessageDeliveryEntity
 import com.wyspr.core.database.entities.ReactionEntity
 import com.wyspr.core.database.entities.RevocationEntity
 import com.wyspr.core.database.entities.SeenCertNonceEntity
@@ -102,8 +104,9 @@ import com.wyspr.core.database.entities.UserProfileEntity
         PeerSubAddressMintEntity::class,
         AddressBookEntity::class,
         ReactionEntity::class,
+        GroupMessageDeliveryEntity::class,
     ],
-    version = 19,
+    version = 20,
     exportSchema = false,
 )
 abstract class WysprRoomDatabase : RoomDatabase() {
@@ -127,6 +130,7 @@ abstract class WysprRoomDatabase : RoomDatabase() {
     abstract fun peerSubAddressMintDao(): PeerSubAddressMintDao
     abstract fun addressBookDao(): AddressBookDao
     abstract fun reactionDao(): ReactionDao
+    abstract fun groupMessageDeliveryDao(): GroupMessageDeliveryDao
 }
 
 /**
@@ -467,6 +471,18 @@ internal val MIGRATION_17_18 = object : Migration(17, 18) {
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_message_reaction_msg_id` " +
                 "ON `message_reaction`(`msg_id`)"
+        )
+    }
+}
+
+internal val MIGRATION_19_20 = object : Migration(19, 20) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `group_message_delivery` (" +
+                "`msg_id` BLOB NOT NULL, " +
+                "`peer_pub` BLOB NOT NULL, " +
+                "`delivered_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`msg_id`, `peer_pub`))"
         )
     }
 }

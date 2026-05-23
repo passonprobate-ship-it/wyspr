@@ -65,6 +65,7 @@ class WysprDatabaseImpl(
     override val peerSubAddressMintDao get() = requireOpen().peerSubAddressMintDao()
     override val addressBookDao get() = requireOpen().addressBookDao()
     override val reactionDao get() = requireOpen().reactionDao()
+    override val groupMessageDeliveryDao get() = requireOpen().groupMessageDeliveryDao()
 
     override suspend fun open() = openLock.withLock {
         withContext(Dispatchers.IO) {
@@ -104,6 +105,7 @@ class WysprDatabaseImpl(
                     MIGRATION_16_17,
                     MIGRATION_17_18,
                     MIGRATION_18_19,
+                    MIGRATION_19_20,
                 )
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
                 .build()
@@ -111,7 +113,15 @@ class WysprDatabaseImpl(
             // Touch the DB to force open + key check now, not on first
             // DAO call. If the passphrase is wrong (e.g. keystore was
             // rotated externally), this throws here, not silently later.
-            built.openHelper.writableDatabase
+            val db = built.openHelper.writableDatabase
+            db.execSQL("PRAGMA cipher_memory_security = ON")
+        }
+    }
+
+    override suspend fun walCheckpointTruncate() {
+        withContext(Dispatchers.IO) {
+            val db = room?.openHelper?.writableDatabase ?: return@withContext
+            db.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
         }
     }
 

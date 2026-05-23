@@ -102,10 +102,8 @@ import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.launch
 
-// Cached once at class-load time. DateFormat is thread-safe enough for
-// read-only `format()` usage here; previously this allocated a fresh
-// SimpleDateFormat on every bubble recomposition.
-private val bubbleTimeFormatter: DateFormat = DateFormat.getTimeInstance(DateFormat.SHORT)
+private val bubbleTimeFormatter: ThreadLocal<DateFormat> =
+    ThreadLocal.withInitial { DateFormat.getTimeInstance(DateFormat.SHORT) }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -828,7 +826,7 @@ private fun MessageBubble(
                                 )
                             }
                             Text(
-                                bubbleTimeFormatter.format(Date(msg.createdAt * 1000)),
+                                bubbleTimeFormatter.get()!!.format(Date(msg.createdAt * 1000)),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = (if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
                                 else MaterialTheme.colorScheme.onSurfaceVariant)

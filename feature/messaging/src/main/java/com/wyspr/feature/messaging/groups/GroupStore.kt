@@ -4,6 +4,7 @@ import com.goterl.lazysodium.LazySodiumAndroid
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.GroupEntity
 import com.wyspr.core.database.entities.GroupMemberEntity
+import com.wyspr.core.database.entities.GroupMessageDeliveryEntity
 import com.wyspr.core.database.entities.GroupMessageEntity
 import com.wyspr.core.identity.GroupId
 import com.wyspr.core.identity.PublicKey
@@ -52,15 +53,11 @@ class GroupStore @Inject constructor(
 
     /**
      * Group messages we (the local user, identified by [ownPub]) have
-     * outbound for delivery to [peerPub]. v1 semantics: a message is
-     * "pending for peer P" iff its status is pending AND P is an
-     * active member of the group AND P is not the sender. We do not
-     * track per-recipient ack state — once any peer acks, status flips
-     * to "sent" and the message stops being offered.
-     *
-     * This makes large-group delivery best-effort. v2 will introduce a
-     * `group_message_delivery` junction so each member's receipt is
-     * tracked independently.
+     * outbound for delivery to [peerPub]. A message is offered to peer
+     * P iff P is an active member AND P has no delivery record for that
+     * message yet. The `group_message_delivery` table tracks per-
+     * recipient ack state so every member receives the message
+     * independently.
      */
     suspend fun pendingGroupMessagesForPeer(
         ownPub: PublicKey,
@@ -69,13 +66,13 @@ class GroupStore @Inject constructor(
         ensureOpen()
         val all = database.groupMessageDao.pendingOutboundFrom(ownPub.bytes)
         if (all.isEmpty()) return emptyList()
-        // Filter to messages whose group has [peerPub] as an active member.
         val peerGroups = database.groupMemberDao
             .groupsForMember(peerPub.bytes)
             .map { it.groupId.toList() }
             .toSet()
         return all.filter { msg ->
-            msg.groupId.toList() in peerGroups
+            msg.groupId.toList() in peerGroups &&
+                !database.groupMessageDeliveryDao.isDelivered(msg.id, peerPub.bytes)
         }
     }
 
@@ -118,8 +115,15 @@ class GroupStore @Inject constructor(
         return true
     }
 
-    suspend fun markGroupSent(id: ByteArray) {
+    suspend fun markGroupDeliveredTo(id: ByteArray, peerPub: PublicKey, now: Long) {
         ensureOpen()
+        database.groupMessageDeliveryDao.insert(
+            GroupMessageDeliveryEntity(
+                msgId = id,
+                peerPub = peerPub.bytes,
+                deliveredAt = now,
+            ),
+        )
         database.groupMessageDao.updateStatus(id, STATUS_SENT)
     }
 
