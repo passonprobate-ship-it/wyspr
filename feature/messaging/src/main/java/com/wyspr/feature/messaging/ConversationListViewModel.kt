@@ -182,7 +182,7 @@ class ConversationListViewModel @Inject constructor(
                 peer = peer,
                 fingerprint = peer.fingerprint,
                 displayName = nameByPeer[key],
-                lastBodyPreview = last?.body?.take(BODY_PREVIEW_CHARS),
+                lastBodyPreview = last?.body?.let { formatListPreview(it) },
                 lastAt = last?.createdAt,
                 lastFromSelf = last?.fromPub?.contentEquals(ownPub.bytes),
             )
@@ -195,7 +195,7 @@ class ConversationListViewModel @Inject constructor(
             GroupRow(
                 groupId = GroupId(g.groupId),
                 name = g.localNickname?.takeIf { it.isNotBlank() } ?: g.name,
-                lastBodyPreview = last?.body?.take(BODY_PREVIEW_CHARS),
+                lastBodyPreview = last?.body?.let { formatListPreview(it) },
                 lastAt = last?.createdAt,
                 lastFromSelf = last?.fromPub?.contentEquals(ownPub.bytes),
             )
@@ -230,6 +230,20 @@ class ConversationListViewModel @Inject constructor(
         val lastAt: Long?,
         val lastFromSelf: Boolean?,
     )
+
+    private fun formatListPreview(body: String): String {
+        if (body.startsWith("wyspr:loc:")) return "📍 Location"
+        if (body.startsWith("wyspr:img:")) return "📷 Photo"
+        if (body.startsWith("wyspr:react:")) {
+            val decoded = com.wyspr.feature.messaging.reactions.ReactionPayload.decode(body)
+            return if (decoded != null && !decoded.isRetract) "Reacted ${decoded.emoji}" else "Removed a reaction"
+        }
+        if (body.startsWith("wyspr:reply:")) {
+            val inner = com.wyspr.feature.messaging.reply.ReplyPayload.decode(body)?.body
+            return inner?.take(BODY_PREVIEW_CHARS) ?: body.take(BODY_PREVIEW_CHARS)
+        }
+        return body.take(BODY_PREVIEW_CHARS)
+    }
 
     private companion object {
         const val BODY_PREVIEW_CHARS = 80

@@ -64,6 +64,7 @@ class WysprDatabaseImpl(
     override val peerPaymentAddressDao get() = requireOpen().peerPaymentAddressDao()
     override val peerSubAddressMintDao get() = requireOpen().peerSubAddressMintDao()
     override val addressBookDao get() = requireOpen().addressBookDao()
+    override val reactionDao get() = requireOpen().reactionDao()
 
     override suspend fun open() = openLock.withLock {
         withContext(Dispatchers.IO) {
@@ -101,6 +102,7 @@ class WysprDatabaseImpl(
                     MIGRATION_14_15,
                     MIGRATION_15_16,
                     MIGRATION_16_17,
+                    MIGRATION_17_18,
                 )
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
                 .build()

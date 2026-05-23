@@ -6,6 +6,7 @@ import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.ContactEntity
 import com.wyspr.core.database.entities.MessageEntity
+import com.wyspr.core.database.entities.ReactionEntity
 import com.wyspr.core.identity.PublicKey
 import com.wyspr.core.transport.MessagingNotifier
 import com.wyspr.feature.messaging.mailbox.MailboxBindingService
@@ -21,6 +22,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -144,6 +148,7 @@ class ConversationViewModel @Inject constructor(
                 // as read-receipts to push back.
                 messageStore.markInboundViewed(peer)
             }
+            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
             messageStore.threadFlow(peer)
                 .combine(database.contactDao.allFlow()) { messages, contacts ->
                     val row = contacts.firstOrNull { it.peerPub.contentEquals(peer.bytes) }
@@ -153,21 +158,26 @@ class ConversationViewModel @Inject constructor(
                         row?.notes?.takeIf { it.isNotBlank() },
                     )
                 }
-                .collectLatest { (messages, displayName, notes) ->
+                .flatMapLatest { (messages, displayName, notes) ->
+                    val ids = messages.map { it.id }
+                    val reactionsFlow = if (ids.isEmpty()) flowOf(emptyMap())
+                    else messageStore.reactionsForMessages(ids).map { list ->
+                        list.groupBy { com.wyspr.core.identity.PeerKey(it.msgId) }
+                    }
+                    reactionsFlow.map { reactions ->
+                        ThreadData(messages, displayName, notes, reactions)
+                    }
+                }
+                .collectLatest { data ->
                     _state.value = UiState.Ready(
                         own = ownPub?.let { PublicKey(it) },
                         peer = peer,
-                        displayName = displayName,
-                        notes = notes,
-                        messages = messages,
+                        displayName = data.displayName,
+                        notes = data.notes,
+                        messages = data.messages,
+                        reactions = data.reactions,
                     )
-                    // Flip any unviewed inbound to "viewed" only when
-                    // there's actually something to flip. The flow
-                    // emits on every status change including
-                    // outbound-state transitions; gating here keeps
-                    // a busy thread from running an O(thread) UPDATE
-                    // loop on every message-bubble repaint.
-                    val hasUnviewed = messages.any { m ->
+                    val hasUnviewed = data.messages.any { m ->
                         m.status == MessageStore.STATUS_RECEIVED &&
                             m.fromPub.contentEquals(peer.bytes)
                     }
@@ -359,18 +369,54 @@ class ConversationViewModel @Inject constructor(
         send(com.wyspr.feature.messaging.image.ImagePayload.encode(jpegBytes))
     }
 
+    fun sendReaction(targetMsg: MessageEntity, emoji: String) {
+        val peer = peerPub ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    messageStore.sendReaction(
+                        toPub = PublicKey(peer),
+                        targetMsgId = targetMsg.id,
+                        emoji = emoji,
+                    )
+                }
+            }
+        }
+    }
+
+    fun retractReaction(targetMsg: MessageEntity) {
+        val peer = peerPub ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    messageStore.sendReaction(
+                        toPub = PublicKey(peer),
+                        targetMsgId = targetMsg.id,
+                        emoji = "",
+                    )
+                }
+            }
+        }
+    }
+
     sealed interface UiState {
         data object Loading : UiState
         data class Ready(
             val own: PublicKey?,
             val peer: PublicKey,
-            /** User-set friendly name for the peer, or null/blank to use fingerprint. */
             val displayName: String?,
-            /** User-set free-form notes about this peer (local only). */
             val notes: String?,
             val messages: List<MessageEntity>,
+            val reactions: Map<com.wyspr.core.identity.PeerKey, List<ReactionEntity>> = emptyMap(),
         ) : UiState
     }
+
+    private data class ThreadData(
+        val messages: List<MessageEntity>,
+        val displayName: String?,
+        val notes: String?,
+        val reactions: Map<com.wyspr.core.identity.PeerKey, List<ReactionEntity>>,
+    )
 
     private companion object {
         /** Wait before the first auto-sync so the UI settles. */

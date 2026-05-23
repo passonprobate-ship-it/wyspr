@@ -71,15 +71,21 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.content.Intent
 import android.net.Uri
 import com.wyspr.core.database.entities.MessageEntity
+import com.wyspr.core.database.entities.ReactionEntity
+import com.wyspr.core.identity.PeerKey
 import com.wyspr.core.identity.PublicKey
 import com.wyspr.feature.messaging.ConversationViewModel
 import com.wyspr.feature.messaging.image.ImageBubble
 import com.wyspr.feature.messaging.image.ImagePayload
+import com.wyspr.feature.messaging.reactions.ReactionPayload
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.draw.clip
 import com.wyspr.feature.messaging.location.LocationPayload
 import java.text.DateFormat
@@ -200,11 +206,13 @@ fun ConversationScreen(
                                 contentPadding = PaddingValues(vertical = 8.dp),
                             ) {
                                 items(s.messages, key = { it.id.contentHashCode() }) { msg ->
+                                    if (ReactionPayload.isReaction(msg.body)) return@items
                                     val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)
                                     val quoted = decoded?.replyToId?.let { id ->
-                                        byId[com.wyspr.core.identity.PeerKey(id)]
+                                        byId[PeerKey(id)]
                                     }
                                     val ownBytesNN = ownBytes
+                                    val msgReactions = s.reactions[PeerKey(msg.id)].orEmpty()
                                     MessageBubble(
                                         msg = msg,
                                         fromSelf = ownBytesNN?.contentEquals(msg.fromPub) == true,
@@ -212,7 +220,11 @@ fun ConversationScreen(
                                         quotedFromSelf = quoted != null
                                             && ownBytesNN != null
                                             && quoted.fromPub.contentEquals(ownBytesNN),
+                                        reactions = msgReactions,
+                                        ownPub = ownBytesNN,
                                         onReply = { viewModel.pickReply(msg) },
+                                        onReact = { emoji -> viewModel.sendReaction(msg, emoji) },
+                                        onRetractReaction = { viewModel.retractReaction(msg) },
                                         onScrollToQuoted = { id ->
                                             val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
                                             if (idx >= 0) {
@@ -598,6 +610,8 @@ private fun statusFor(status: String): StatusGlyph = when (status) {
     else -> StatusGlyph(Icons.Filled.Done, status)
 }
 
+private val QUICK_REACT_EMOJI = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
@@ -605,127 +619,202 @@ private fun MessageBubble(
     fromSelf: Boolean,
     quoted: MessageEntity? = null,
     quotedFromSelf: Boolean = false,
+    reactions: List<ReactionEntity> = emptyList(),
+    ownPub: ByteArray? = null,
     onReply: () -> Unit = {},
+    onReact: (String) -> Unit = {},
+    onRetractReaction: () -> Unit = {},
     onScrollToQuoted: (ByteArray) -> Unit = {},
 ) {
     val clipboard = LocalClipboardManager.current
     val haptic = LocalHapticFeedback.current
     var menuOpen by remember { mutableStateOf(false) }
-    // If the body carries a reply marker, peel it off so the bubble
-    // renders the inner text only — the quoted snippet shows above.
     val displayBody = remember(msg.body) {
         com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)?.body ?: msg.body
     }
     val isImage = ImagePayload.isImage(displayBody)
     val isJumboEmoji = !isImage && displayBody.isJumboEmoji()
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (fromSelf) Arrangement.End else Arrangement.Start,
-    ) {
-        Surface(
-            color = if (fromSelf) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(
-                topStart = 14.dp,
-                topEnd = 14.dp,
-                bottomStart = if (fromSelf) 14.dp else 4.dp,
-                bottomEnd = if (fromSelf) 4.dp else 14.dp,
-            ),
-            // Image bubbles wrap to their content so a 280-dp-wide
-            // photo doesn't sit inside a 78%-wide rectangle with
-            // empty space around it. Text bubbles keep the 78% cap.
-            modifier = Modifier
-                .then(
-                    if (isImage) Modifier.widthIn(max = 300.dp)
-                    else Modifier.fillMaxWidth(0.78f),
-                )
-                .combinedClickable(
-                    onClick = { /* no-op — bubble is read-only on tap */ },
-                    onLongClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        menuOpen = true
-                    },
-                ),
+
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = if (fromSelf) Arrangement.End else Arrangement.Start,
         ) {
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Reply") },
-                    leadingIcon = {
-                        Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = null)
-                    },
-                    onClick = {
-                        menuOpen = false
-                        onReply()
-                    },
-                )
-                DropdownMenuItem(
-                    text = { Text("Copy") },
-                    leadingIcon = {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = null)
-                    },
-                    onClick = {
-                        clipboard.setText(AnnotatedString(displayBody))
-                        menuOpen = false
-                    },
-                )
-            }
-            Column(
-                modifier = Modifier.padding(
-                    horizontal = if (isImage) 4.dp else 14.dp,
-                    vertical = if (isImage) 4.dp else 10.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                if (quoted != null) {
-                    QuotedSnippet(
-                        quoted = quoted,
-                        quotedFromSelf = quotedFromSelf,
-                        onTap = { onScrollToQuoted(quoted.id) },
-                        bubbleFromSelf = fromSelf,
-                    )
-                }
-                val loc = LocationPayload.decode(displayBody)
-                when {
-                    isImage -> ImageBubble(body = displayBody, cacheKey = msg.id.contentHashCode())
-                    loc != null -> LocationCard(
-                        lat = loc.lat,
-                        lng = loc.lng,
-                        accuracyMeters = loc.accuracyMeters,
-                        fromSelf = fromSelf,
-                    )
-                    else -> Text(
-                        displayBody,
-                        style = if (isJumboEmoji) MaterialTheme.typography.displaySmall
-                        else MaterialTheme.typography.bodyMedium,
-                        color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.align(Alignment.End),
-                ) {
-                    Text(
-                        bubbleTimeFormatter.format(Date(msg.createdAt * 1000)),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = (if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant)
-                            .copy(alpha = 0.75f),
-                    )
-                    if (fromSelf) {
-                        val glyph = statusFor(msg.status)
-                        Icon(
-                            glyph.icon,
-                            contentDescription = glyph.description,
-                            modifier = Modifier.size(14.dp),
-                            tint = if (msg.status == "read")
-                                com.wyspr.core.ui.WysprAccent.Verified
-                            else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+            Box {
+                Surface(
+                    color = if (fromSelf) MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(
+                        topStart = 14.dp,
+                        topEnd = 14.dp,
+                        bottomStart = if (fromSelf) 14.dp else 4.dp,
+                        bottomEnd = if (fromSelf) 4.dp else 14.dp,
+                    ),
+                    modifier = Modifier
+                        .then(
+                            if (isImage) Modifier.widthIn(max = 300.dp)
+                            else Modifier.fillMaxWidth(0.78f),
                         )
+                        .combinedClickable(
+                            onClick = {},
+                            onLongClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                menuOpen = true
+                            },
+                        ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(
+                            horizontal = if (isImage) 4.dp else 14.dp,
+                            vertical = if (isImage) 4.dp else 10.dp,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        if (quoted != null) {
+                            QuotedSnippet(
+                                quoted = quoted,
+                                quotedFromSelf = quotedFromSelf,
+                                onTap = { onScrollToQuoted(quoted.id) },
+                                bubbleFromSelf = fromSelf,
+                            )
+                        }
+                        val loc = LocationPayload.decode(displayBody)
+                        when {
+                            isImage -> ImageBubble(body = displayBody, cacheKey = msg.id.contentHashCode())
+                            loc != null -> LocationCard(
+                                lat = loc.lat,
+                                lng = loc.lng,
+                                accuracyMeters = loc.accuracyMeters,
+                                fromSelf = fromSelf,
+                            )
+                            else -> Text(
+                                displayBody,
+                                style = if (isJumboEmoji) MaterialTheme.typography.displaySmall
+                                else MaterialTheme.typography.bodyMedium,
+                                color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.align(Alignment.End),
+                        ) {
+                            Text(
+                                bubbleTimeFormatter.format(Date(msg.createdAt * 1000)),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = (if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurfaceVariant)
+                                    .copy(alpha = 0.75f),
+                            )
+                            if (fromSelf) {
+                                val glyph = statusFor(msg.status)
+                                Icon(
+                                    glyph.icon,
+                                    contentDescription = glyph.description,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = if (msg.status == "read")
+                                        com.wyspr.core.ui.WysprAccent.Verified
+                                    else MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        for (emoji in QUICK_REACT_EMOJI) {
+                            Text(
+                                emoji,
+                                fontSize = 24.sp,
+                                modifier = Modifier
+                                    .clickable {
+                                        menuOpen = false
+                                        onReact(emoji)
+                                    }
+                                    .padding(6.dp),
+                            )
+                        }
+                    }
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("Reply") },
+                        leadingIcon = {
+                            Icon(Icons.AutoMirrored.Filled.Reply, contentDescription = null)
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onReply()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Copy") },
+                        leadingIcon = {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                        },
+                        onClick = {
+                            clipboard.setText(AnnotatedString(displayBody))
+                            menuOpen = false
+                        },
+                    )
+                }
+            }
+        }
+
+        if (reactions.isNotEmpty()) {
+            val grouped = remember(reactions) {
+                reactions.groupBy { it.emoji }
+                    .map { (emoji, list) -> emoji to list }
+                    .sortedByDescending { it.second.size }
+            }
+            Row(
+                modifier = Modifier
+                    .then(
+                        if (fromSelf) Modifier.fillMaxWidth().wrapContentWidth(Alignment.End)
+                        else Modifier,
+                    )
+                    .padding(start = if (fromSelf) 0.dp else 8.dp, end = if (fromSelf) 8.dp else 0.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                for ((emoji, senders) in grouped) {
+                    val isMine = ownPub != null && senders.any { it.fromPub.contentEquals(ownPub) }
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isMine) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .then(
+                                if (isMine) Modifier.border(
+                                    1.dp,
+                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                    RoundedCornerShape(12.dp),
+                                ) else Modifier,
+                            )
+                            .clickable {
+                                if (isMine) onRetractReaction() else onReact(emoji)
+                            },
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(emoji, fontSize = 14.sp)
+                            if (senders.size > 1) {
+                                Text(
+                                    "${senders.size}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -797,6 +886,7 @@ private fun quotedPreview(body: String): String {
     return when {
         unwrapped.startsWith("wyspr:loc:") -> "📍 Location"
         ImagePayload.isImage(unwrapped) -> "📷 Photo"
+        ReactionPayload.isReaction(unwrapped) -> "Reacted"
         else -> unwrapped.take(80)
     }
 }

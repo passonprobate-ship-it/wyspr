@@ -19,6 +19,7 @@ import com.wyspr.core.database.dao.MailboxStoredDao
 import com.wyspr.core.database.dao.MessageDao
 import com.wyspr.core.database.dao.PeerPaymentAddressDao
 import com.wyspr.core.database.dao.PeerSubAddressMintDao
+import com.wyspr.core.database.dao.ReactionDao
 import com.wyspr.core.database.dao.RevocationDao
 import com.wyspr.core.database.dao.SeenCertNonceDao
 import com.wyspr.core.database.dao.TrustEdgeDao
@@ -38,6 +39,7 @@ import com.wyspr.core.database.entities.MailboxStoredEntity
 import com.wyspr.core.database.entities.MessageEntity
 import com.wyspr.core.database.entities.PeerPaymentAddressEntity
 import com.wyspr.core.database.entities.PeerSubAddressMintEntity
+import com.wyspr.core.database.entities.ReactionEntity
 import com.wyspr.core.database.entities.RevocationEntity
 import com.wyspr.core.database.entities.SeenCertNonceEntity
 import com.wyspr.core.database.entities.TrustEdgeEntity
@@ -99,8 +101,9 @@ import com.wyspr.core.database.entities.UserProfileEntity
         PeerPaymentAddressEntity::class,
         PeerSubAddressMintEntity::class,
         AddressBookEntity::class,
+        ReactionEntity::class,
     ],
-    version = 17,
+    version = 18,
     exportSchema = false,
 )
 abstract class WysprRoomDatabase : RoomDatabase() {
@@ -123,6 +126,7 @@ abstract class WysprRoomDatabase : RoomDatabase() {
     abstract fun peerPaymentAddressDao(): PeerPaymentAddressDao
     abstract fun peerSubAddressMintDao(): PeerSubAddressMintDao
     abstract fun addressBookDao(): AddressBookDao
+    abstract fun reactionDao(): ReactionDao
 }
 
 /**
@@ -433,6 +437,28 @@ internal val MIGRATION_16_17 = object : Migration(16, 17) {
  * `handshake_quarantine` and `seen_cert_nonce` are new tables.
  * Additive, no data changes for them.
  */
+/**
+ * v17 → v18: add `message_reaction` table. Composite PK on
+ * `(msg_id, from_pub)` — one reaction per sender per message.
+ * Additive, no existing data changes.
+ */
+internal val MIGRATION_17_18 = object : Migration(17, 18) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `message_reaction` (" +
+                "`msg_id` BLOB NOT NULL, " +
+                "`from_pub` BLOB NOT NULL, " +
+                "`emoji` TEXT NOT NULL, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`msg_id`, `from_pub`))"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_message_reaction_msg_id` " +
+                "ON `message_reaction`(`msg_id`)"
+        )
+    }
+}
+
 internal val MIGRATION_11_12 = object : Migration(11, 12) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(

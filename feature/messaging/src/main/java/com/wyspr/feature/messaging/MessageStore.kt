@@ -3,7 +3,9 @@ package com.wyspr.feature.messaging
 import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.MessageEntity
+import com.wyspr.core.database.entities.ReactionEntity
 import com.wyspr.core.identity.PublicKey
+import com.wyspr.feature.messaging.reactions.ReactionPayload
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -69,6 +71,12 @@ class MessageStore @Inject constructor(
             signature = envelope.signature,
         )
         database.messageDao.upsert(entity)
+
+        val reactionDecoded = ReactionPayload.decode(body)
+        if (reactionDecoded != null) {
+            applyReaction(ownPub.bytes, reactionDecoded, clockSeconds)
+        }
+
         return entity
     }
 
@@ -187,6 +195,12 @@ class MessageStore @Inject constructor(
         ensureOpen()
         val existing = database.messageDao.byId(envelope.id)
         if (existing != null) return
+
+        val reactionDecoded = ReactionPayload.decode(envelope.body)
+        if (reactionDecoded != null) {
+            applyReaction(envelope.fromPub.bytes, reactionDecoded, envelope.createdAt)
+        }
+
         val entity = MessageEntity(
             id = envelope.id,
             threadPub = envelope.fromPub.bytes,
@@ -199,6 +213,50 @@ class MessageStore @Inject constructor(
             signature = envelope.signature,
         )
         database.messageDao.upsert(entity)
+    }
+
+    /**
+     * Send a reaction to a specific message. The reaction is encoded
+     * as a normal message with a `wyspr:react:` body. To retract,
+     * pass an empty emoji string.
+     */
+    suspend fun sendReaction(
+        toPub: PublicKey,
+        targetMsgId: ByteArray,
+        emoji: String,
+        clockSeconds: Long = System.currentTimeMillis() / 1000,
+    ): MessageEntity {
+        val body = if (emoji.isEmpty()) {
+            ReactionPayload.encodeRetract(targetMsgId)
+        } else {
+            ReactionPayload.encode(targetMsgId, emoji)
+        }
+        return send(toPub, body, clockSeconds)
+    }
+
+    /**
+     * Persist a reaction decoded from an inbound (or outbound) message
+     * body. Called after [ingest] when the body matches `wyspr:react:`.
+     */
+    suspend fun applyReaction(fromPub: ByteArray, decoded: ReactionPayload.Decoded, createdAt: Long) {
+        ensureOpen()
+        if (decoded.isRetract) {
+            database.reactionDao.delete(decoded.targetMsgId, fromPub)
+        } else {
+            database.reactionDao.upsert(
+                ReactionEntity(
+                    msgId = decoded.targetMsgId,
+                    fromPub = fromPub,
+                    emoji = decoded.emoji,
+                    createdAt = createdAt,
+                ),
+            )
+        }
+    }
+
+    fun reactionsForMessages(msgIds: List<ByteArray>): Flow<List<ReactionEntity>> {
+        ensureOpen()
+        return database.reactionDao.forMessagesFlow(msgIds)
     }
 
     private fun ensureOpen() {

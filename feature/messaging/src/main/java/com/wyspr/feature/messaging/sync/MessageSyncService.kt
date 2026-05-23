@@ -751,6 +751,10 @@ class MessageSyncService @Inject constructor(
     private fun formatPreview(body: String): String {
         if (body.startsWith("wyspr:loc:")) return "Location shared"
         if (body.startsWith("wyspr:img:")) return "Photo"
+        if (body.startsWith("wyspr:react:")) {
+            val decoded = com.wyspr.feature.messaging.reactions.ReactionPayload.decode(body)
+            return if (decoded != null && !decoded.isRetract) "Reacted ${decoded.emoji}" else "Removed a reaction"
+        }
         return body.take(NOTIFICATION_PREVIEW_CHARS)
     }
 
