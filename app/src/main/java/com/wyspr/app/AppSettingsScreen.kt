@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -31,12 +32,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.widget.Toast
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wyspr.core.ui.settings.BiometricSettings
+import com.wyspr.feature.onboarding.share.ApkShareIntent
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 
@@ -67,6 +76,8 @@ fun AppSettingsScreen(
     val gate by biometricSettings.gateEnabled.collectAsStateWithLifecycle()
     val bind by biometricSettings.bindToBiometric.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var sharePreparing by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -140,6 +151,41 @@ fun AppSettingsScreen(
                 title = "Share Wyspr",
                 subtitle = "QR over local WiFi for nearby installs",
                 onClick = onOpenShareApp,
+            )
+            HorizontalDivider()
+            LinkRow(
+                icon = Icons.Filled.Share,
+                title = if (sharePreparing) "Preparing APK…" else "Send APK via app",
+                subtitle = "Email, Signal, Bluetooth, Quick Share, anything installed",
+                onClick = {
+                    if (sharePreparing) return@LinkRow
+                    sharePreparing = true
+                    scope.launch {
+                        val result = runCatching { ApkShareIntent.create(context) }
+                        sharePreparing = false
+                        result
+                            .onSuccess { intent ->
+                                try {
+                                    context.startActivity(
+                                        Intent.createChooser(intent, "Send Wyspr APK"),
+                                    )
+                                } catch (_: ActivityNotFoundException) {
+                                    Toast.makeText(
+                                        context,
+                                        "No app available to share with",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }
+                            .onFailure {
+                                Toast.makeText(
+                                    context,
+                                    "Couldn't prepare the APK: ${it.message}",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                    }
+                },
             )
 
             SectionHeader("Danger zone")

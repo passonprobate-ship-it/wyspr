@@ -1,5 +1,7 @@
 package com.wyspr.feature.onboarding.screens
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -24,7 +27,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -39,7 +45,9 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wyspr.core.ui.QrRenderer
+import com.wyspr.feature.onboarding.share.ApkShareIntent
 import com.wyspr.feature.onboarding.share.ApkSharingViewModel
+import kotlinx.coroutines.launch
 
 /**
  * Shows a QR encoding the URL of the on-device APK share server. The
@@ -80,13 +88,14 @@ fun ShareApkScreen(
             style = MaterialTheme.typography.titleLarge,
         )
         Text(
-            "Have them open their phone's camera and point it at this code. " +
-                "Their browser will open a page where they can read what " +
-                "they're installing, then download Wyspr directly from " +
-                "this device. No internet needed — same WiFi network only.",
+            "Send the APK through any installed app — email, Signal, " +
+                "Telegram, Bluetooth, Quick Share. Or use the QR below " +
+                "for a direct local download over WiFi with no internet.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(horizontal = 8.dp),
         )
+
+        ShareViaAppButton()
 
         when (val s = state) {
             is ApkSharingViewModel.State.Starting -> StartingPlaceholder()
@@ -198,6 +207,48 @@ private fun ReadyPanel(state: ApkSharingViewModel.State.Ready) {
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
+    }
+}
+
+@Composable
+private fun ShareViaAppButton() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var working by remember { mutableStateOf(false) }
+    Button(
+        onClick = {
+            if (working) return@Button
+            working = true
+            scope.launch {
+                val result = runCatching { ApkShareIntent.create(context) }
+                working = false
+                result
+                    .onSuccess { intent ->
+                        try {
+                            context.startActivity(
+                                Intent.createChooser(intent, "Send Wyspr APK"),
+                            )
+                        } catch (_: ActivityNotFoundException) {
+                            Toast.makeText(
+                                context,
+                                "No app available to share with",
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                    .onFailure {
+                        Toast.makeText(
+                            context,
+                            "Couldn't prepare the APK: ${it.message}",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+            }
+        },
+        enabled = !working,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(if (working) "Preparing…" else "Share APK via app")
     }
 }
 

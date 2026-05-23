@@ -9,4 +9,14 @@
     <cache-path
         name="peer-updates"
         path="peer-updates/" />
+
+    <!--
+        Staging dir for outbound APK sharing via Intent.ACTION_SEND.
+        ApkShareIntent copies the running APK here so FileProvider can
+        mint a content:// URI that Gmail / Signal / Bluetooth / etc.
+        can read. Nothing else under cacheDir/ is exposed.
+    -->
+    <cache-path
+        name="share-out"
+        path="share-out/" />
 </paths>
