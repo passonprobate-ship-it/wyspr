@@ -97,6 +97,8 @@ fun ConversationScreen(
     peer: PublicKey,
     onBack: () -> Unit,
     onViewPeerPage: () -> Unit = {},
+    /** Sprint W2: NavHost routes to the SendXmr screen in :feature:monero-wallet. */
+    onSendXmr: () -> Unit = {},
     viewModel: ConversationViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(peer.bytes.contentHashCode()) { viewModel.bind(peer) }
@@ -267,6 +269,10 @@ fun ConversationScreen(
                 viewModel.closePeerDetails()
                 onViewPeerPage()
             },
+            onSendXmr = {
+                viewModel.closePeerDetails()
+                onSendXmr()
+            },
         )
     }
     val notesOpen by viewModel.notesOpen.collectAsStateWithLifecycle()
@@ -298,6 +304,7 @@ private fun PeerDetailsSheet(
     onRename: () -> Unit,
     onNotes: () -> Unit,
     onViewPage: () -> Unit,
+    onSendXmr: () -> Unit,
 ) {
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
     androidx.compose.material3.ModalBottomSheet(
@@ -326,6 +333,9 @@ private fun PeerDetailsSheet(
             }
             androidx.compose.material3.TextButton(onClick = onViewPage, modifier = Modifier.fillMaxWidth()) {
                 Text("View web page", modifier = Modifier.fillMaxWidth())
+            }
+            androidx.compose.material3.TextButton(onClick = onSendXmr, modifier = Modifier.fillMaxWidth()) {
+                Text("Send XMR", modifier = Modifier.fillMaxWidth())
             }
             androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(16.dp))
         }

@@ -38,6 +38,7 @@ dependencies {
     implementation(project(":core:ui"))
     implementation(project(":core:crypto"))
     implementation(project(":core:identity"))
+    implementation(project(":core:database"))
     implementation(project(":core:transport:api"))
 
     // Compose / nav / lifecycle

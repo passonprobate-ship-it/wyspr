@@ -16,6 +16,7 @@ import com.keystone.core.database.dao.MailboxBindingDao
 import com.keystone.core.database.dao.MailboxPullCursorDao
 import com.keystone.core.database.dao.MailboxStoredDao
 import com.keystone.core.database.dao.MessageDao
+import com.keystone.core.database.dao.PeerPaymentAddressDao
 import com.keystone.core.database.dao.RevocationDao
 import com.keystone.core.database.dao.SeenCertNonceDao
 import com.keystone.core.database.dao.TrustEdgeDao
@@ -32,6 +33,7 @@ import com.keystone.core.database.entities.MailboxBindingEntity
 import com.keystone.core.database.entities.MailboxPullCursorEntity
 import com.keystone.core.database.entities.MailboxStoredEntity
 import com.keystone.core.database.entities.MessageEntity
+import com.keystone.core.database.entities.PeerPaymentAddressEntity
 import com.keystone.core.database.entities.RevocationEntity
 import com.keystone.core.database.entities.SeenCertNonceEntity
 import com.keystone.core.database.entities.TrustEdgeEntity
@@ -90,8 +92,9 @@ import com.keystone.core.database.entities.UserProfileEntity
         MailboxPullCursorEntity::class,
         HandshakeQuarantineEntity::class,
         SeenCertNonceEntity::class,
+        PeerPaymentAddressEntity::class,
     ],
-    version = 14,
+    version = 15,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {
@@ -111,6 +114,7 @@ abstract class KeystoneRoomDatabase : RoomDatabase() {
     abstract fun mailboxPullCursorDao(): MailboxPullCursorDao
     abstract fun handshakeQuarantineDao(): HandshakeQuarantineDao
     abstract fun seenCertNonceDao(): SeenCertNonceDao
+    abstract fun peerPaymentAddressDao(): PeerPaymentAddressDao
 }
 
 /**
@@ -323,6 +327,37 @@ internal val MIGRATION_13_14 = object : Migration(13, 14) {
         )
         db.execSQL("DROP TABLE `mailbox_binding`")
         db.execSQL("ALTER TABLE `mailbox_binding_new` RENAME TO `mailbox_binding`")
+    }
+}
+
+/**
+ * v14 → v15: add `peer_payment_address`. Chain-agnostic binding
+ * of "this paired peer publishes this address on this chain".
+ * Used by Sprint W2 of TOR-ACROSS-WEB to make Send-XMR a one-tap
+ * action against the peer's friendly name, never the address
+ * string.
+ *
+ * Composite PK on `(peer_pub, chain, address)` so a peer can rotate
+ * addresses without losing history; `revoked_at` is the soft-
+ * delete marker and `notes` is local-only free text.
+ */
+internal val MIGRATION_14_15 = object : Migration(14, 15) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `peer_payment_address` (" +
+                "`peer_pub` BLOB NOT NULL, " +
+                "`chain` TEXT NOT NULL, " +
+                "`address` TEXT NOT NULL, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "`revoked_at` INTEGER, " +
+                "`notes` TEXT, " +
+                "PRIMARY KEY(`peer_pub`, `chain`, `address`))"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS " +
+                "`index_peer_payment_address_peer_pub_chain_revoked_at` " +
+                "ON `peer_payment_address`(`peer_pub`, `chain`, `revoked_at`)"
+        )
     }
 }
 

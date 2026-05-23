@@ -19,6 +19,7 @@ import com.keystone.core.identity.PublicKey
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.marketplace.MarketplaceRoot
 import com.keystone.feature.monero.MoneroWalletRoot
+import com.keystone.feature.monero.ui.SendXmrScreen
 import com.keystone.feature.marketplace.screens.CommunityGraphScreen
 import com.keystone.feature.messaging.mailbox.screens.MailboxScreen
 import com.keystone.feature.messaging.mailbox.screens.ScanMailboxQrScreen
@@ -132,6 +133,7 @@ fun KeystoneNavHost(
                 peer = PublicKey(bytes),
                 onBack = { navController.popBackStack() },
                 onViewPeerPage = { navController.navigate("${Routes.PeerPage}/${hex}") },
+                onSendXmr = { navController.navigate("${Routes.SendXmr}/${hex}") },
             )
         }
         composable(
@@ -202,6 +204,26 @@ fun KeystoneNavHost(
         composable(Routes.Monero) {
             MoneroWalletRoot()
         }
+        composable(
+            route = "${Routes.SendXmr}/{peerHex}",
+            arguments = listOf(navArgument("peerHex") { type = NavType.StringType }),
+        ) { entry ->
+            val hex = entry.arguments?.getString("peerHex")
+            val bytes = hex?.hexToBytesOrNull()
+            if (bytes == null || bytes.size != 32) {
+                navController.popBackStack()
+                return@composable
+            }
+            SendXmrScreen(
+                peer = PublicKey(bytes),
+                // Display name is best-effort — the SendXmrScreen
+                // falls back to the fingerprint when null. We could
+                // look it up via ContactDao but for v1 keeping the
+                // signature simple wins.
+                displayName = null,
+                onBack = { navController.popBackStack() },
+            )
+        }
         composable(Routes.Marketplace) {
             MarketplaceRoot(
                 biometricPrompt = biometricPrompt,
@@ -251,6 +273,8 @@ object Routes {
     const val MailboxScan = "mailbox_scan"
     /** Sprint W1: mollyim-backed Monero wallet. */
     const val Monero = "monero"
+    /** Sprint W2: send XMR to a paired peer. Path: send_xmr/{peerHex}. */
+    const val SendXmr = "send_xmr"
     /** Full-screen conversation routes — pushed on top of the
      *  bottom-nav shell so the nav bar is hidden during chat. */
     const val Conversation = "conversation"

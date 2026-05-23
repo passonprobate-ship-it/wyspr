@@ -2,12 +2,17 @@ package com.keystone.feature.monero
 
 import android.content.Context
 import android.util.Log
+import com.keystone.core.identity.PublicKey
 import com.keystone.feature.monero.persistence.EncryptedWalletDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
+import im.molly.monero.sdk.FeePriority
 import im.molly.monero.sdk.MoneroAmount
 import im.molly.monero.sdk.MoneroNetwork
 import im.molly.monero.sdk.MoneroNodeClient
 import im.molly.monero.sdk.MoneroWallet
+import im.molly.monero.sdk.PaymentDetail
+import im.molly.monero.sdk.PaymentRequest
+import im.molly.monero.sdk.PublicAddress
 import im.molly.monero.sdk.RemoteNode
 import im.molly.monero.sdk.WalletProvider
 import im.molly.monero.sdk.service.InProcessWalletService
@@ -61,6 +66,7 @@ class MoneroWalletService @Inject constructor(
     @ApplicationContext private val context: Context,
     private val dataStore: EncryptedWalletDataStore,
     private val httpClient: OkHttpClient,
+    private val paymentAddressService: PaymentAddressService,
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -117,6 +123,51 @@ class MoneroWalletService @Inject constructor(
         } catch (t: Throwable) {
             Log.w(TAG, "bootstrap failed: ${t::class.simpleName}: ${t.message}", t)
             _walletState.value = WalletState.Failed(t.message ?: "bootstrap failed")
+        }
+    }
+
+    /**
+     * Send XMR to a paired peer. Resolves the destination via
+     * [PaymentAddressService.currentForPeer] — the user never types
+     * an address string. Builds a [PaymentRequest], hands it to
+     * mollyim's `createTransfer`, then commits the resulting
+     * [im.molly.monero.sdk.PendingTransfer].
+     *
+     * Returns a [SendResult] sealed type so the UI can render the
+     * specific failure (no address bound, wallet not ready,
+     * insufficient funds, broadcast failed).
+     *
+     * No biometric gate here — the UI layer wraps the call with the
+     * existing `BiometricGate` from `:core:ui`. This service trusts
+     * its caller already authenticated the user.
+     */
+    suspend fun sendTo(
+        peerPub: PublicKey,
+        amountAtomicUnits: Long,
+        feePriority: FeePriority = FeePriority.Medium,
+    ): SendResult {
+        val w = wallet ?: return SendResult.WalletNotReady
+        val addressStr = paymentAddressService
+            .currentForPeer(peerPub, PaymentAddressService.CHAIN_MONERO)
+            ?: return SendResult.NoAddressBound
+        return try {
+            val dest = PublicAddress.parse(addressStr)
+            val detail = PaymentDetail(MoneroAmount(amountAtomicUnits), dest)
+            val request = PaymentRequest(
+                paymentDetails = listOf(detail),
+                spendingAccountIndex = 0,
+                feePriority = feePriority,
+            )
+            w.createTransfer(request).use { pending ->
+                val ok = pending.commit()
+                if (ok) SendResult.Sent(
+                    amountAtomicUnits = pending.amount.atomicUnits,
+                    feeAtomicUnits = pending.fee.atomicUnits,
+                ) else SendResult.BroadcastFailed
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "sendTo failed: ${t::class.simpleName}: ${t.message}", t)
+            SendResult.Error(t.message ?: t::class.simpleName ?: "send failed")
         }
     }
 
@@ -181,6 +232,24 @@ class MoneroWalletService @Inject constructor(
         ) : WalletState
         /** Connect, open, or ledger collect failed. UI shows error + retry. */
         data class Failed(val message: String) : WalletState
+    }
+
+    /**
+     * Outcome of [sendTo]. UI renders each variant differently — a
+     * success goes to a confirmation screen, the others to specific
+     * error states.
+     */
+    sealed interface SendResult {
+        /** Tx built and broadcast. Returns the amount + fee we paid. */
+        data class Sent(val amountAtomicUnits: Long, val feeAtomicUnits: Long) : SendResult
+        /** Wallet hasn't finished bootstrapping yet. */
+        data object WalletNotReady : SendResult
+        /** No address is bound for this peer — UI prompts to set one. */
+        data object NoAddressBound : SendResult
+        /** Tx built locally but daemon refused to broadcast. */
+        data object BroadcastFailed : SendResult
+        /** Any other failure — invalid address, insufficient funds, …. */
+        data class Error(val message: String) : SendResult
     }
 
     private companion object {

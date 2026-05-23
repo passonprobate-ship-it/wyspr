@@ -501,6 +501,20 @@ class WalletServiceTest {
                     throw NotImplementedError()
                 override suspend fun sweepBefore(cutoffSeconds: Long): Int = throw NotImplementedError()
             }
+        override val peerPaymentAddressDao: com.keystone.core.database.dao.PeerPaymentAddressDao =
+            object : com.keystone.core.database.dao.PeerPaymentAddressDao {
+                override suspend fun upsert(entity: com.keystone.core.database.entities.PeerPaymentAddressEntity) =
+                    throw NotImplementedError()
+                override suspend fun currentForPeer(peerPub: ByteArray, chain: String) =
+                    throw NotImplementedError()
+                override fun currentForPeerFlow(peerPub: ByteArray, chain: String) =
+                    throw NotImplementedError()
+                override suspend fun allForPeer(peerPub: ByteArray) = throw NotImplementedError()
+                override suspend fun revoke(peerPub: ByteArray, chain: String, address: String, nowSeconds: Long) =
+                    throw NotImplementedError()
+                override suspend fun deleteForPeer(peerPub: ByteArray) = throw NotImplementedError()
+                override suspend fun deleteAll() = throw NotImplementedError()
+            }
     }
 
     private class FakeAccountDao(private val rows: MutableMap<String, AccountEntity>) : AccountDao {
