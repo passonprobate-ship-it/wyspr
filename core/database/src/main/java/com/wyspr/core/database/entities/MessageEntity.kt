@@ -49,6 +49,7 @@ data class MessageEntity(
     @ColumnInfo("body") val body: String,
     @ColumnInfo("status") val status: String,
     @ColumnInfo("signature") val signature: ByteArray,
+    @ColumnInfo("expires_at") val expiresAt: Long? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
@@ -61,7 +62,8 @@ data class MessageEntity(
             receivedAt == other.receivedAt &&
             body == other.body &&
             status == other.status &&
-            signature.contentEquals(other.signature)
+            signature.contentEquals(other.signature) &&
+            expiresAt == other.expiresAt
     }
     override fun hashCode(): Int {
         var r = id.contentHashCode()
@@ -73,6 +75,7 @@ data class MessageEntity(
         r = 31 * r + body.hashCode()
         r = 31 * r + status.hashCode()
         r = 31 * r + signature.contentHashCode()
+        r = 31 * r + (expiresAt?.hashCode() ?: 0)
         return r
     }
 }

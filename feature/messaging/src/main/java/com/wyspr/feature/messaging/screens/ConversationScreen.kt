@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
@@ -78,6 +79,7 @@ import com.wyspr.core.identity.PublicKey
 import com.wyspr.feature.messaging.ConversationViewModel
 import com.wyspr.feature.messaging.audio.AudioBubble
 import com.wyspr.feature.messaging.audio.AudioPayload
+import com.wyspr.feature.messaging.disappear.DisappearPayload
 import com.wyspr.feature.messaging.image.ImageBubble
 import com.wyspr.feature.messaging.image.ImagePayload
 import com.wyspr.feature.messaging.reactions.ReactionPayload
@@ -158,6 +160,19 @@ fun ConversationScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    val disappearAfter = (state as? ConversationViewModel.UiState.Ready)?.disappearAfter
+                    if (disappearAfter != null) {
+                        Icon(
+                            Icons.Filled.Timer,
+                            contentDescription = "Disappearing messages on",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clickable { viewModel.openDisappearPicker() },
+                        )
+                    }
+                },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                 ),
@@ -210,6 +225,7 @@ fun ConversationScreen(
                             ) {
                                 items(s.messages, key = { it.id.contentHashCode() }) { msg ->
                                     if (ReactionPayload.isReaction(msg.body)) return@items
+                                    if (DisappearPayload.isDisappear(msg.body)) return@items
                                     val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)
                                     val quoted = decoded?.replyToId?.let { id ->
                                         byId[PeerKey(id)]
@@ -284,6 +300,7 @@ fun ConversationScreen(
             onDismiss = viewModel::closePeerDetails,
             onRename = viewModel::openRename,
             onNotes = viewModel::openNotes,
+            onDisappearTimer = viewModel::openDisappearPicker,
             onViewPage = {
                 viewModel.closePeerDetails()
                 onViewPeerPage()
@@ -307,6 +324,18 @@ fun ConversationScreen(
             },
         )
     }
+    val disappearPickerOpen by viewModel.disappearPickerOpen.collectAsStateWithLifecycle()
+    val currentDisappearAfter = (state as? ConversationViewModel.UiState.Ready)?.disappearAfter
+    if (disappearPickerOpen) {
+        DisappearTimerDialog(
+            current = currentDisappearAfter,
+            onDismiss = viewModel::closeDisappearPicker,
+            onConfirm = { seconds ->
+                viewModel.setDisappearTimer(seconds)
+                viewModel.closeDisappearPicker()
+            },
+        )
+    }
 }
 
 /**
@@ -322,6 +351,7 @@ private fun PeerDetailsSheet(
     onDismiss: () -> Unit,
     onRename: () -> Unit,
     onNotes: () -> Unit,
+    onDisappearTimer: () -> Unit,
     onViewPage: () -> Unit,
     onSendXmr: () -> Unit,
 ) {
@@ -349,6 +379,9 @@ private fun PeerDetailsSheet(
             }
             androidx.compose.material3.TextButton(onClick = onNotes, modifier = Modifier.fillMaxWidth()) {
                 Text("Notes", modifier = Modifier.fillMaxWidth())
+            }
+            androidx.compose.material3.TextButton(onClick = onDisappearTimer, modifier = Modifier.fillMaxWidth()) {
+                Text("Disappearing messages", modifier = Modifier.fillMaxWidth())
             }
             androidx.compose.material3.TextButton(onClick = onViewPage, modifier = Modifier.fillMaxWidth()) {
                 Text("View web page", modifier = Modifier.fillMaxWidth())
@@ -410,6 +443,56 @@ private fun shortFingerprint(fp: String): String {
     val raw = fp.filter { it.isLetterOrDigit() }
     if (raw.length < 10) return fp
     return raw.take(4) + "⋯" + raw.takeLast(4)
+}
+
+@Composable
+private fun DisappearTimerDialog(
+    current: Long?,
+    onDismiss: () -> Unit,
+    onConfirm: (Long?) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Disappearing messages") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "New messages will be deleted from both devices after the chosen time.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(8.dp))
+                for ((label, seconds) in DisappearPayload.TIMER_OPTIONS) {
+                    val selected = current == seconds
+                    Surface(
+                        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onConfirm(seconds) },
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        },
+    )
 }
 
 @Composable
@@ -717,6 +800,15 @@ private fun MessageBubble(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.align(Alignment.End),
                         ) {
+                            if (msg.expiresAt != null) {
+                                Icon(
+                                    Icons.Filled.Timer,
+                                    contentDescription = "Disappearing",
+                                    modifier = Modifier.size(12.dp),
+                                    tint = (if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                                    else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.6f),
+                                )
+                            }
                             Text(
                                 bubbleTimeFormatter.format(Date(msg.createdAt * 1000)),
                                 style = MaterialTheme.typography.labelSmall,
@@ -905,6 +997,7 @@ private fun quotedPreview(body: String): String {
         ImagePayload.isImage(unwrapped) -> "📷 Photo"
         AudioPayload.isAudio(unwrapped) -> "🎙 Voice note"
         ReactionPayload.isReaction(unwrapped) -> "Reacted"
+        DisappearPayload.isDisappear(unwrapped) -> "⏱ Timer changed"
         else -> unwrapped.take(80)
     }
 }

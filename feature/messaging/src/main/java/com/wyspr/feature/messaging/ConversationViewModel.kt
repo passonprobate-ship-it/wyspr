@@ -91,6 +91,35 @@ class ConversationViewModel @Inject constructor(
     }
     fun closeNotes() { _notesOpen.value = false }
 
+    private val _disappearPickerOpen = MutableStateFlow(false)
+    val disappearPickerOpen: StateFlow<Boolean> = _disappearPickerOpen.asStateFlow()
+    fun openDisappearPicker() {
+        _peerDetailsOpen.value = false
+        _disappearPickerOpen.value = true
+    }
+    fun closeDisappearPicker() { _disappearPickerOpen.value = false }
+
+    fun setDisappearTimer(seconds: Long?) {
+        val peer = peerPub ?: return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                if (!database.isOpen) database.open()
+                val existing = database.contactDao.byPub(peer)
+                database.contactDao.upsert(
+                    com.wyspr.core.database.entities.ContactEntity(
+                        peerPub = peer,
+                        displayName = existing?.displayName,
+                        notes = existing?.notes,
+                        disappearAfter = seconds,
+                    ),
+                )
+                // Notify the peer of the new timer via a control message
+                val body = com.wyspr.feature.messaging.disappear.DisappearPayload.encode(seconds ?: 0)
+                messageStore.send(toPub = PublicKey(peer), body = body)
+            }
+        }
+    }
+
     /** Persist the user's free-form notes for the bound peer. */
     fun saveNotes(text: String) {
         val peer = peerPub ?: return
@@ -152,20 +181,27 @@ class ConversationViewModel @Inject constructor(
             messageStore.threadFlow(peer)
                 .combine(database.contactDao.allFlow()) { messages, contacts ->
                     val row = contacts.firstOrNull { it.peerPub.contentEquals(peer.bytes) }
-                    Triple(
+                    data class ContactInfo(
+                        val messages: List<MessageEntity>,
+                        val displayName: String?,
+                        val notes: String?,
+                        val disappearAfter: Long?,
+                    )
+                    ContactInfo(
                         messages,
                         row?.displayName?.takeIf { it.isNotBlank() },
                         row?.notes?.takeIf { it.isNotBlank() },
+                        row?.disappearAfter,
                     )
                 }
-                .flatMapLatest { (messages, displayName, notes) ->
-                    val ids = messages.map { it.id }
+                .flatMapLatest { info ->
+                    val ids = info.messages.map { it.id }
                     val reactionsFlow = if (ids.isEmpty()) flowOf(emptyMap())
                     else messageStore.reactionsForMessages(ids).map { list ->
                         list.groupBy { com.wyspr.core.identity.PeerKey(it.msgId) }
                     }
                     reactionsFlow.map { reactions ->
-                        ThreadData(messages, displayName, notes, reactions)
+                        ThreadData(info.messages, info.displayName, info.notes, reactions, info.disappearAfter)
                     }
                 }
                 .collectLatest { data ->
@@ -176,6 +212,7 @@ class ConversationViewModel @Inject constructor(
                         notes = data.notes,
                         messages = data.messages,
                         reactions = data.reactions,
+                        disappearAfter = data.disappearAfter,
                     )
                     val hasUnviewed = data.messages.any { m ->
                         m.status == MessageStore.STATUS_RECEIVED &&
@@ -230,12 +267,9 @@ class ConversationViewModel @Inject constructor(
                 runCatching {
                     syncService.runOnce(timeoutMs = AUTO_SYNC_TIMEOUT_MS)
                 }.onFailure { t ->
-                    // Re-throw cancellation so structured concurrency works
-                    // — eating it here would let the loop swallow shutdown
-                    // signals and keep holding the round mutex while the
-                    // viewModelScope is supposed to be tearing down.
                     if (t is kotlinx.coroutines.CancellationException) throw t
                 }
+                runCatching { messageStore.deleteExpiredMessages() }
                 delay(AUTO_SYNC_INTERVAL_MS)
             }
         }
@@ -412,6 +446,7 @@ class ConversationViewModel @Inject constructor(
             val notes: String?,
             val messages: List<MessageEntity>,
             val reactions: Map<com.wyspr.core.identity.PeerKey, List<ReactionEntity>> = emptyMap(),
+            val disappearAfter: Long? = null,
         ) : UiState
     }
 
@@ -420,6 +455,7 @@ class ConversationViewModel @Inject constructor(
         val displayName: String?,
         val notes: String?,
         val reactions: Map<com.wyspr.core.identity.PeerKey, List<ReactionEntity>>,
+        val disappearAfter: Long?,
     )
 
     private companion object {

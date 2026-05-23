@@ -3,8 +3,10 @@ package com.wyspr.feature.messaging
 import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.MessageEntity
+import com.wyspr.core.database.entities.ContactEntity
 import com.wyspr.core.database.entities.ReactionEntity
 import com.wyspr.core.identity.PublicKey
+import com.wyspr.feature.messaging.disappear.DisappearPayload
 import com.wyspr.feature.messaging.reactions.ReactionPayload
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -59,6 +61,11 @@ class MessageStore @Inject constructor(
             body = body,
             now = clockSeconds,
         )
+        val disappearAfter = database.contactDao.byPub(toPub.bytes)?.disappearAfter
+        val expiresAt = if (disappearAfter != null && disappearAfter > 0) {
+            clockSeconds + disappearAfter
+        } else null
+
         val entity = MessageEntity(
             id = envelope.id,
             threadPub = toPub.bytes,
@@ -69,6 +76,7 @@ class MessageStore @Inject constructor(
             body = envelope.body,
             status = STATUS_PENDING,
             signature = envelope.signature,
+            expiresAt = expiresAt,
         )
         database.messageDao.upsert(entity)
 
@@ -201,6 +209,16 @@ class MessageStore @Inject constructor(
             applyReaction(envelope.fromPub.bytes, reactionDecoded, envelope.createdAt)
         }
 
+        val disappearDecoded = DisappearPayload.decode(envelope.body)
+        if (disappearDecoded != null) {
+            applyDisappearSetting(envelope.fromPub.bytes, disappearDecoded)
+        }
+
+        val disappearAfter = database.contactDao.byPub(envelope.fromPub.bytes)?.disappearAfter
+        val expiresAt = if (disappearAfter != null && disappearAfter > 0) {
+            receivedAtSeconds + disappearAfter
+        } else null
+
         val entity = MessageEntity(
             id = envelope.id,
             threadPub = envelope.fromPub.bytes,
@@ -211,8 +229,28 @@ class MessageStore @Inject constructor(
             body = envelope.body,
             status = STATUS_RECEIVED,
             signature = envelope.signature,
+            expiresAt = expiresAt,
         )
         database.messageDao.upsert(entity)
+    }
+
+    private suspend fun applyDisappearSetting(peerPub: ByteArray, seconds: Long) {
+        val existing = database.contactDao.byPub(peerPub)
+        val timer = if (seconds <= 0) null else seconds
+        database.contactDao.upsert(
+            ContactEntity(
+                peerPub = peerPub,
+                displayName = existing?.displayName,
+                notes = existing?.notes,
+                disappearAfter = timer,
+            ),
+        )
+    }
+
+    suspend fun deleteExpiredMessages(): Int {
+        ensureOpen()
+        val now = System.currentTimeMillis() / 1000
+        return database.messageDao.deleteExpired(now)
     }
 
     /**

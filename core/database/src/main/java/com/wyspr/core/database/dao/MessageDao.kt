@@ -120,4 +120,10 @@ interface MessageDao {
             "ORDER BY created_at DESC LIMIT :limit",
     )
     suspend fun search(query: String, limit: Int = 50): List<MessageEntity>
+
+    @Query("DELETE FROM message WHERE expires_at IS NOT NULL AND expires_at <= :nowSeconds")
+    suspend fun deleteExpired(nowSeconds: Long): Int
+
+    @Query("UPDATE message SET expires_at = :expiresAt WHERE id = :id")
+    suspend fun setExpiresAt(id: ByteArray, expiresAt: Long?)
 }

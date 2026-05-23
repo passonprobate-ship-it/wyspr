@@ -103,7 +103,7 @@ import com.wyspr.core.database.entities.UserProfileEntity
         AddressBookEntity::class,
         ReactionEntity::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = false,
 )
 abstract class WysprRoomDatabase : RoomDatabase() {
@@ -442,6 +442,18 @@ internal val MIGRATION_16_17 = object : Migration(16, 17) {
  * `(msg_id, from_pub)` — one reaction per sender per message.
  * Additive, no existing data changes.
  */
+/**
+ * v18 → v19: disappearing messages. Add `expires_at` column to
+ * `message` and `disappear_after` column to `contact`. Both nullable
+ * — null means "no expiry" / "timer off". Additive, no data changes.
+ */
+internal val MIGRATION_18_19 = object : Migration(18, 19) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `message` ADD COLUMN `expires_at` INTEGER")
+        db.execSQL("ALTER TABLE `contact` ADD COLUMN `disappear_after` INTEGER")
+    }
+}
+
 internal val MIGRATION_17_18 = object : Migration(17, 18) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
