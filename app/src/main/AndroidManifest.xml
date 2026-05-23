@@ -8,6 +8,10 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
+    <!-- Microphone — voice note recording. Runtime permission requested
+         on first use; denial path handled in VoiceRecordController. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- Foreground service for the transport stack — keeps BLE / WiFi
          Direct adapters alive while the app is in the background so peers
          can sync opportunistically. -->

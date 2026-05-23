@@ -369,6 +369,10 @@ class ConversationViewModel @Inject constructor(
         send(com.wyspr.feature.messaging.image.ImagePayload.encode(jpegBytes))
     }
 
+    fun sendVoiceNote(audioBytes: ByteArray, durationMs: Long) {
+        send(com.wyspr.feature.messaging.audio.AudioPayload.encode(audioBytes, durationMs))
+    }
+
     fun sendReaction(targetMsg: MessageEntity, emoji: String) {
         val peer = peerPub ?: return
         viewModelScope.launch {

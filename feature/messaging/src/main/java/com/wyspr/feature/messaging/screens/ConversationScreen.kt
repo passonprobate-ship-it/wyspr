@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.AlertDialog
@@ -75,6 +76,8 @@ import com.wyspr.core.database.entities.ReactionEntity
 import com.wyspr.core.identity.PeerKey
 import com.wyspr.core.identity.PublicKey
 import com.wyspr.feature.messaging.ConversationViewModel
+import com.wyspr.feature.messaging.audio.AudioBubble
+import com.wyspr.feature.messaging.audio.AudioPayload
 import com.wyspr.feature.messaging.image.ImageBubble
 import com.wyspr.feature.messaging.image.ImagePayload
 import com.wyspr.feature.messaging.reactions.ReactionPayload
@@ -246,6 +249,9 @@ fun ConversationScreen(
             val sharePhoto = rememberPhotoShareController { jpegBytes ->
                 viewModel.sendImage(jpegBytes)
             }
+            val recordVoice = rememberVoiceRecordController { audioBytes, durationMs ->
+                viewModel.sendVoiceNote(audioBytes, durationMs)
+            }
             val replyingTo by viewModel.replyingTo.collectAsStateWithLifecycle()
             replyingTo?.let { target ->
                 val ownBytes = (state as? ConversationViewModel.UiState.Ready)?.own?.bytes
@@ -265,6 +271,7 @@ fun ConversationScreen(
                 },
                 onShareLocation = shareLocation,
                 onSharePhoto = sharePhoto,
+                onRecordVoice = recordVoice,
                 modifier = Modifier.navigationBarsPadding(),
             )
         }
@@ -412,6 +419,7 @@ private fun ComposerRow(
     onSend: () -> Unit,
     onShareLocation: () -> Unit,
     onSharePhoto: () -> Unit,
+    onRecordVoice: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -433,6 +441,13 @@ private fun ComposerRow(
             Icon(
                 Icons.Filled.LocationOn,
                 contentDescription = "Share my location",
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        IconButton(onClick = onRecordVoice) {
+            Icon(
+                Icons.Filled.Mic,
+                contentDescription = "Record voice note",
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
@@ -679,8 +694,10 @@ private fun MessageBubble(
                             )
                         }
                         val loc = LocationPayload.decode(displayBody)
+                        val isAudio = AudioPayload.isAudio(displayBody)
                         when {
                             isImage -> ImageBubble(body = displayBody, cacheKey = msg.id.contentHashCode())
+                            isAudio -> AudioBubble(body = displayBody, fromSelf = fromSelf, cacheKey = msg.id.contentHashCode())
                             loc != null -> LocationCard(
                                 lat = loc.lat,
                                 lng = loc.lng,
@@ -886,6 +903,7 @@ private fun quotedPreview(body: String): String {
     return when {
         unwrapped.startsWith("wyspr:loc:") -> "📍 Location"
         ImagePayload.isImage(unwrapped) -> "📷 Photo"
+        AudioPayload.isAudio(unwrapped) -> "🎙 Voice note"
         ReactionPayload.isReaction(unwrapped) -> "Reacted"
         else -> unwrapped.take(80)
     }
