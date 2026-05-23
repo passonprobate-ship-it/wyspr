@@ -17,7 +17,9 @@ import im.molly.monero.sdk.PaymentRequest
 import im.molly.monero.sdk.PublicAddress
 import im.molly.monero.sdk.RemoteNode
 import im.molly.monero.sdk.RestorePoint
+import im.molly.monero.sdk.SweepRequest
 import im.molly.monero.sdk.SecretKey
+import im.molly.monero.sdk.DynamicFeeRate
 import im.molly.monero.sdk.WalletProvider
 import im.molly.monero.sdk.randomSecretKey
 import im.molly.monero.sdk.service.InProcessWalletService
@@ -104,6 +106,16 @@ class MoneroWalletService @Inject constructor(
     val walletState: StateFlow<WalletState> = _walletState.asStateFlow()
 
     /**
+     * Current fee market snapshot from the Monero daemon. Updated
+     * whenever mollyim's [MoneroWallet.dynamicFeeRate] flow emits.
+     * Null before the first emission. The SendXmr screen consumes
+     * this to render a per-tier fee preview next to each
+     * [FeePriority] chip.
+     */
+    private val _feeRate = MutableStateFlow<DynamicFeeRate?>(null)
+    val feeRate: StateFlow<DynamicFeeRate?> = _feeRate.asStateFlow()
+
+    /**
      * Bootstrap the wallet. Idempotent — repeated calls return
      * immediately if a wallet is already open.
      *
@@ -158,6 +170,7 @@ class MoneroWalletService @Inject constructor(
             wallet = w
             claimForegroundIfNeeded()
             startLedgerCollector(w)
+            startFeeRateCollector(w)
         } catch (t: Throwable) {
             Log.w(TAG, "bootstrap failed: ${t::class.simpleName}: ${t.message}", t)
             _walletState.value = WalletState.Failed(t.message ?: "bootstrap failed")
@@ -222,12 +235,24 @@ class MoneroWalletService @Inject constructor(
             wallet = w
             claimForegroundIfNeeded()
             startLedgerCollector(w)
+            startFeeRateCollector(w)
             RestoreResult.Ok
         } catch (t: Throwable) {
             Log.w(TAG, "restoreFromSeed failed: ${t::class.simpleName}: ${t.message}", t)
             _walletState.value = WalletState.Failed(t.message ?: "restore failed")
             releaseForegroundIfHeld()
             RestoreResult.Error(t.message ?: t::class.simpleName ?: "restore failed")
+        }
+    }
+
+    private fun startFeeRateCollector(w: MoneroWallet) {
+        scope.launch {
+            try {
+                w.dynamicFeeRate().collectLatest { rate -> _feeRate.value = rate }
+            } catch (t: Throwable) {
+                Log.w(TAG, "fee-rate collector ended: ${t::class.simpleName}: ${t.message}")
+                _feeRate.value = null
+            }
         }
     }
 
@@ -310,6 +335,45 @@ class MoneroWalletService @Inject constructor(
     }
 
     /**
+     * Sweep every unlocked enote in the wallet to [recipient] in a
+     * single tx. Used to retire the wallet (e.g. before phone
+     * disposal) or to consolidate dust into a single output that's
+     * easier to spend cleanly later.
+     *
+     * Caller is the UI's biometric-gated Sweep screen — the
+     * service trusts the user authenticated. Returns a [SendResult]
+     * with the same semantics as [sendTo]:
+     *   - [SendResult.Sent] carries amount + fee paid;
+     *   - [SendResult.Error] surfaces a parse / insufficient-funds /
+     *     broadcast failure.
+     */
+    suspend fun sweepAllTo(
+        recipient: String,
+        feePriority: FeePriority = FeePriority.Medium,
+    ): SendResult {
+        val w = wallet ?: return SendResult.WalletNotReady
+        return try {
+            val dest = PublicAddress.parse(recipient)
+            val request = SweepRequest(
+                recipientAddress = dest,
+                splitCount = 1,
+                keyImageHashes = emptyList(),
+                feePriority = feePriority,
+            )
+            w.createTransfer(request).use { pending ->
+                val ok = pending.commit()
+                if (ok) SendResult.Sent(
+                    amountAtomicUnits = pending.amount.atomicUnits,
+                    feeAtomicUnits = pending.fee.atomicUnits,
+                ) else SendResult.BroadcastFailed
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "sweepAllTo failed: ${t::class.simpleName}: ${t.message}", t)
+            SendResult.Error(t.message ?: t::class.simpleName ?: "sweep failed")
+        }
+    }
+
+    /**
      * Free up the wallet binding. Called from process shutdown;
      * idempotent.
      */
@@ -378,12 +442,21 @@ class MoneroWalletService @Inject constructor(
                 // inbound deposit has sent.isEmpty().
                 val isOutbound = tx.sent.isNotEmpty()
                 val absAmount = kotlin.math.abs(tx.amount.atomicUnits)
+                val payments = if (isOutbound) {
+                    tx.payments.map { p ->
+                        PaymentDest(
+                            amountAtomicUnits = p.amount.atomicUnits,
+                            address = p.recipientAddress.address,
+                        )
+                    }
+                } else emptyList()
                 TxHistoryEntry(
                     txHash = tx.txId,
                     amountAtomicUnits = if (isOutbound) -absAmount else absAmount,
                     feeAtomicUnits = if (isOutbound) tx.fee.atomicUnits else 0L,
                     blockHeight = tx.blockHeight,
                     blockTimestamp = tx.blockTimestamp,
+                    payments = payments,
                 )
             }
             .sortedByDescending { it.blockTimestamp ?: java.time.Instant.MAX }
@@ -439,10 +512,22 @@ class MoneroWalletService @Inject constructor(
         val blockHeight: Int?,
         /** Wall-clock time of the confirming block; null when unconfirmed. */
         val blockTimestamp: java.time.Instant?,
+        /**
+         * Outbound only — list of (amount, recipient address) the
+         * user paid in this tx. Empty for inbound entries. Used by
+         * the detail screen.
+         */
+        val payments: List<PaymentDest> = emptyList(),
     ) {
         val isInbound: Boolean get() = amountAtomicUnits >= 0L
         val isUnconfirmed: Boolean get() = blockHeight == null
     }
+
+    /** One destination inside an outbound tx — amount + address. */
+    data class PaymentDest(
+        val amountAtomicUnits: Long,
+        val address: String,
+    )
 
     /**
      * Outcome of [restoreFromSeed]. UI renders the error variant

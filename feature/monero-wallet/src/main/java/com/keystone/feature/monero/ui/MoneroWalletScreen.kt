@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.HorizontalDivider
 import com.keystone.core.ui.components.KeystonePanel
 import com.keystone.feature.monero.MoneroWalletService.TxHistoryEntry
@@ -43,6 +44,8 @@ fun MoneroWalletScreen(
     onRetry: () -> Unit,
     onRevealSeed: () -> Unit,
     onRestoreWallet: () -> Unit,
+    onSweepWallet: () -> Unit = {},
+    onOpenTx: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -69,13 +72,17 @@ fun MoneroWalletScreen(
         when (state) {
             WalletState.Idle -> IdlePanel()
             WalletState.Binding -> BindingPanel()
-            is WalletState.Ready -> ReadyPanel(state)
+            is WalletState.Ready -> ReadyPanel(state, onOpenTx)
             is WalletState.Failed -> FailedPanel(state.message, onRetry)
         }
 
-        // Restore action — always visible at the bottom so it's
-        // reachable even if a fresh wallet is in a Failed state.
-        WalletActionsPanel(onRestoreWallet = onRestoreWallet)
+        // Restore + sweep actions — always visible at the bottom so
+        // they're reachable even if a fresh wallet is in a Failed
+        // state (the user may want to wipe & restore in that case).
+        WalletActionsPanel(
+            onRestoreWallet = onRestoreWallet,
+            onSweepWallet = onSweepWallet,
+        )
     }
 }
 
@@ -105,16 +112,20 @@ private fun SeedBackupBanner(onRevealSeed: () -> Unit) {
 }
 
 @Composable
-private fun WalletActionsPanel(onRestoreWallet: () -> Unit) {
+private fun WalletActionsPanel(
+    onRestoreWallet: () -> Unit,
+    onSweepWallet: () -> Unit,
+) {
     KeystonePanel(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                text = "Restore a different wallet",
+                text = "Wallet maintenance",
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                text = "Have a Monero seed from another wallet? Restore it here. This " +
-                    "replaces the current on-device wallet.",
+                text = "Restore replaces the on-device wallet with one from a different " +
+                    "seed. Sweep empties the current wallet into a single destination " +
+                    "address — useful for retirement or consolidating dust.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -123,6 +134,12 @@ private fun WalletActionsPanel(onRestoreWallet: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Restore from 25-word seed")
+            }
+            androidx.compose.material3.OutlinedButton(
+                onClick = onSweepWallet,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Sweep to another address")
             }
         }
     }
@@ -157,7 +174,7 @@ private fun BindingPanel() {
 }
 
 @Composable
-private fun ReadyPanel(state: WalletState.Ready) {
+private fun ReadyPanel(state: WalletState.Ready, onOpenTx: (String) -> Unit) {
     KeystonePanel(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
@@ -198,11 +215,11 @@ private fun ReadyPanel(state: WalletState.Ready) {
             )
         }
     }
-    TxHistoryPanel(state.transactions)
+    TxHistoryPanel(state.transactions, onOpenTx)
 }
 
 @Composable
-private fun TxHistoryPanel(txs: List<TxHistoryEntry>) {
+private fun TxHistoryPanel(txs: List<TxHistoryEntry>, onOpenTx: (String) -> Unit) {
     KeystonePanel(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
@@ -222,7 +239,7 @@ private fun TxHistoryPanel(txs: List<TxHistoryEntry>) {
                 // all" expander is future polish.
                 val visible = txs.take(50)
                 visible.forEachIndexed { index, tx ->
-                    TxHistoryRow(tx)
+                    TxHistoryRow(tx, onOpenTx)
                     if (index < visible.lastIndex) {
                         HorizontalDivider(
                             color = MaterialTheme.colorScheme.outlineVariant,
@@ -245,13 +262,18 @@ private val TX_TS_FORMAT: DateTimeFormatter =
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
 
 @Composable
-private fun TxHistoryRow(tx: TxHistoryEntry) {
+private fun TxHistoryRow(tx: TxHistoryEntry, onOpenTx: (String) -> Unit) {
     val abs = kotlin.math.abs(tx.amountAtomicUnits).atomicUnitsAsXmr()
     val sign = if (tx.isInbound) "+" else "−"
     val color = if (tx.isInbound) MaterialTheme.colorScheme.primary
         else MaterialTheme.colorScheme.tertiary
     val ts = tx.blockTimestamp?.let { TX_TS_FORMAT.format(it) } ?: "pending"
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpenTx(tx.txHash) },
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,

@@ -110,6 +110,7 @@ fun SendXmrScreen(
                 BoundPanel(
                     bound = bound,
                     feePriority = state.feePriority,
+                    feeEstimateAtomic = state.feeEstimateAtomic,
                     onFeePriorityChange = viewModel::setFeePriority,
                     onSend = { atomic ->
                         scope.launch {
@@ -165,6 +166,7 @@ private fun MyAddressPanel(myAddress: String?) {
 private fun BoundPanel(
     bound: String,
     feePriority: FeePriority,
+    feeEstimateAtomic: Map<FeePriority, Long>,
     onFeePriorityChange: (FeePriority) -> Unit,
     onSend: (Long) -> Unit,
     lastResult: MoneroWalletService.SendResult?,
@@ -192,6 +194,7 @@ private fun BoundPanel(
             )
             FeeTierPicker(
                 selected = feePriority,
+                estimate = feeEstimateAtomic,
                 onSelect = onFeePriorityChange,
             )
             val atomic = amountStr.toBigDecimalOrNull()
@@ -215,6 +218,7 @@ private fun BoundPanel(
 @Composable
 private fun FeeTierPicker(
     selected: FeePriority,
+    estimate: Map<FeePriority, Long>,
     onSelect: (FeePriority) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -225,10 +229,19 @@ private fun FeeTierPicker(
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             FeePriority.entries.forEach { tier ->
+                val est = estimate[tier]
                 FilterChip(
                     selected = tier == selected,
                     onClick = { onSelect(tier) },
-                    label = { Text(labelFor(tier)) },
+                    label = {
+                        Text(
+                            if (est != null) {
+                                "${labelFor(tier)} · ~${est.atomicUnitsAsXmr()} XMR"
+                            } else {
+                                labelFor(tier)
+                            },
+                        )
+                    },
                     colors = FilterChipDefaults.filterChipColors(),
                 )
             }
@@ -238,6 +251,14 @@ private fun FeeTierPicker(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (estimate.isNotEmpty()) {
+            Text(
+                text = "Estimates based on ~2 KB typical tx size. Actual fee at send time " +
+                    "may differ.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

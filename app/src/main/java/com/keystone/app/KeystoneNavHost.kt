@@ -22,6 +22,8 @@ import com.keystone.feature.monero.MoneroWalletRoot
 import com.keystone.feature.monero.ui.RestoreWalletScreen
 import com.keystone.feature.monero.ui.SeedRevealScreen
 import com.keystone.feature.monero.ui.SendXmrScreen
+import com.keystone.feature.monero.ui.SweepWalletScreen
+import com.keystone.feature.monero.ui.TxDetailScreen
 import com.keystone.feature.marketplace.screens.CommunityGraphScreen
 import com.keystone.feature.messaging.mailbox.screens.MailboxScreen
 import com.keystone.feature.messaging.mailbox.screens.ScanMailboxQrScreen
@@ -207,6 +209,24 @@ fun KeystoneNavHost(
             MoneroWalletRoot(
                 onRevealSeed = { navController.navigate(Routes.SeedReveal) },
                 onRestoreWallet = { navController.navigate(Routes.RestoreWallet) },
+                onSweepWallet = { navController.navigate(Routes.SweepWallet) },
+                onOpenTx = { hash -> navController.navigate("${Routes.TxDetail}/$hash") },
+            )
+        }
+        composable(Routes.SweepWallet) {
+            SweepWalletScreen(
+                onBack = { navController.popBackStack() },
+                biometricPrompt = biometricPrompt,
+            )
+        }
+        composable(
+            route = "${Routes.TxDetail}/{hash}",
+            arguments = listOf(navArgument("hash") { type = NavType.StringType }),
+        ) { entry ->
+            val hash = entry.arguments?.getString("hash").orEmpty()
+            TxDetailScreen(
+                txHash = hash,
+                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.SeedReveal) {
@@ -301,6 +321,10 @@ object Routes {
     const val SeedReveal = "seed_reveal"
     /** Sprint W4: restore wallet from 25-word seed or 64-hex spend secret. */
     const val RestoreWallet = "restore_wallet"
+    /** Sprint W5: tx detail. Path: tx_detail/{hash}. */
+    const val TxDetail = "tx_detail"
+    /** Sprint W5: sweep wallet to another address. */
+    const val SweepWallet = "sweep_wallet"
     /** Full-screen conversation routes — pushed on top of the
      *  bottom-nav shell so the nav bar is hidden during chat. */
     const val Conversation = "conversation"

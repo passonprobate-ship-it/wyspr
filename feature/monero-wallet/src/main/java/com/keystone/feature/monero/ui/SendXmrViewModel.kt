@@ -36,6 +36,17 @@ class SendXmrViewModel @Inject constructor(
          */
         val feePriority: im.molly.monero.sdk.FeePriority =
             im.molly.monero.sdk.FeePriority.Medium,
+        /**
+         * Sprint W5: per-tier fee estimate in atomic units. Updates
+         * as the daemon's fee market shifts. Empty until the wallet
+         * has produced its first [DynamicFeeRate] snapshot.
+         *
+         * Estimate = `feePerByte * AVG_TX_BYTES`. The exact tx
+         * size depends on input selection and isn't knowable
+         * without building the tx; ~2000 bytes covers a typical
+         * 1-in / 2-out RingCT spend to within ±20%.
+         */
+        val feeEstimateAtomic: Map<im.molly.monero.sdk.FeePriority, Long> = emptyMap(),
     )
 
     private val _state = MutableStateFlow(State())
@@ -66,6 +77,14 @@ class SendXmrViewModel @Inject constructor(
                 .collectLatest { bound ->
                     _state.value = _state.value.copy(peerBoundAddress = bound)
                 }
+        }
+        viewModelScope.launch {
+            walletService.feeRate.collectLatest { rate ->
+                val estimate = rate?.feePerByte?.mapValues { (_, amt) ->
+                    amt.atomicUnits * AVG_TX_BYTES
+                } ?: emptyMap()
+                _state.value = _state.value.copy(feeEstimateAtomic = estimate)
+            }
         }
         // Best-effort display-name lookup from the contact table.
         // One-shot read — the SendXmr screen is short-lived enough
@@ -110,5 +129,17 @@ class SendXmrViewModel @Inject constructor(
     /** Pick a different fee tier; reflected in the next [send] call. */
     fun setFeePriority(priority: im.molly.monero.sdk.FeePriority) {
         _state.value = _state.value.copy(feePriority = priority)
+    }
+
+    private companion object {
+        /**
+         * Typical Monero RingCT tx size (1 input, 2 outputs).
+         * Real txs range ~1500-2500 bytes depending on input
+         * selection — multi-input spends can be 2-3x. We use this
+         * just to convert fee/byte into a previewable fee/tx so the
+         * UX has a number to render; the actual fee at commit time
+         * comes from mollyim's `PendingTransfer.fee`.
+         */
+        const val AVG_TX_BYTES = 2000L
     }
 }

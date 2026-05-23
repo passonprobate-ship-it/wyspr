@@ -20,6 +20,8 @@ import com.keystone.feature.monero.ui.MoneroWalletViewModel
 fun MoneroWalletRoot(
     onRevealSeed: () -> Unit = {},
     onRestoreWallet: () -> Unit = {},
+    onSweepWallet: () -> Unit = {},
+    onOpenTx: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val viewModel: MoneroWalletViewModel = hiltViewModel()
@@ -31,6 +33,8 @@ fun MoneroWalletRoot(
         onRetry = { viewModel.retry() },
         onRevealSeed = onRevealSeed,
         onRestoreWallet = onRestoreWallet,
+        onSweepWallet = onSweepWallet,
+        onOpenTx = onOpenTx,
         modifier = modifier.fillMaxSize(),
     )
 }
