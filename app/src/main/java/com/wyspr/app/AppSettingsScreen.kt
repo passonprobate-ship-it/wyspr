@@ -149,14 +149,14 @@ fun AppSettingsScreen(
             LinkRow(
                 icon = Icons.Filled.QrCode2,
                 title = "Share Wyspr",
-                subtitle = "QR over local WiFi for nearby installs",
+                subtitle = "QR code — direct download, no accounts needed",
                 onClick = onOpenShareApp,
             )
             HorizontalDivider()
             LinkRow(
                 icon = Icons.Filled.Share,
-                title = if (sharePreparing) "Preparing APK…" else "Send APK via app",
-                subtitle = "Email, Signal, Bluetooth, Quick Share, anything installed",
+                title = "Send APK via app",
+                subtitle = if (sharePreparing) "Preparing…" else "Email, messaging, Bluetooth, etc.",
                 onClick = {
                     if (sharePreparing) return@LinkRow
                     sharePreparing = true

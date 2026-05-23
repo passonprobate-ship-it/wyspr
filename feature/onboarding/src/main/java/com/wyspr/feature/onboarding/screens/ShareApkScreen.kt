@@ -84,13 +84,12 @@ fun ShareApkScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            "Send Wyspr to your peer",
+            "Share Wyspr",
             style = MaterialTheme.typography.titleLarge,
         )
         Text(
-            "Send the APK through any installed app — email, Signal, " +
-                "Telegram, Bluetooth, Quick Share. Or use the QR below " +
-                "for a direct local download over WiFi with no internet.",
+            "Send the APK via any app, or have your peer scan the QR " +
+                "for a direct download over WiFi — no internet needed.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(horizontal = 8.dp),
         )
@@ -112,7 +111,7 @@ fun ShareApkScreen(
             androidx.compose.material3.TextButton(
                 onClick = onUpdateFromPeer,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text("Receiving an update? Scan a peer's QR instead") }
+            ) { Text("Receive an update from a peer") }
         }
 
         OutlinedButton(
@@ -185,29 +184,18 @@ private fun ReadyPanel(state: ApkSharingViewModel.State.Ready) {
     // directly, or send via Quick Share / SMS / anything.
     UrlCopyRow(url = state.url)
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-            "Or have them open this URL in any browser",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            "Wyspr ${state.versionName} • $sizeMb MB",
-            style = MaterialTheme.typography.labelMedium,
-        )
-        Text(
-            "SHA-256",
-            style = MaterialTheme.typography.labelSmall,
-            modifier = Modifier.padding(top = 8.dp),
-        )
-        Text(
-            sha256Pretty,
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 16.dp),
-        )
-    }
+    Text(
+        "Wyspr ${state.versionName} • $sizeMb MB • SHA-256:",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+        sha256Pretty,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        modifier = Modifier.padding(horizontal = 16.dp),
+    )
 }
 
 @Composable

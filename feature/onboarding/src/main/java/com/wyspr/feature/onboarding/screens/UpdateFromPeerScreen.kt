@@ -25,12 +25,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wyspr.feature.onboarding.share.PeerUpdateViewModel
-import com.wyspr.feature.onboarding.share.UpdateChecker
 
 /**
  * Receiver-side UI of the peer-update flow.
@@ -58,9 +56,8 @@ fun UpdateFromPeerScreen(
     ) {
         Text("Update from a peer", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Type or paste the URL shown on the peer's share screen. " +
-                "Format is http://<their-ip>:8080. Both phones must be " +
-                "on the same WiFi network.",
+            "Paste the URL from your peer's Share screen. " +
+                "Both phones must be on the same WiFi.",
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(horizontal = 8.dp),
         )
@@ -152,16 +149,14 @@ private fun FoundPanel(
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                "Peer: Wyspr ${state.peer.versionName} " +
-                    "(versionCode ${state.peer.versionCode})  •  $sizeMb MB",
+                "Peer: v${state.peer.versionName} • $sizeMb MB",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                "You: versionCode ${state.localVersionCode}",
+                "SHA-256: ${sha256Pretty}",
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text("SHA-256", style = MaterialTheme.typography.labelSmall)
-            Text(sha256Pretty, style = MaterialTheme.typography.bodySmall)
         }
     }
 
@@ -186,15 +181,11 @@ private fun DownloadingPanel(state: PeerUpdateViewModel.State.Downloading) {
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text("Downloading ${state.peer.versionName}…", style = MaterialTheme.typography.titleMedium)
-        LinearProgressIndicator(progress = ratio.coerceIn(0f, 1f), modifier = Modifier.fillMaxWidth())
+        Text("Downloading v${state.peer.versionName}…", style = MaterialTheme.typography.titleMedium)
+        LinearProgressIndicator(progress = { ratio.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
         Text(
-            "$mbRead / $mbTotal MB",
+            "$mbRead / $mbTotal MB (verified as it downloads)",
             style = MaterialTheme.typography.bodySmall,
-        )
-        Text(
-            "Verifying SHA-256 as it streams. Don't switch away until this finishes.",
-            style = MaterialTheme.typography.labelSmall,
         )
     }
 }
@@ -208,19 +199,12 @@ private fun InstallingPanel(state: PeerUpdateViewModel.State.Installing) {
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                "Installer launched",
+                "Ready to install v${state.peer.versionName}",
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                "Android's package installer will prompt you to confirm. " +
-                    "If it doesn't appear, check your notification shade.",
+                "The system installer should appear. If not, check your notification shade.",
                 style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                "${state.peer.versionName}",
-                style = MaterialTheme.typography.labelMedium,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
             )
         }
     }
@@ -243,10 +227,7 @@ private fun NeedsInstallPanel(
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
             )
             Text(
-                "Android needs your permission before any app — including " +
-                    "Wyspr — can install another app. Open the system " +
-                    "Settings panel, toggle \"Allow from this source\" for " +
-                    "Wyspr, return here, and tap Try again.",
+                "Allow Wyspr to install apps in Settings, then return and retry.",
                 color = MaterialTheme.colorScheme.onTertiaryContainer,
                 style = MaterialTheme.typography.bodyMedium,
             )

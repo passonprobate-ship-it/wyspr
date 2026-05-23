@@ -60,23 +60,13 @@ fun PeerUpdatesBanner(
             tint = MaterialTheme.colorScheme.onPrimaryContainer,
         )
         Spacer(modifier = Modifier.size(12.dp))
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            val label = if (updates.size == 1) {
-                "A paired peer has a newer Wyspr (v${first.peerVersionName})"
-            } else {
-                "${updates.size} peers have newer Wyspr builds"
-            }
-            Text(
-                label,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-            Text(
-                "Tap for details",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
-            )
-        }
+        Text(
+            if (updates.size == 1) "Wyspr v${first.peerVersionName} available"
+            else "${updates.size} peers have newer builds",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.weight(1f),
+        )
         IconButton(onClick = { viewModel.dismiss(first.peerPub) }) {
             Icon(
                 Icons.Filled.Close,
@@ -89,24 +79,22 @@ fun PeerUpdatesBanner(
     if (detailsOpen) {
         val context = LocalContext.current
         AlertDialog(
-            onDismissRequest = { detailsOpen = false },
-            title = { Text("Update Wyspr from a peer") },
+            onDismissRequest = {
+                detailsOpen = false
+                viewModel.resetDownload()
+            },
+            title = { Text("Update available") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        "Your build: v${com.wyspr.app.BuildConfig.VERSION_NAME} " +
-                            "(${com.wyspr.app.BuildConfig.VERSION_CODE})",
+                        "You have v${com.wyspr.app.BuildConfig.VERSION_NAME}",
                         style = MaterialTheme.typography.bodySmall,
-                    )
-                    Text(
-                        "Peers running newer:",
-                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     for (u in updates) {
                         Text(
-                            "· ${u.peerOnion.take(8)}…${u.peerOnion.takeLast(6)} → " +
-                                "v${u.peerVersionName} (${u.peerVersionCode})",
-                            style = MaterialTheme.typography.bodySmall,
+                            "${u.peerOnion.take(8)}… has v${u.peerVersionName}",
+                            style = MaterialTheme.typography.bodyMedium,
                             fontFamily = FontFamily.Monospace,
                         )
                     }
@@ -120,13 +108,15 @@ fun PeerUpdatesBanner(
                                 Button(
                                     onClick = { viewModel.startTorDownload(first) },
                                     modifier = Modifier.fillMaxWidth(),
-                                ) { Text("Download over Tor ($sizeMb MB)") }
+                                ) { Text("Download via Tor ($sizeMb MB)") }
                             }
-                            Text(
-                                "Or: ask your peer to open Settings → Share Wyspr, " +
-                                    "then tap below to scan their QR.",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
+                            OutlinedButton(
+                                onClick = {
+                                    detailsOpen = false
+                                    onUpdateFromPeer()
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Update via LAN") }
                         }
                         is PeerUpdatesViewModel.DownloadState.Downloading -> {
                             val ratio = if (ds.total > 0) ds.bytesRead.toFloat() / ds.total else 0f
@@ -137,25 +127,19 @@ fun PeerUpdatesBanner(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             Text(
-                                "Downloading over Tor: $mbRead / $mbTotal MB",
+                                "Downloading: $mbRead / $mbTotal MB (verified)",
                                 style = MaterialTheme.typography.bodySmall,
-                            )
-                            Text(
-                                "SHA-256 verified as it streams. This may take a few minutes.",
-                                style = MaterialTheme.typography.labelSmall,
                             )
                         }
                         PeerUpdatesViewModel.DownloadState.Installing -> {
                             Text(
-                                "Download complete — Android installer launched.",
+                                "Download complete. System installer opening…",
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                         PeerUpdatesViewModel.DownloadState.NeedsPermission -> {
                             Text(
-                                "Wyspr needs permission to install apps. " +
-                                    "Open Settings, toggle \"Allow from this source\", " +
-                                    "then try again.",
+                                "Allow Wyspr to install apps in system Settings, then retry.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             Button(
@@ -171,7 +155,7 @@ fun PeerUpdatesBanner(
                             OutlinedButton(
                                 onClick = { viewModel.retryPermission() },
                                 modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Try again") }
+                            ) { Text("Retry") }
                         }
                         is PeerUpdatesViewModel.DownloadState.Failed -> {
                             Text(
@@ -182,24 +166,17 @@ fun PeerUpdatesBanner(
                             OutlinedButton(
                                 onClick = { viewModel.resetDownload() },
                                 modifier = Modifier.fillMaxWidth(),
-                            ) { Text("Dismiss") }
+                            ) { Text("Try again") }
                         }
                     }
                 }
             },
-            confirmButton = {
-                if (downloadState is PeerUpdatesViewModel.DownloadState.Idle) {
-                    TextButton(onClick = {
-                        detailsOpen = false
-                        onUpdateFromPeer()
-                    }) { Text("Update from peer (LAN)") }
-                }
-            },
+            confirmButton = {},
             dismissButton = {
                 TextButton(onClick = {
                     detailsOpen = false
                     viewModel.resetDownload()
-                }) { Text(if (downloadState is PeerUpdatesViewModel.DownloadState.Idle) "Later" else "Close") }
+                }) { Text("Close") }
             },
         )
     }
