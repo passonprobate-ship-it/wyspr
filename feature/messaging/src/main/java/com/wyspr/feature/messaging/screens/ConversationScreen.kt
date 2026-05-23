@@ -80,12 +80,17 @@ import com.wyspr.feature.messaging.ConversationViewModel
 import com.wyspr.feature.messaging.audio.AudioBubble
 import com.wyspr.feature.messaging.audio.AudioPayload
 import com.wyspr.feature.messaging.disappear.DisappearPayload
+import com.wyspr.feature.messaging.file.FileBubble
+import com.wyspr.feature.messaging.file.FilePayload
+import com.wyspr.feature.messaging.links.LinkDetector
+import com.wyspr.feature.messaging.links.LinkPreviewCard
 import com.wyspr.feature.messaging.image.ImageBubble
 import com.wyspr.feature.messaging.image.ImagePayload
 import com.wyspr.feature.messaging.reactions.ReactionPayload
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.automirrored.filled.Reply
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -268,6 +273,9 @@ fun ConversationScreen(
             val recordVoice = rememberVoiceRecordController { audioBytes, durationMs ->
                 viewModel.sendVoiceNote(audioBytes, durationMs)
             }
+            val shareFile = rememberFileShareController { name, mime, bytes ->
+                viewModel.sendFile(name, mime, bytes)
+            }
             val replyingTo by viewModel.replyingTo.collectAsStateWithLifecycle()
             replyingTo?.let { target ->
                 val ownBytes = (state as? ConversationViewModel.UiState.Ready)?.own?.bytes
@@ -288,6 +296,7 @@ fun ConversationScreen(
                 onShareLocation = shareLocation,
                 onSharePhoto = sharePhoto,
                 onRecordVoice = recordVoice,
+                onShareFile = shareFile,
                 modifier = Modifier.navigationBarsPadding(),
             )
         }
@@ -503,6 +512,7 @@ private fun ComposerRow(
     onShareLocation: () -> Unit,
     onSharePhoto: () -> Unit,
     onRecordVoice: () -> Unit,
+    onShareFile: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
@@ -520,10 +530,10 @@ private fun ComposerRow(
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
-        IconButton(onClick = onShareLocation) {
+        IconButton(onClick = onShareFile) {
             Icon(
-                Icons.Filled.LocationOn,
-                contentDescription = "Share my location",
+                Icons.Filled.AttachFile,
+                contentDescription = "Send a file",
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
@@ -778,22 +788,30 @@ private fun MessageBubble(
                         }
                         val loc = LocationPayload.decode(displayBody)
                         val isAudio = AudioPayload.isAudio(displayBody)
+                        val isFilePl = FilePayload.isFile(displayBody)
                         when {
                             isImage -> ImageBubble(body = displayBody, cacheKey = msg.id.contentHashCode())
                             isAudio -> AudioBubble(body = displayBody, fromSelf = fromSelf, cacheKey = msg.id.contentHashCode())
+                            isFilePl -> FileBubble(body = displayBody, fromSelf = fromSelf)
                             loc != null -> LocationCard(
                                 lat = loc.lat,
                                 lng = loc.lng,
                                 accuracyMeters = loc.accuracyMeters,
                                 fromSelf = fromSelf,
                             )
-                            else -> Text(
-                                displayBody,
-                                style = if (isJumboEmoji) MaterialTheme.typography.displaySmall
-                                else MaterialTheme.typography.bodyMedium,
-                                color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
-                                else MaterialTheme.colorScheme.onSurface,
-                            )
+                            else -> {
+                                Text(
+                                    displayBody,
+                                    style = if (isJumboEmoji) MaterialTheme.typography.displaySmall
+                                    else MaterialTheme.typography.bodyMedium,
+                                    color = if (fromSelf) MaterialTheme.colorScheme.onPrimaryContainer
+                                    else MaterialTheme.colorScheme.onSurface,
+                                )
+                                val links = remember(displayBody) { LinkDetector.findUrls(displayBody) }
+                                if (links.isNotEmpty() && !isJumboEmoji) {
+                                    LinkPreviewCard(url = links.first().url, fromSelf = fromSelf)
+                                }
+                            }
                         }
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -996,6 +1014,7 @@ private fun quotedPreview(body: String): String {
         unwrapped.startsWith("wyspr:loc:") -> "📍 Location"
         ImagePayload.isImage(unwrapped) -> "📷 Photo"
         AudioPayload.isAudio(unwrapped) -> "🎙 Voice note"
+        FilePayload.isFile(unwrapped) -> "📎 File"
         ReactionPayload.isReaction(unwrapped) -> "Reacted"
         DisappearPayload.isDisappear(unwrapped) -> "⏱ Timer changed"
         else -> unwrapped.take(80)

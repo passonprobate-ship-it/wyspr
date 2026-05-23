@@ -283,6 +283,7 @@ class ConversationListViewModel @Inject constructor(
         if (body.startsWith("wyspr:loc:")) return "📍 Location"
         if (body.startsWith("wyspr:img:")) return "📷 Photo"
         if (body.startsWith("wyspr:audio:")) return "🎙 Voice note"
+        if (body.startsWith("wyspr:file:")) return "📎 File"
         if (body.startsWith("wyspr:disappear:")) return "⏱ Timer changed"
         if (body.startsWith("wyspr:react:")) {
             val decoded = com.wyspr.feature.messaging.reactions.ReactionPayload.decode(body)

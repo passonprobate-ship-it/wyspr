@@ -117,6 +117,8 @@ interface MessageDao {
             "AND body NOT LIKE 'wyspr:img:%' " +
             "AND body NOT LIKE 'wyspr:audio:%' " +
             "AND body NOT LIKE 'wyspr:react:%' " +
+            "AND body NOT LIKE 'wyspr:file:%' " +
+            "AND body NOT LIKE 'wyspr:disappear:%' " +
             "ORDER BY created_at DESC LIMIT :limit",
     )
     suspend fun search(query: String, limit: Int = 50): List<MessageEntity>

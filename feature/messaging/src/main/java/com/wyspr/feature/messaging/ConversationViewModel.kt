@@ -407,6 +407,10 @@ class ConversationViewModel @Inject constructor(
         send(com.wyspr.feature.messaging.audio.AudioPayload.encode(audioBytes, durationMs))
     }
 
+    fun sendFile(fileName: String, mimeType: String, fileBytes: ByteArray) {
+        send(com.wyspr.feature.messaging.file.FilePayload.encode(fileName, mimeType, fileBytes))
+    }
+
     fun sendReaction(targetMsg: MessageEntity, emoji: String) {
         val peer = peerPub ?: return
         viewModelScope.launch {

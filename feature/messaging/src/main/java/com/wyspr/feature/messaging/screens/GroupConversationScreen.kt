@@ -674,6 +674,7 @@ private fun groupQuotedPreview(body: String): String {
         unwrapped.startsWith("wyspr:loc:") -> "📍 Location"
         com.wyspr.feature.messaging.image.ImagePayload.isImage(unwrapped) -> "📷 Photo"
         com.wyspr.feature.messaging.audio.AudioPayload.isAudio(unwrapped) -> "🎙 Voice note"
+        com.wyspr.feature.messaging.file.FilePayload.isFile(unwrapped) -> "📎 File"
         com.wyspr.feature.messaging.reactions.ReactionPayload.isReaction(unwrapped) -> "Reacted"
         com.wyspr.feature.messaging.disappear.DisappearPayload.isDisappear(unwrapped) -> "⏱ Timer changed"
         else -> unwrapped.take(80)
