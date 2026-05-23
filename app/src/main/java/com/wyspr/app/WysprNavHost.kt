@@ -112,6 +112,7 @@ fun WysprNavHost(
                 onOpenWallet = { navController.navigate(Routes.Monero) },
                 onOpenFindPeers = { navController.navigate(Routes.PairPeer) },
                 onOpenShareApp = { navController.navigate(Routes.ShareApp) },
+                onOpenUpdateFromPeer = { navController.navigate(Routes.UpdateFromPeer) },
                 onOpenCommunityGraph = { navController.navigate(Routes.MyCommunityGraph) },
                 onOpenThread = { peer ->
                     navController.navigate("${Routes.Conversation}/${peer.bytes.toHex()}")

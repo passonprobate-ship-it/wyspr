@@ -1,15 +1,18 @@
 package com.wyspr.app.profile
 
+import android.app.Application
 import android.util.Log
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.UserProfileEntity
 import com.wyspr.core.transport.TorBackend
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -46,8 +49,13 @@ import kotlinx.coroutines.withContext
  */
 @Singleton
 class ProfileHttpServer @Inject constructor(
+    private val application: Application,
     private val database: WysprDatabase,
 ) {
+    private val apkFile: File get() = File(application.applicationInfo.sourceDir)
+    private val apkSha256: String by lazy { computeApkSha256() }
+    private val apkSizeBytes: Long by lazy { apkFile.length() }
+
     private val lock = Mutex()
     @Volatile private var server: ServerSocket? = null
     @Volatile private var scope: CoroutineScope? = null
@@ -130,15 +138,15 @@ class ProfileHttpServer @Inject constructor(
                         writeOk(client, html)
                     }
                     path == "/version.json" -> {
-                        // Lightweight version probe for paired peers.
-                        // Used by the "peer has a newer build" banner.
-                        // Safe to expose: just the public version code +
-                        // semver string. Both come from BuildConfig at
-                        // compile time.
-                        val json = """{"versionCode":${com.wyspr.app.BuildConfig.VERSION_CODE},""" +
-                            """"versionName":"${com.wyspr.app.BuildConfig.VERSION_NAME}"}"""
+                        val json = buildString {
+                            append("{\"versionCode\":${com.wyspr.app.BuildConfig.VERSION_CODE},")
+                            append("\"versionName\":\"${com.wyspr.app.BuildConfig.VERSION_NAME}\",")
+                            append("\"apkSha256\":\"$apkSha256\",")
+                            append("\"apkSizeBytes\":$apkSizeBytes}")
+                        }
                         writeOkJson(client, json)
                     }
+                    path == "/wyspr.apk" -> writeApkResponse(client)
                     path == "/favicon.ico" -> writeNoContent(client)
                     else -> writeNotFound(client)
                 }
@@ -220,6 +228,46 @@ class ProfileHttpServer @Inject constructor(
         val out = OutputStreamWriter(client.getOutputStream(), Charsets.ISO_8859_1)
         out.write("HTTP/1.1 405 Method Not Allowed\r\nAllow: GET\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
         out.flush()
+    }
+
+    private fun writeApkResponse(client: Socket) {
+        val file = apkFile
+        val size = file.length()
+        val out = client.getOutputStream()
+        val header = buildString {
+            append("HTTP/1.1 200 OK\r\n")
+            append("Content-Type: application/vnd.android.package-archive\r\n")
+            append("Content-Length: $size\r\n")
+            append("Content-Disposition: attachment; filename=\"wyspr.apk\"\r\n")
+            append("Cache-Control: no-store\r\n")
+            append("Connection: close\r\n")
+            append("X-Content-Type-Options: nosniff\r\n")
+            append("\r\n")
+        }
+        out.write(header.toByteArray(Charsets.ISO_8859_1))
+        out.flush()
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n == -1) break
+                out.write(buf, 0, n)
+            }
+        }
+        out.flush()
+    }
+
+    private fun computeApkSha256(): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        apkFile.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n == -1) break
+                md.update(buf, 0, n)
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun writeNotFound(client: Socket) {

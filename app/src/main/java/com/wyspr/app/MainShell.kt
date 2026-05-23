@@ -47,6 +47,7 @@ fun MainShell(
     onOpenWallet: () -> Unit,
     onOpenFindPeers: () -> Unit,
     onOpenShareApp: () -> Unit,
+    onOpenUpdateFromPeer: () -> Unit,
     onOpenCommunityGraph: () -> Unit,
     /** Open a 1:1 thread as a full-screen route (covers the bottom nav). */
     onOpenThread: (PublicKey) -> Unit,
@@ -83,7 +84,7 @@ fun MainShell(
                     onBack = {},
                     onOpenSettings = { tab = Tab.Settings },
                     onOpenFindPeers = onOpenFindPeers,
-                    bannerSlot = { PeerUpdatesBanner(onPairPeer = onOpenFindPeers) },
+                    bannerSlot = { PeerUpdatesBanner(onUpdateFromPeer = onOpenUpdateFromPeer) },
                 )
                 Tab.Community -> CommunityScreen(
                     onBack = { /* root tab */ },

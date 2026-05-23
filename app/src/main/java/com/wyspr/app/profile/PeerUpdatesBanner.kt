@@ -13,10 +13,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -26,27 +29,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-/**
- * Inline banner on the Chats tab announcing that one or more paired
- * peers are running a newer Wyspr. Tap reveals an "update via
- * peer share" walk-through and a shortcut to the QR-handshake flow
- * (since the peer needs to open Share Wyspr on their side).
- *
- * State is owned by [PeerUpdatesViewModel] — periodic Tor poll, in-
- * memory dismiss. Hidden when the list is empty.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PeerUpdatesBanner(
-    onPairPeer: () -> Unit,
+    onUpdateFromPeer: () -> Unit,
     viewModel: PeerUpdatesViewModel = hiltViewModel(),
 ) {
     val updates by viewModel.available.collectAsStateWithLifecycle()
+    val downloadState by viewModel.downloadState.collectAsStateWithLifecycle()
     val first = updates.firstOrNull() ?: return
     var detailsOpen by remember { mutableStateOf(false) }
 
@@ -91,6 +87,7 @@ fun PeerUpdatesBanner(
     }
 
     if (detailsOpen) {
+        val context = LocalContext.current
         AlertDialog(
             onDismissRequest = { detailsOpen = false },
             title = { Text("Update Wyspr from a peer") },
@@ -113,21 +110,96 @@ fun PeerUpdatesBanner(
                             fontFamily = FontFamily.Monospace,
                         )
                     }
-                    Text(
-                        "Ask your peer to open Settings → Share Wyspr on their phone. " +
-                            "Then tap below to scan their QR.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+
+                    when (val ds = downloadState) {
+                        PeerUpdatesViewModel.DownloadState.Idle -> {
+                            if (first.canDownload) {
+                                val sizeMb = remember(first.apkSizeBytes) {
+                                    "%.1f".format(first.apkSizeBytes / (1024.0 * 1024.0))
+                                }
+                                Button(
+                                    onClick = { viewModel.startTorDownload(first) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) { Text("Download over Tor ($sizeMb MB)") }
+                            }
+                            Text(
+                                "Or: ask your peer to open Settings → Share Wyspr, " +
+                                    "then tap below to scan their QR.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        is PeerUpdatesViewModel.DownloadState.Downloading -> {
+                            val ratio = if (ds.total > 0) ds.bytesRead.toFloat() / ds.total else 0f
+                            val mbRead = "%.1f".format(ds.bytesRead / (1024.0 * 1024.0))
+                            val mbTotal = "%.1f".format(ds.total / (1024.0 * 1024.0))
+                            LinearProgressIndicator(
+                                progress = { ratio.coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                "Downloading over Tor: $mbRead / $mbTotal MB",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                "SHA-256 verified as it streams. This may take a few minutes.",
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                        PeerUpdatesViewModel.DownloadState.Installing -> {
+                            Text(
+                                "Download complete — Android installer launched.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        PeerUpdatesViewModel.DownloadState.NeedsPermission -> {
+                            Text(
+                                "Wyspr needs permission to install apps. " +
+                                    "Open Settings, toggle \"Allow from this source\", " +
+                                    "then try again.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Button(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            viewModel.installPermissionSettingsIntent(),
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Open settings") }
+                            OutlinedButton(
+                                onClick = { viewModel.retryPermission() },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Try again") }
+                        }
+                        is PeerUpdatesViewModel.DownloadState.Failed -> {
+                            Text(
+                                ds.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                            OutlinedButton(
+                                onClick = { viewModel.resetDownload() },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Dismiss") }
+                        }
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    detailsOpen = false
-                    onPairPeer()
-                }) { Text("Scan peer's QR") }
+                if (downloadState is PeerUpdatesViewModel.DownloadState.Idle) {
+                    TextButton(onClick = {
+                        detailsOpen = false
+                        onUpdateFromPeer()
+                    }) { Text("Update from peer (LAN)") }
+                }
             },
             dismissButton = {
-                TextButton(onClick = { detailsOpen = false }) { Text("Later") }
+                TextButton(onClick = {
+                    detailsOpen = false
+                    viewModel.resetDownload()
+                }) { Text(if (downloadState is PeerUpdatesViewModel.DownloadState.Idle) "Later" else "Close") }
             },
         )
     }

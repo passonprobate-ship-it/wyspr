@@ -46,20 +46,28 @@ class PeerVersionChecker @Inject constructor(
         val peerOnion: String,
         val peerVersionCode: Int,
         val peerVersionName: String,
+        val apkSha256: String,
+        val apkSizeBytes: Long,
     ) {
+        val canDownload: Boolean get() = apkSha256.length == 64 && apkSizeBytes > 0
+
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
             if (other !is PeerUpdate) return false
             return peerPub.contentEquals(other.peerPub) &&
                 peerOnion == other.peerOnion &&
                 peerVersionCode == other.peerVersionCode &&
-                peerVersionName == other.peerVersionName
+                peerVersionName == other.peerVersionName &&
+                apkSha256 == other.apkSha256 &&
+                apkSizeBytes == other.apkSizeBytes
         }
         override fun hashCode(): Int {
             var r = peerPub.contentHashCode()
             r = 31 * r + peerOnion.hashCode()
             r = 31 * r + peerVersionCode.hashCode()
             r = 31 * r + peerVersionName.hashCode()
+            r = 31 * r + apkSha256.hashCode()
+            r = 31 * r + apkSizeBytes.hashCode()
             return r
         }
     }
@@ -107,6 +115,8 @@ class PeerVersionChecker @Inject constructor(
                         peerOnion = onion,
                         peerVersionCode = info.versionCode,
                         peerVersionName = info.versionName,
+                        apkSha256 = info.apkSha256,
+                        apkSizeBytes = info.apkSizeBytes,
                     ),
                 )
             }
@@ -166,6 +176,8 @@ class PeerVersionChecker @Inject constructor(
                     VersionInfo(
                         versionCode = json.getInt("versionCode"),
                         versionName = json.optString("versionName", "?"),
+                        apkSha256 = json.optString("apkSha256", ""),
+                        apkSizeBytes = json.optLong("apkSizeBytes", -1L),
                     )
                 }.getOrNull()
             } catch (t: Throwable) {
@@ -176,7 +188,12 @@ class PeerVersionChecker @Inject constructor(
             }
         }
 
-    private data class VersionInfo(val versionCode: Int, val versionName: String)
+    private data class VersionInfo(
+        val versionCode: Int,
+        val versionName: String,
+        val apkSha256: String,
+        val apkSizeBytes: Long,
+    )
 
     private companion object {
         private const val TAG = "PeerVersionCheck"
