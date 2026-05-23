@@ -38,11 +38,9 @@ import kotlinx.coroutines.withContext
  * rather than crashing the message list.
  */
 // Shared bitmap cache. Bounded by total decoded pixel weight (4 bytes
-// per ARGB_8888 pixel). Conservatively 16MB — about 1MP of decoded
-// imagery, enough for a few visible bubbles and a small backscroll.
-// Scrolling away and back doesn't re-decode unless the cache evicts.
+// per ARGB_8888 pixel). 48 MB — about 3 MP of decoded imagery.
 private val bitmapCache: LruCache<Any, Bitmap> =
-    object : LruCache<Any, Bitmap>(16 * 1024 * 1024) {
+    object : LruCache<Any, Bitmap>(48 * 1024 * 1024) {
         override fun sizeOf(key: Any, value: Bitmap): Int = value.byteCount
     }
 

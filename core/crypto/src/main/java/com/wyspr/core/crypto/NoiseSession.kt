@@ -66,6 +66,6 @@ interface NoiseSession {
         private val EMPTY = ByteArray(0)
         const val PATTERN = "Noise_XX_25519_ChaChaPoly_BLAKE2s"
         const val PROLOGUE_PREFIX = "WYSPR/v1"
-        const val MAX_FRAME_BYTES = 16384
+        const val MAX_FRAME_BYTES = 262_144
     }
 }

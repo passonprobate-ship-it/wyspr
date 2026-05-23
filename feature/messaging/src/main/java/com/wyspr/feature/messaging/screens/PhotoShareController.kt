@@ -81,7 +81,7 @@ fun rememberPhotoShareController(
                 ) {
                     CircularProgressIndicator()
                     Text(
-                        "Shrinking to fit the wire budget.",
+                        "Compressing for delivery…",
                         modifier = Modifier.padding(top = 12.dp),
                         style = MaterialTheme.typography.bodySmall,
                     )

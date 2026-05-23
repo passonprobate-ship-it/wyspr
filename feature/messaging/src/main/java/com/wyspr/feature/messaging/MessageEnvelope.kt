@@ -91,7 +91,7 @@ data class MessageEnvelope(
 
         const val ID_LENGTH = 16
         const val SIG_LENGTH = 64
-        const val MAX_BODY_BYTES = 16_384
+        const val MAX_BODY_BYTES = 204_800
 
         /**
          * Build and sign a fresh outbound envelope. Generates a

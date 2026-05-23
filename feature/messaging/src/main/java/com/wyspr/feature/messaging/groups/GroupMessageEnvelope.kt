@@ -81,7 +81,7 @@ data class GroupMessageEnvelope(
     companion object {
         const val ID_LENGTH = 16
         const val SIG_LENGTH = 64
-        const val MAX_BODY_BYTES = 16_384
+        const val MAX_BODY_BYTES = 204_800
 
         fun fromWire(bytes: ByteArray): GroupMessageEnvelope = Cbor.decode(bytes) {
             val n = arrayHeader()

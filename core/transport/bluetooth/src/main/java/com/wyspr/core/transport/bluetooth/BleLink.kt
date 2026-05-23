@@ -138,10 +138,12 @@ internal class BleLink(
             "frame ${frame.size} > MAX_FRAME_BYTES $MAX_FRAME_BYTES"
         }
         val len = frame.size
-        val framed = ByteArray(2 + len)
-        framed[0] = ((len ushr 8) and 0xFF).toByte()
-        framed[1] = (len and 0xFF).toByte()
-        System.arraycopy(frame, 0, framed, 2, len)
+        val framed = ByteArray(4 + len)
+        framed[0] = ((len ushr 24) and 0xFF).toByte()
+        framed[1] = ((len ushr 16) and 0xFF).toByte()
+        framed[2] = ((len ushr 8) and 0xFF).toByte()
+        framed[3] = (len and 0xFF).toByte()
+        System.arraycopy(frame, 0, framed, 4, len)
         outboundSink.send(framed)
     }
 
@@ -160,7 +162,7 @@ internal class BleLink(
     }
 
     companion object {
-        const val MAX_FRAME_BYTES: Int = 16_384
+        const val MAX_FRAME_BYTES: Int = 262_144
     }
 }
 
@@ -211,17 +213,19 @@ internal class BleLinkAssembler {
 
         while (true) {
             val live = writePos - readPos
-            if (live < 2) break
-            val hi = buf[readPos].toInt() and 0xFF
-            val lo = buf[readPos + 1].toInt() and 0xFF
-            val frameLen = (hi shl 8) or lo
+            if (live < 4) break
+            val b0 = buf[readPos].toInt() and 0xFF
+            val b1 = buf[readPos + 1].toInt() and 0xFF
+            val b2 = buf[readPos + 2].toInt() and 0xFF
+            val b3 = buf[readPos + 3].toInt() and 0xFF
+            val frameLen = (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
             require(frameLen <= MAX_FRAME_BYTES) {
                 "incoming frame length $frameLen exceeds MAX_FRAME_BYTES"
             }
-            if (live < 2 + frameLen) break
+            if (live < 4 + frameLen) break
             val frame = ByteArray(frameLen)
-            System.arraycopy(buf, readPos + 2, frame, 0, frameLen)
-            readPos += 2 + frameLen
+            System.arraycopy(buf, readPos + 4, frame, 0, frameLen)
+            readPos += 4 + frameLen
             pending.add(frame)
         }
         // Once everything is consumed, reset to the start so we don't

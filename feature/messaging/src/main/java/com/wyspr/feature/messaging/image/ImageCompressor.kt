@@ -18,46 +18,34 @@ import kotlin.math.roundToInt
  * photos fit at 360 px / quality 50).
  *
  * Budget math: [com.wyspr.feature.messaging.MessageEnvelope.MAX_BODY_BYTES]
- * is 16,384 and this matches the hard
- * [com.wyspr.core.transport.bluetooth.BleLink.MAX_FRAME_BYTES] cap
- * — bumping the envelope past that breaks single-frame BLE
- * delivery. [ImagePayload.PREFIX] eats 13 bytes; base64 inflates
- * the remaining budget by 4/3. Target ≤ 11,500 raw bytes so the
- * encoded body lands at ≤ ~15,350.
+ * is 204,800. [ImagePayload.PREFIX] eats 10 bytes; base64 inflates
+ * the remaining budget by 4/3. Target ≤ 150,000 raw bytes so the
+ * encoded body lands at ≤ ~200,000.
  *
- * **Why WebP instead of JPEG (v0.8.2):** WebP-lossy is roughly 25–35%
- * more efficient than JPEG at similar visual quality, which lets the
- * same 11.5 KB budget carry either a higher-resolution image or a
- * higher quality factor. Memes (640 px, text-heavy) used to come out
- * crunchy at JPEG q≤45; the equivalent WebP at q≈65 looks
- * substantially cleaner for the same byte count.
+ * WebP-lossy at this budget gives near-original quality at 1080 px —
+ * a 12 MP phone photo compresses to a sharp, detail-preserving
+ * 150 KB WebP that's virtually indistinguishable from the original
+ * at phone-screen sizes.
  *
- * The loop walks a small ladder of (maxDim, quality) pairs from
- * "best quality" to "ugly-but-tiny" and takes the first that fits.
- * Optimised for "always deliverable" over "best looking."
+ * The loop walks a ladder of (maxDim, quality) pairs from "best" to
+ * "good-enough" and takes the first that fits.
  */
 object ImageCompressor {
 
-    /** Raw encoded-image byte budget — keeps the body under 16 KB after base64. */
-    const val TARGET_MAX_BYTES = 11_500
+    /** Raw encoded-image byte budget — keeps the body under 200 KB after base64. */
+    const val TARGET_MAX_BYTES = 150_000
 
-    /**
-     * (maxDim, WebP quality). WebP quality scale isn't 1:1 with
-     * JPEG — q=75 WebP roughly matches q=85 JPEG visually but at
-     * ~70% of the bytes. Pinning higher resolutions + mid-high
-     * quality at the top of the ladder gives memes legible text.
-     */
     private val LADDER: List<Pair<Int, Int>> = listOf(
-        720 to 75,
-        720 to 65,
-        640 to 75,
-        640 to 65,
-        640 to 55,
-        480 to 70,
-        480 to 60,
-        480 to 50,
-        360 to 60,
-        360 to 45,
+        1920 to 85,
+        1920 to 75,
+        1440 to 85,
+        1440 to 75,
+        1080 to 85,
+        1080 to 75,
+        1080 to 65,
+        720 to 80,
+        720 to 70,
+        720 to 60,
     )
 
     /**
@@ -148,7 +136,7 @@ object ImageCompressor {
      */
     @Suppress("DEPRECATION")
     private fun encodeWebp(bmp: Bitmap, quality: Int): ByteArray? {
-        val out = ByteArrayOutputStream(16_384)
+        val out = ByteArrayOutputStream(TARGET_MAX_BYTES)
         val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Bitmap.CompressFormat.WEBP_LOSSY
         } else {

@@ -50,6 +50,8 @@ class WifiDirectLink(
             withContext(Dispatchers.IO) {
                 val out = socket.getOutputStream()
                 val len = frame.size
+                out.write((len ushr 24) and 0xFF)
+                out.write((len ushr 16) and 0xFF)
                 out.write((len ushr 8) and 0xFF)
                 out.write(len and 0xFF)
                 out.write(frame)
@@ -81,15 +83,15 @@ class WifiDirectLink(
         try {
             while (!closed) {
                 val len = try {
-                    stream.readUnsignedShort()
+                    stream.readInt()
                 } catch (_: EOFException) {
                     return
                 } catch (t: Throwable) {
                     if (!closed) Log.w(TAG, "read: header error", t)
                     return
                 }
-                if (len > MAX_FRAME_BYTES) {
-                    Log.w(TAG, "read: peer sent oversize frame $len")
+                if (len < 0 || len > MAX_FRAME_BYTES) {
+                    Log.w(TAG, "read: peer sent invalid frame length $len")
                     return
                 }
                 val payload = ByteArray(len)
@@ -109,7 +111,7 @@ class WifiDirectLink(
     }
 
     companion object {
-        const val MAX_FRAME_BYTES: Int = 16_384
+        const val MAX_FRAME_BYTES: Int = 262_144
         private const val TAG = "WifiDirectLink"
     }
 }
