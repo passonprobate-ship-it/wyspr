@@ -97,10 +97,13 @@ class RevocationSyncRepository(
         // every other check.
         if (!cert.verify(sodium, nowSeconds)) return false
 
-        // Check issuer trust if a graph is available.
         if (trustGraph != null) {
             val issuerLevel = trustGraph.trustLevel(cert.issuerPub)
-            if (issuerLevel == TrustLevel.Unknown || issuerLevel == TrustLevel.Quarantined) {
+            if (issuerLevel != TrustLevel.Full && issuerLevel != TrustLevel.Root) {
+                return false
+            }
+            val targetLevel = trustGraph.trustLevel(cert.targetPub)
+            if (targetLevel == TrustLevel.Root && issuerLevel != TrustLevel.Root) {
                 return false
             }
         }

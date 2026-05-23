@@ -94,8 +94,10 @@ class TorLink(
 
     override fun incoming(): Flow<ByteArray> = _incoming.receiveAsFlow()
 
-    override suspend fun close() {
-        if (closed) return
+    private val closeLock = Mutex()
+
+    override suspend fun close() = closeLock.withLock {
+        if (closed) return@withLock
         closed = true
         _incoming.close()
         withContext(Dispatchers.IO) {

@@ -98,17 +98,14 @@ class MessageStore @Inject constructor(
         return database.messageDao.pendingOutboundFromTo(ownPub.bytes, peerPub.bytes)
     }
 
-    /** Most-recent message in a thread — used to populate notification previews. */
     suspend fun latestFromPeer(peerPub: PublicKey): MessageEntity? {
         ensureOpen()
-        return database.messageDao.threadSnapshot(peerPub.bytes).lastOrNull()
+        return database.messageDao.latestInThread(peerPub.bytes)
     }
 
-    /** Number of inbound messages from [peerPub] still in "received" state. */
     suspend fun unreadInboundFrom(peerPub: PublicKey): Int {
         ensureOpen()
-        return database.messageDao.threadSnapshot(peerPub.bytes)
-            .count { it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED }
+        return database.messageDao.unreadInboundCount(peerPub.bytes)
     }
 
     /**
@@ -128,15 +125,7 @@ class MessageStore @Inject constructor(
      */
     suspend fun markInboundViewed(peerPub: PublicKey) {
         ensureOpen()
-        // SQL-side filter + bulk UPDATE in one round-trip. Previously
-        // loaded the whole thread into memory and ran one UPDATE per
-        // row inside the sync engine's critical section.
-        val unreadIds = database.messageDao
-            .threadSnapshot(peerPub.bytes)
-            .asSequence()
-            .filter { it.fromPub.contentEquals(peerPub.bytes) && it.status == STATUS_RECEIVED }
-            .map { it.id }
-            .toList()
+        val unreadIds = database.messageDao.unreadIdsFor(peerPub.bytes)
         if (unreadIds.isEmpty()) return
         database.messageDao.bulkTransitionStatus(
             ids = unreadIds,

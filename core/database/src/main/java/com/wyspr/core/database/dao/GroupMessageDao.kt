@@ -28,11 +28,11 @@ interface GroupMessageDao {
         """
         SELECT m.* FROM group_message m
         INNER JOIN (
-            SELECT group_id, MAX(created_at) AS max_at
+            SELECT group_id, MAX(created_at) AS max_at, MAX(rowid) AS max_rowid
             FROM group_message
             GROUP BY group_id
         ) latest
-        ON m.group_id = latest.group_id AND m.created_at = latest.max_at
+        ON m.group_id = latest.group_id AND m.rowid = latest.max_rowid
         ORDER BY m.created_at DESC
         """,
     )

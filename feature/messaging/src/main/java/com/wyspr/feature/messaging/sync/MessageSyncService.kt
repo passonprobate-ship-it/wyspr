@@ -605,7 +605,7 @@ class MessageSyncService @Inject constructor(
      * old session is assumed stale because the caller only reaches here
      * after completing a fresh handshake.
      */
-    private fun maybeCacheTorSession(
+    private suspend fun maybeCacheTorSession(
         link: Link,
         noise: NoiseSession,
         role: MessageSyncEngine.HandshakeRole,
@@ -614,9 +614,7 @@ class MessageSyncService @Inject constructor(
         if (link.endpoint.kind != Transport.Kind.TorHiddenService) return false
         val key = com.wyspr.core.identity.PeerKey(peerPub.bytes)
         cachedSessions.remove(key)?.let { stale ->
-            // We're about to overwrite — the prior session is by definition
-            // the loser of this round's race or a pre-existing dead entry.
-            runBlocking_close(stale)
+            closeCachedSession(stale)
         }
         cachedSessions[key] = CachedSession(link = link, noise = noise, role = role, peerPub = peerPub)
         Log.d(TAG_SYNC, "maybeCacheTorSession: cached Tor session for peer ${shortHex(peerPub.bytes)}")
@@ -632,21 +630,9 @@ class MessageSyncService @Inject constructor(
         runCatching { removed.link.close() }
     }
 
-    /**
-     * Best-effort synchronous close used from non-suspending contexts.
-     * Both [NoiseSession.close] and [Link.close] are quick — close just
-     * wipes key material and shuts a socket — so calling them outside
-     * a coroutine on the IO dispatcher is acceptable for cleanup.
-     */
-    private fun runBlocking_close(session: CachedSession) {
+    private suspend fun closeCachedSession(session: CachedSession) {
         runCatching { session.noise.close() }
-        // Link.close is suspend; the kotlinx.coroutines.runBlocking would
-        // pin the caller. The link's underlying socket close races with
-        // garbage collection — leaving it for the JVM to reclaim is
-        // safe here because we only reach this branch on cache overwrite,
-        // which is exceedingly rare in practice.
-        // If this proves to be a real source of leaks we can refactor
-        // maybeCacheTorSession to suspend.
+        runCatching { session.link.close() }
     }
 
     /** First 4 bytes as hex for logs. */

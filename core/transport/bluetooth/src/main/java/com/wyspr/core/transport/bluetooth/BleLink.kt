@@ -219,8 +219,8 @@ internal class BleLinkAssembler {
             val b2 = buf[readPos + 2].toInt() and 0xFF
             val b3 = buf[readPos + 3].toInt() and 0xFF
             val frameLen = (b0 shl 24) or (b1 shl 16) or (b2 shl 8) or b3
-            require(frameLen <= MAX_FRAME_BYTES) {
-                "incoming frame length $frameLen exceeds MAX_FRAME_BYTES"
+            require(frameLen in 0..MAX_FRAME_BYTES) {
+                "incoming frame length $frameLen out of range 0..$MAX_FRAME_BYTES"
             }
             if (live < 4 + frameLen) break
             val frame = ByteArray(frameLen)

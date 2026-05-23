@@ -197,12 +197,14 @@ fun ConversationScreen(
                     ConversationViewModel.UiState.Loading -> LoadingPanel()
                     is ConversationViewModel.UiState.Ready -> {
                         val listState = rememberLazyListState()
-                        // See GroupConversationScreen for the delay rationale —
-                        // applies equally here.
                         LaunchedEffect(s.messages.size) {
                             if (s.messages.isNotEmpty()) {
-                                kotlinx.coroutines.delay(50)
-                                listState.scrollToItem(s.messages.lastIndex)
+                                val nearBottom = listState.firstVisibleItemIndex >= s.messages.size - 5 ||
+                                    listState.layoutInfo.totalItemsCount == 0
+                                if (nearBottom) {
+                                    kotlinx.coroutines.delay(50)
+                                    listState.animateScrollToItem(s.messages.lastIndex)
+                                }
                             }
                         }
                         if (s.messages.isEmpty()) {

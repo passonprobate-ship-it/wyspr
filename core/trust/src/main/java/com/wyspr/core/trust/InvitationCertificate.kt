@@ -77,7 +77,7 @@ data class InvitationCertificate(
         FULL(2);
 
         companion object {
-            fun fromTag(tag: Int): VouchLevel = entries.first { it.tag == tag }
+            fun fromTag(tag: Int): VouchLevel? = entries.firstOrNull { it.tag == tag }
         }
     }
 
@@ -149,7 +149,8 @@ data class InvitationCertificate(
                 communityId = CommunityId(community),
                 issuedAt = issuedAt,
                 expiresAt = expiresAt,
-                vouchLevel = VouchLevel.fromTag(vouchTag),
+                vouchLevel = VouchLevel.fromTag(vouchTag)
+                    ?: error("unknown vouch level tag $vouchTag"),
                 nonce = nonce,
                 signature = signature,
             )
@@ -255,7 +256,7 @@ data class RevocationCertificate(
         OTHER(99);
 
         companion object {
-            fun fromTag(tag: Int): ReasonCode = entries.first { it.tag == tag }
+            fun fromTag(tag: Int): ReasonCode? = entries.firstOrNull { it.tag == tag }
         }
     }
 
@@ -279,7 +280,8 @@ data class RevocationCertificate(
                 targetPub = PublicKey(target),
                 communityId = CommunityId(community),
                 issuedAt = issuedAt,
-                reasonCode = ReasonCode.fromTag(reasonTag),
+                reasonCode = ReasonCode.fromTag(reasonTag)
+                    ?: error("unknown reason code tag $reasonTag"),
                 signature = signature,
             )
         }

@@ -26,11 +26,11 @@ interface MessageDao {
         """
         SELECT m.* FROM message m
         INNER JOIN (
-            SELECT thread_pub, MAX(created_at) AS max_at
+            SELECT thread_pub, MAX(created_at) AS max_at, MAX(rowid) AS max_rowid
             FROM message
             GROUP BY thread_pub
         ) latest
-        ON m.thread_pub = latest.thread_pub AND m.created_at = latest.max_at
+        ON m.thread_pub = latest.thread_pub AND m.rowid = latest.max_rowid
         ORDER BY m.created_at DESC
         """,
     )
@@ -105,6 +105,15 @@ interface MessageDao {
      *  after a bulk transition to return the actually-affected ids. */
     @Query("SELECT id FROM message WHERE id IN (:ids) AND status = :status")
     suspend fun idsWithStatus(ids: List<ByteArray>, status: String): List<ByteArray>
+
+    @Query("SELECT * FROM message WHERE thread_pub = :peerPub ORDER BY created_at DESC LIMIT 1")
+    suspend fun latestInThread(peerPub: ByteArray): MessageEntity?
+
+    @Query("SELECT COUNT(*) FROM message WHERE thread_pub = :peerPub AND from_pub = :peerPub AND status = 'received'")
+    suspend fun unreadInboundCount(peerPub: ByteArray): Int
+
+    @Query("SELECT id FROM message WHERE thread_pub = :peerPub AND from_pub = :peerPub AND status = 'received'")
+    suspend fun unreadIdsFor(peerPub: ByteArray): List<ByteArray>
 
     @Query("DELETE FROM message WHERE id = :id")
     suspend fun delete(id: ByteArray)

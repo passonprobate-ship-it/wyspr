@@ -148,9 +148,10 @@ class EmbeddedTorBackend(
             observerStatic(RuntimeEvent.STATE, OnEvent.Executor.Immediate) { st ->
                 applyTorState(st)
             }
-            observerStatic(RuntimeEvent.READY, OnEvent.Executor.Immediate) { _ ->
-                _state.value = TorBackend.State.Ready
-            }
+            // RuntimeEvent.READY fires when the control connection is up,
+            // NOT when bootstrap completes. Relying on it caused premature
+            // Ready state while Tor was still at 0% bootstrap. The STATE
+            // observer below correctly gates on d.isBootstrapped.
             observerStatic(RuntimeEvent.ERROR, OnEvent.Executor.Immediate) { err ->
                 Log.w(TAG, "Tor runtime error", err)
                 _state.value = TorBackend.State.Failed(err.message ?: err::class.simpleName ?: "error")

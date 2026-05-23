@@ -133,6 +133,7 @@ class ConversationViewModel @Inject constructor(
                         peerPub = peer,
                         displayName = existing?.displayName,
                         notes = trimmed,
+                        disappearAfter = existing?.disappearAfter,
                     ),
                 )
             }

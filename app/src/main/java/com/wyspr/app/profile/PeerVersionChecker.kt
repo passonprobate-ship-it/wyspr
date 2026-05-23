@@ -2,6 +2,7 @@ package com.wyspr.app.profile
 
 import android.util.Log
 import com.wyspr.app.BuildConfig
+import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.transport.Socks5
 import com.wyspr.core.transport.TorBackend
@@ -39,6 +40,7 @@ import org.json.JSONObject
 class PeerVersionChecker @Inject constructor(
     private val database: WysprDatabase,
     private val torBackend: TorBackend,
+    private val keystore: KeystoreManager,
 ) {
 
     data class PeerUpdate(
@@ -105,7 +107,8 @@ class PeerVersionChecker @Inject constructor(
         }
         val results = mutableListOf<PeerUpdate>()
         for ((onion, edge) in onions) {
-            val peerPub = if (edge.fromPub.size == 32) edge.toPub else edge.fromPub
+            val ownPub = keystore.loadOrCreateIdentityKey().publicKey
+            val peerPub = if (edge.fromPub.contentEquals(ownPub)) edge.toPub else edge.fromPub
             if (peerPub.toList() in dismissed) continue
             val info = probeOnce(socksPort, onion) ?: continue
             if (info.versionCode > BuildConfig.VERSION_CODE) {

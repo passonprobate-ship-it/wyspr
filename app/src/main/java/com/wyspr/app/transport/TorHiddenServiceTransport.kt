@@ -140,10 +140,12 @@ class TorHiddenServiceTransport(
             runCatching { current.server.close() }
         }
         current.accepted.close()
-        current.acceptedLinks.values.forEach { link ->
-            current.scope.launch { runCatching { link.close() } }
+        for (link in current.acceptedLinks.values) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                runCatching { link.close() }
+            }
         }
-        // Cancel after the close() launches above get a chance to run.
+        current.acceptedLinks.clear()
         current.scope.coroutineContext[Job]?.cancel()
     }
 
