@@ -228,7 +228,7 @@ fun ConversationScreen(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                                 contentPadding = PaddingValues(vertical = 8.dp),
                             ) {
-                                items(s.messages, key = { it.id.contentHashCode() }) { msg ->
+                                items(s.messages, key = { it.id.toList() }) { msg ->
                                     if (ReactionPayload.isReaction(msg.body)) return@items
                                     if (DisappearPayload.isDisappear(msg.body)) return@items
                                     val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)

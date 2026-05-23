@@ -288,7 +288,11 @@ class MessageStore @Inject constructor(
     suspend fun search(query: String): List<MessageEntity> {
         ensureOpen()
         if (query.isBlank()) return emptyList()
-        return database.messageDao.search(query.trim())
+        val escaped = query.trim()
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        return database.messageDao.search(escaped)
     }
 
     fun reactionsForMessages(msgIds: List<ByteArray>): Flow<List<ReactionEntity>> {

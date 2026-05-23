@@ -122,7 +122,7 @@ interface MessageDao {
     suspend fun byId(id: ByteArray): MessageEntity?
 
     @Query(
-        "SELECT * FROM message WHERE body LIKE '%' || :query || '%' " +
+        "SELECT * FROM message WHERE body LIKE '%' || :query || '%' ESCAPE '\\' " +
             "AND body NOT LIKE 'wyspr:img:%' " +
             "AND body NOT LIKE 'wyspr:audio:%' " +
             "AND body NOT LIKE 'wyspr:react:%' " +

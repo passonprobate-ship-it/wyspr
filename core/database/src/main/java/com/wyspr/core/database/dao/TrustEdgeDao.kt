@@ -6,6 +6,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import com.wyspr.core.database.entities.RevocationEntity
 import com.wyspr.core.database.entities.TrustEdgeEntity
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TrustEdgeDao {
@@ -15,6 +16,9 @@ interface TrustEdgeDao {
 
     @Query("SELECT * FROM trust_edge")
     suspend fun all(): List<TrustEdgeEntity>
+
+    @Query("SELECT * FROM trust_edge")
+    fun allFlow(): Flow<List<TrustEdgeEntity>>
 
     @Query("DELETE FROM trust_edge WHERE fromPub = :from AND toPub = :to")
     suspend fun delete(from: ByteArray, to: ByteArray)

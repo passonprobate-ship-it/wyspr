@@ -21,16 +21,18 @@ object QrRenderer {
     fun render(payload: String, sizePx: Int): Bitmap {
         require(sizePx > 0)
         val hints = mapOf<EncodeHintType, Any>(
-            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.H,
+            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M,
             EncodeHintType.MARGIN to 1,
         )
         val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, sizePx, sizePx, hints)
-        val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-        for (x in 0 until sizePx) {
-            for (y in 0 until sizePx) {
-                bmp.setPixel(x, y, if (matrix[x, y]) Color.BLACK else Color.WHITE)
+        val pixels = IntArray(sizePx * sizePx)
+        for (y in 0 until sizePx) {
+            for (x in 0 until sizePx) {
+                pixels[y * sizePx + x] = if (matrix[x, y]) Color.BLACK else Color.WHITE
             }
         }
+        val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        bmp.setPixels(pixels, 0, sizePx, 0, 0, sizePx, sizePx)
         return bmp
     }
 }

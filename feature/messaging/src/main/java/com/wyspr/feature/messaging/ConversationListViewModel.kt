@@ -155,38 +155,28 @@ class ConversationListViewModel @Inject constructor(
 
     fun start() {
         viewModelScope.launch {
-            val (own, peers) = withContext(Dispatchers.IO) {
+            val own = withContext(Dispatchers.IO) {
                 if (!database.isOpen) database.open()
-                val ownPub = PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
-                ownPub to loadPeers(ownPub)
+                PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
             }
-            // Compose four reactive feeds:
-            //   - latest 1:1 message per peer thread
-            //   - latest group message per group
-            //   - contact-rename feed (so renames re-render immediately)
-            //   - group list (so a freshly-created group appears)
             kotlinx.coroutines.flow.combine(
                 messageStore.latestPerThreadFlow(),
                 database.groupMessageDao.latestPerGroupFlow(),
                 database.contactDao.allFlow(),
                 database.groupDao.allFlow(),
-            ) { latest1to1, latestGroup, contacts, groups ->
-                Quad(latest1to1, latestGroup, contacts, groups)
+                database.trustEdgeDao.allFlow(),
+            ) { latest1to1, latestGroup, contacts, groups, _ ->
+                Quint(latest1to1, latestGroup, contacts, groups)
             }
-                // Run `project()` off the main thread — it does Map
-                // construction, ByteArray→List<Byte> conversions for
-                // hash equality, and sorts across every thread. Four
-                // upstream flows emit frequently; doing this on Main
-                // showed up as the hottest non-UI path in the
-                // ConversationList draw pipeline.
                 .flowOn(Dispatchers.Default)
                 .collectLatest { (latest1to1, latestGroup, contacts, groups) ->
+                    val peers = withContext(Dispatchers.IO) { loadPeers(own) }
                     _state.value = project(own, peers, latest1to1, latestGroup, contacts, groups)
                 }
         }
     }
 
-    private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
+    private data class Quint<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
     private suspend fun loadPeers(ownPub: PublicKey): List<PublicKey> {
         val graph: TrustGraph = trustGraphService.snapshot() ?: return emptyList()

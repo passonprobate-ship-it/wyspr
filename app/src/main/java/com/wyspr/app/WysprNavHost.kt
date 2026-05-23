@@ -95,7 +95,7 @@ fun WysprNavHost(
                 // every working surface.
                 onContinueToWallet = {
                     navController.navigate(Routes.Main) {
-                        popUpTo(Routes.Onboarding) { inclusive = false }
+                        popUpTo(Routes.Onboarding) { inclusive = true }
                     }
                 },
                 onFindPeers = { navController.navigate(Routes.Discovery) },
