@@ -245,6 +245,25 @@ class MoneroWalletService @Inject constructor(
         }
     }
 
+    /**
+     * Sum amounts received per (account, sub) across the ledger's
+     * full enote set. Counts both spent and unspent enotes since
+     * the view is "how much has this subaddress received over its
+     * lifetime" — not "what's currently unspent here."
+     */
+    private fun buildReceivedBySub(ledger: im.molly.monero.sdk.Ledger): Map<SubAddrKey, Long> {
+        val acc = HashMap<SubAddrKey, Long>()
+        for (locked in ledger.enoteSet) {
+            val enote = locked.value
+            val key = SubAddrKey(
+                accountIndex = enote.owner.accountIndex,
+                subAddressIndex = enote.owner.subAddressIndex,
+            )
+            acc[key] = (acc[key] ?: 0L) + enote.amount.atomicUnits
+        }
+        return acc
+    }
+
     private fun startFeeRateCollector(w: MoneroWallet) {
         scope.launch {
             try {
@@ -409,6 +428,7 @@ class MoneroWalletService @Inject constructor(
                         pendingAtomicUnits = balance.pendingAmount.atomicUnits,
                         txCount = ledger.transactions.size,
                         transactions = buildHistory(ledger.transactions),
+                        receivedBySub = buildReceivedBySub(ledger),
                     )
                 }
             } catch (t: Throwable) {
@@ -486,6 +506,17 @@ class MoneroWalletService @Inject constructor(
              * disambiguates.
              */
             val transactions: List<TxHistoryEntry> = emptyList(),
+            /**
+             * Sprint W6: total atomic units received to each
+             * (accountIndex, subAddressIndex). Used by the per-peer
+             * subaddress view to render "Alice has paid you X XMR
+             * via her relationship-scoped address."
+             *
+             * Sums across the entire enote set (including spent
+             * enotes) so the value represents historical receipts,
+             * not current unspent balance.
+             */
+            val receivedBySub: Map<SubAddrKey, Long> = emptyMap(),
         ) : WalletState
         /** Connect, open, or ledger collect failed. UI shows error + retry. */
         data class Failed(val message: String) : WalletState
@@ -528,6 +559,9 @@ class MoneroWalletService @Inject constructor(
         val amountAtomicUnits: Long,
         val address: String,
     )
+
+    /** Composite key for the per-subaddress received-amount map. */
+    data class SubAddrKey(val accountIndex: Int, val subAddressIndex: Int)
 
     /**
      * Outcome of [restoreFromSeed]. UI renders the error variant

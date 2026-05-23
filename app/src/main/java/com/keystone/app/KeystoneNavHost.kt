@@ -19,6 +19,8 @@ import com.keystone.core.identity.PublicKey
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.marketplace.MarketplaceRoot
 import com.keystone.feature.monero.MoneroWalletRoot
+import com.keystone.feature.monero.ui.PeerSubaddressScreen
+import com.keystone.feature.monero.ui.ReceiveXmrScreen
 import com.keystone.feature.monero.ui.RestoreWalletScreen
 import com.keystone.feature.monero.ui.SeedRevealScreen
 import com.keystone.feature.monero.ui.SendXmrScreen
@@ -211,7 +213,15 @@ fun KeystoneNavHost(
                 onRestoreWallet = { navController.navigate(Routes.RestoreWallet) },
                 onSweepWallet = { navController.navigate(Routes.SweepWallet) },
                 onOpenTx = { hash -> navController.navigate("${Routes.TxDetail}/$hash") },
+                onShowReceive = { navController.navigate(Routes.ReceiveXmr) },
+                onShowPeerSubaddresses = { navController.navigate(Routes.PeerSubaddresses) },
             )
+        }
+        composable(Routes.ReceiveXmr) {
+            ReceiveXmrScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.PeerSubaddresses) {
+            PeerSubaddressScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.SweepWallet) {
             SweepWalletScreen(
@@ -325,6 +335,10 @@ object Routes {
     const val TxDetail = "tx_detail"
     /** Sprint W5: sweep wallet to another address. */
     const val SweepWallet = "sweep_wallet"
+    /** Sprint W6: receive-XMR screen with QR code. */
+    const val ReceiveXmr = "receive_xmr"
+    /** Sprint W6: per-peer subaddress view. */
+    const val PeerSubaddresses = "peer_subaddresses"
     /** Full-screen conversation routes — pushed on top of the
      *  bottom-nav shell so the nav bar is hidden during chat. */
     const val Conversation = "conversation"

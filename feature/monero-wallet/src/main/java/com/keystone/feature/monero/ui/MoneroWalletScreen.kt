@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.HorizontalDivider
 import com.keystone.core.ui.components.KeystonePanel
@@ -46,6 +47,8 @@ fun MoneroWalletScreen(
     onRestoreWallet: () -> Unit,
     onSweepWallet: () -> Unit = {},
     onOpenTx: (String) -> Unit = {},
+    onShowReceive: () -> Unit = {},
+    onShowPeerSubaddresses: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -72,7 +75,12 @@ fun MoneroWalletScreen(
         when (state) {
             WalletState.Idle -> IdlePanel()
             WalletState.Binding -> BindingPanel()
-            is WalletState.Ready -> ReadyPanel(state, onOpenTx)
+            is WalletState.Ready -> ReadyPanel(
+                state = state,
+                onOpenTx = onOpenTx,
+                onShowReceive = onShowReceive,
+                onShowPeerSubaddresses = onShowPeerSubaddresses,
+            )
             is WalletState.Failed -> FailedPanel(state.message, onRetry)
         }
 
@@ -174,7 +182,12 @@ private fun BindingPanel() {
 }
 
 @Composable
-private fun ReadyPanel(state: WalletState.Ready, onOpenTx: (String) -> Unit) {
+private fun ReadyPanel(
+    state: WalletState.Ready,
+    onOpenTx: (String) -> Unit,
+    onShowReceive: () -> Unit,
+    onShowPeerSubaddresses: () -> Unit,
+) {
     KeystonePanel(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
@@ -213,6 +226,23 @@ private fun ReadyPanel(state: WalletState.Ready, onOpenTx: (String) -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            androidx.compose.foundation.layout.Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                androidx.compose.material3.OutlinedButton(
+                    onClick = onShowReceive,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Show QR")
+                }
+                androidx.compose.material3.OutlinedButton(
+                    onClick = onShowPeerSubaddresses,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Per-peer addresses")
+                }
+            }
         }
     }
     TxHistoryPanel(state.transactions, onOpenTx)
@@ -283,11 +313,15 @@ private fun TxHistoryRow(tx: TxHistoryEntry, onOpenTx: (String) -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = color,
             )
-            Text(
-                text = ts,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (tx.isUnconfirmed) {
+                PendingPill()
+            } else {
+                Text(
+                    text = ts,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
         Text(
             text = tx.txHash.take(20) + "…",
@@ -301,6 +335,24 @@ private fun TxHistoryRow(tx: TxHistoryEntry, onOpenTx: (String) -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun PendingPill() {
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier
+            .background(
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = "PENDING",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSecondaryContainer,
+        )
     }
 }
 

@@ -200,6 +200,20 @@ private fun HashPanel(txHash: String) {
             ) {
                 Text("Copy hash")
             }
+            OutlinedButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString("https://xmrchain.net/tx/$txHash"))
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Copy explorer URL")
+            }
+            Text(
+                text = "Open the copied URL in Tor Browser to look up the transaction " +
+                    "without revealing your IP to xmrchain.net.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

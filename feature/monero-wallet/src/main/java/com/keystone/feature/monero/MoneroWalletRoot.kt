@@ -22,6 +22,8 @@ fun MoneroWalletRoot(
     onRestoreWallet: () -> Unit = {},
     onSweepWallet: () -> Unit = {},
     onOpenTx: (String) -> Unit = {},
+    onShowReceive: () -> Unit = {},
+    onShowPeerSubaddresses: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val viewModel: MoneroWalletViewModel = hiltViewModel()
@@ -35,6 +37,8 @@ fun MoneroWalletRoot(
         onRestoreWallet = onRestoreWallet,
         onSweepWallet = onSweepWallet,
         onOpenTx = onOpenTx,
+        onShowReceive = onShowReceive,
+        onShowPeerSubaddresses = onShowPeerSubaddresses,
         modifier = modifier.fillMaxSize(),
     )
 }
