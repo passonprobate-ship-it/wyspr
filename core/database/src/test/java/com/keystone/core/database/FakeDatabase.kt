@@ -1,6 +1,7 @@
 package com.keystone.core.database
 
 import com.keystone.core.database.dao.AccountDao
+import com.keystone.core.database.dao.AddressBookDao
 import com.keystone.core.database.dao.CommunityMembershipDao
 import com.keystone.core.database.dao.ContactDao
 import com.keystone.core.database.dao.CurrencyEnvelopeDao
@@ -81,6 +82,8 @@ class FakeDatabase : KeystoneDatabase {
         get() = TODO("PeerPaymentAddressDao not faked")
     override val peerSubAddressMintDao: PeerSubAddressMintDao
         get() = TODO("PeerSubAddressMintDao not faked")
+    override val addressBookDao: AddressBookDao
+        get() = TODO("AddressBookDao not faked")
 
     override suspend fun open() {
         open = true

@@ -19,7 +19,9 @@ import com.keystone.core.identity.PublicKey
 import com.keystone.core.ui.settings.BiometricSettings
 import com.keystone.feature.marketplace.MarketplaceRoot
 import com.keystone.feature.monero.MoneroWalletRoot
+import com.keystone.feature.monero.ui.LearnXmrScreen
 import com.keystone.feature.monero.ui.PeerSubaddressScreen
+import com.keystone.feature.monero.ui.SendToAddressScreen
 import com.keystone.feature.monero.ui.ReceiveXmrScreen
 import com.keystone.feature.monero.ui.RestoreWalletScreen
 import com.keystone.feature.monero.ui.SeedRevealScreen
@@ -215,6 +217,8 @@ fun KeystoneNavHost(
                 onOpenTx = { hash -> navController.navigate("${Routes.TxDetail}/$hash") },
                 onShowReceive = { navController.navigate(Routes.ReceiveXmr) },
                 onShowPeerSubaddresses = { navController.navigate(Routes.PeerSubaddresses) },
+                onLearnAboutXmr = { navController.navigate(Routes.LearnXmr) },
+                onSendToAddress = { navController.navigate(Routes.SendToAddress) },
             )
         }
         composable(Routes.ReceiveXmr) {
@@ -222,6 +226,15 @@ fun KeystoneNavHost(
         }
         composable(Routes.PeerSubaddresses) {
             PeerSubaddressScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.LearnXmr) {
+            LearnXmrScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.SendToAddress) {
+            SendToAddressScreen(
+                onBack = { navController.popBackStack() },
+                biometricPrompt = biometricPrompt,
+            )
         }
         composable(Routes.SweepWallet) {
             SweepWalletScreen(
@@ -339,6 +352,10 @@ object Routes {
     const val ReceiveXmr = "receive_xmr"
     /** Sprint W6: per-peer subaddress view. */
     const val PeerSubaddresses = "peer_subaddresses"
+    /** Sprint W7: "About Monero" explainer + acquisition guide. */
+    const val LearnXmr = "learn_xmr"
+    /** Sprint W7: send to a typed address with optional address-book save. */
+    const val SendToAddress = "send_to_address"
     /** Full-screen conversation routes — pushed on top of the
      *  bottom-nav shell so the nav bar is hidden during chat. */
     const val Conversation = "conversation"

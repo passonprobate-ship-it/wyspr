@@ -1,6 +1,7 @@
 package com.keystone.core.database
 
 import com.keystone.core.database.dao.AccountDao
+import com.keystone.core.database.dao.AddressBookDao
 import com.keystone.core.database.dao.CommunityMembershipDao
 import com.keystone.core.database.dao.ContactDao
 import com.keystone.core.database.dao.CurrencyEnvelopeDao
@@ -77,4 +78,5 @@ interface KeystoneDatabase {
     val seenCertNonceDao: SeenCertNonceDao
     val peerPaymentAddressDao: PeerPaymentAddressDao
     val peerSubAddressMintDao: PeerSubAddressMintDao
+    val addressBookDao: AddressBookDao
 }

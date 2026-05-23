@@ -354,6 +354,43 @@ class MoneroWalletService @Inject constructor(
     }
 
     /**
+     * Send [amountAtomicUnits] to a raw [recipientAddress] — used
+     * by the address-book / send-to-address flow where the
+     * recipient is not a paired peer with an auto-exchanged
+     * binding. Mirrors [sendTo] but takes the address directly
+     * instead of resolving it via [PaymentAddressService].
+     *
+     * Caller is the UI's biometric-gated Send-to-address screen —
+     * the service trusts the user authenticated.
+     */
+    suspend fun sendToAddress(
+        recipientAddress: String,
+        amountAtomicUnits: Long,
+        feePriority: FeePriority = FeePriority.Medium,
+    ): SendResult {
+        val w = wallet ?: return SendResult.WalletNotReady
+        return try {
+            val dest = PublicAddress.parse(recipientAddress)
+            val detail = PaymentDetail(MoneroAmount(amountAtomicUnits), dest)
+            val request = PaymentRequest(
+                paymentDetails = listOf(detail),
+                spendingAccountIndex = 0,
+                feePriority = feePriority,
+            )
+            w.createTransfer(request).use { pending ->
+                val ok = pending.commit()
+                if (ok) SendResult.Sent(
+                    amountAtomicUnits = pending.amount.atomicUnits,
+                    feeAtomicUnits = pending.fee.atomicUnits,
+                ) else SendResult.BroadcastFailed
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "sendToAddress failed: ${t::class.simpleName}: ${t.message}", t)
+            SendResult.Error(t.message ?: t::class.simpleName ?: "send failed")
+        }
+    }
+
+    /**
      * Sweep every unlocked enote in the wallet to [recipient] in a
      * single tx. Used to retire the wallet (e.g. before phone
      * disposal) or to consolidate dust into a single output that's

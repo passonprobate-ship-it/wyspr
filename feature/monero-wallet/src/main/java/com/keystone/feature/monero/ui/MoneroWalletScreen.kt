@@ -49,6 +49,8 @@ fun MoneroWalletScreen(
     onOpenTx: (String) -> Unit = {},
     onShowReceive: () -> Unit = {},
     onShowPeerSubaddresses: () -> Unit = {},
+    onLearnAboutXmr: () -> Unit = {},
+    onSendToAddress: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -80,6 +82,7 @@ fun MoneroWalletScreen(
                 onOpenTx = onOpenTx,
                 onShowReceive = onShowReceive,
                 onShowPeerSubaddresses = onShowPeerSubaddresses,
+                onLearnAboutXmr = onLearnAboutXmr,
             )
             is WalletState.Failed -> FailedPanel(state.message, onRetry)
         }
@@ -90,6 +93,7 @@ fun MoneroWalletScreen(
         WalletActionsPanel(
             onRestoreWallet = onRestoreWallet,
             onSweepWallet = onSweepWallet,
+            onSendToAddress = onSendToAddress,
         )
     }
 }
@@ -123,20 +127,27 @@ private fun SeedBackupBanner(onRevealSeed: () -> Unit) {
 private fun WalletActionsPanel(
     onRestoreWallet: () -> Unit,
     onSweepWallet: () -> Unit,
+    onSendToAddress: () -> Unit,
 ) {
     KeystonePanel(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                text = "Wallet maintenance",
+                text = "Wallet actions",
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                text = "Restore replaces the on-device wallet with one from a different " +
-                    "seed. Sweep empties the current wallet into a single destination " +
-                    "address — useful for retirement or consolidating dust.",
+                text = "Send to a typed address (with optional address-book saving), " +
+                    "restore a different wallet, or sweep this one into a single " +
+                    "destination address.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            androidx.compose.material3.OutlinedButton(
+                onClick = onSendToAddress,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Send to address")
+            }
             androidx.compose.material3.OutlinedButton(
                 onClick = onRestoreWallet,
                 modifier = Modifier.fillMaxWidth(),
@@ -187,7 +198,12 @@ private fun ReadyPanel(
     onOpenTx: (String) -> Unit,
     onShowReceive: () -> Unit,
     onShowPeerSubaddresses: () -> Unit,
+    onLearnAboutXmr: () -> Unit,
 ) {
+    val balanceIsZero = state.balanceAtomicUnits == 0L && state.pendingAtomicUnits == 0L
+    if (balanceIsZero) {
+        NewUserNudge(onLearnAboutXmr = onLearnAboutXmr)
+    }
     KeystonePanel(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
@@ -243,9 +259,43 @@ private fun ReadyPanel(
                     Text("Per-peer addresses")
                 }
             }
+            androidx.compose.material3.TextButton(
+                onClick = onLearnAboutXmr,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Learn about Monero")
+            }
         }
     }
     TxHistoryPanel(state.transactions, onOpenTx)
+}
+
+@Composable
+private fun NewUserNudge(onLearnAboutXmr: () -> Unit) {
+    KeystonePanel(
+        modifier = Modifier.fillMaxWidth(),
+        accent = MaterialTheme.colorScheme.tertiary,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = "New here?",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.tertiary,
+            )
+            Text(
+                text = "Your wallet is ready but empty. Tap below for a quick explainer of " +
+                    "why Keystone uses Monero, what privacy guarantees you're actually " +
+                    "getting, and where to acquire XMR — including no-KYC options.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            androidx.compose.material3.Button(
+                onClick = onLearnAboutXmr,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Learn about Monero")
+            }
+        }
+    }
 }
 
 @Composable

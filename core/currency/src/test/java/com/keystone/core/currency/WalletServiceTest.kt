@@ -523,6 +523,17 @@ class WalletServiceTest {
                 override suspend fun upsert(entity: com.keystone.core.database.entities.PeerSubAddressMintEntity) =
                     throw NotImplementedError()
             }
+        override val addressBookDao: com.keystone.core.database.dao.AddressBookDao =
+            object : com.keystone.core.database.dao.AddressBookDao {
+                override suspend fun upsert(entity: com.keystone.core.database.entities.AddressBookEntity) =
+                    throw NotImplementedError()
+                override fun forChainFlow(chain: String) = throw NotImplementedError()
+                override suspend fun forChain(chain: String) = throw NotImplementedError()
+                override suspend fun touch(chain: String, label: String, nowSeconds: Long) =
+                    throw NotImplementedError()
+                override suspend fun delete(chain: String, label: String) =
+                    throw NotImplementedError()
+            }
     }
 
     private class FakeAccountDao(private val rows: MutableMap<String, AccountEntity>) : AccountDao {

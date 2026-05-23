@@ -5,6 +5,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.keystone.core.database.dao.AccountDao
+import com.keystone.core.database.dao.AddressBookDao
 import com.keystone.core.database.dao.CommunityMembershipDao
 import com.keystone.core.database.dao.ContactDao
 import com.keystone.core.database.dao.CurrencyEnvelopeDao
@@ -23,6 +24,7 @@ import com.keystone.core.database.dao.SeenCertNonceDao
 import com.keystone.core.database.dao.TrustEdgeDao
 import com.keystone.core.database.dao.UserProfileDao
 import com.keystone.core.database.entities.AccountEntity
+import com.keystone.core.database.entities.AddressBookEntity
 import com.keystone.core.database.entities.CommunityMembershipEntity
 import com.keystone.core.database.entities.ContactEntity
 import com.keystone.core.database.entities.CurrencyEnvelopeEntity
@@ -96,8 +98,9 @@ import com.keystone.core.database.entities.UserProfileEntity
         SeenCertNonceEntity::class,
         PeerPaymentAddressEntity::class,
         PeerSubAddressMintEntity::class,
+        AddressBookEntity::class,
     ],
-    version = 16,
+    version = 17,
     exportSchema = false,
 )
 abstract class KeystoneRoomDatabase : RoomDatabase() {
@@ -119,6 +122,7 @@ abstract class KeystoneRoomDatabase : RoomDatabase() {
     abstract fun seenCertNonceDao(): SeenCertNonceDao
     abstract fun peerPaymentAddressDao(): PeerPaymentAddressDao
     abstract fun peerSubAddressMintDao(): PeerSubAddressMintDao
+    abstract fun addressBookDao(): AddressBookDao
 }
 
 /**
@@ -388,6 +392,30 @@ internal val MIGRATION_15_16 = object : Migration(15, 16) {
             "CREATE INDEX IF NOT EXISTS " +
                 "`index_peer_subaddress_mint_chain_account_index_sub_address_index` " +
                 "ON `peer_subaddress_mint`(`chain`, `account_index`, `sub_address_index`)"
+        )
+    }
+}
+
+/**
+ * v16 → v17: Sprint W7. Add `address_book` — local-only saved
+ * addresses for non-paired recipients (merchants, exchange
+ * withdrawal targets, etc.). Composite PK on `(chain, label)` so
+ * each chain's address space is independent.
+ */
+internal val MIGRATION_16_17 = object : Migration(16, 17) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `address_book` (" +
+                "`chain` TEXT NOT NULL, " +
+                "`label` TEXT NOT NULL, " +
+                "`address` TEXT NOT NULL, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "`last_used_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`chain`, `label`))"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_address_book_chain_last_used_at` " +
+                "ON `address_book`(`chain`, `last_used_at`)"
         )
     }
 }
