@@ -2,28 +2,31 @@ package com.keystone.feature.monero.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.keystone.core.database.KeystoneDatabase
 import com.keystone.core.identity.PublicKey
 import com.keystone.feature.monero.MoneroWalletService
 import com.keystone.feature.monero.PaymentAddressService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @dagger.hilt.android.lifecycle.HiltViewModel
 class SendXmrViewModel @Inject constructor(
     private val walletService: MoneroWalletService,
     private val paymentAddressService: PaymentAddressService,
+    private val database: KeystoneDatabase,
 ) : ViewModel() {
 
     data class State(
         val myAddress: String? = null,
         val peerBoundAddress: String? = null,
+        val displayName: String? = null,
         val lastSendResult: MoneroWalletService.SendResult? = null,
     )
 
@@ -55,6 +58,18 @@ class SendXmrViewModel @Inject constructor(
                 .collectLatest { bound ->
                     _state.value = _state.value.copy(peerBoundAddress = bound)
                 }
+        }
+        // Best-effort display-name lookup from the contact table.
+        // One-shot read — the SendXmr screen is short-lived enough
+        // that we don't need a Flow.
+        viewModelScope.launch {
+            val name = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (!database.isOpen) database.open()
+                    database.contactDao.byPub(peer.bytes)?.displayName
+                }.getOrNull()
+            }
+            _state.value = _state.value.copy(displayName = name)
         }
     }
 

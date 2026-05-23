@@ -1,10 +1,13 @@
 package com.keystone.feature.monero.di
 
 import android.content.Context
+import com.keystone.core.transport.OwnPaymentAddressProvider
 import com.keystone.core.transport.TorBackend
 import com.keystone.feature.monero.MoneroKeyStore
+import com.keystone.feature.monero.MoneroOwnPaymentAddressProvider
 import com.keystone.feature.monero.network.TorSocksOkHttp
 import com.keystone.feature.monero.persistence.EncryptedWalletDataStore
+import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -30,6 +33,23 @@ import javax.inject.Singleton
  * `@Singleton @Inject constructor()` classes; Hilt builds them
  * automatically.
  */
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class MoneroBindingsModule {
+
+    /**
+     * Bind [MoneroOwnPaymentAddressProvider] as the canonical
+     * [OwnPaymentAddressProvider] for the app. This is what the
+     * messaging sync round consults to decide which payment
+     * addresses to advertise to paired peers each round.
+     */
+    @Binds
+    @Singleton
+    abstract fun bindOwnPaymentAddressProvider(
+        impl: MoneroOwnPaymentAddressProvider,
+    ): OwnPaymentAddressProvider
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 object MoneroModule {

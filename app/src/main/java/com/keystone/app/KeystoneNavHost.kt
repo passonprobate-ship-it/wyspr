@@ -216,12 +216,12 @@ fun KeystoneNavHost(
             }
             SendXmrScreen(
                 peer = PublicKey(bytes),
-                // Display name is best-effort — the SendXmrScreen
-                // falls back to the fingerprint when null. We could
-                // look it up via ContactDao but for v1 keeping the
-                // signature simple wins.
+                // Display name is best-effort — SendXmrViewModel
+                // looks up the contact name reactively and the
+                // screen prefers that over the header arg.
                 displayName = null,
                 onBack = { navController.popBackStack() },
+                biometricPrompt = biometricPrompt,
             )
         }
         composable(Routes.Marketplace) {

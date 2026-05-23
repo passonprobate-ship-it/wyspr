@@ -82,6 +82,7 @@ class MessageSyncService @Inject constructor(
     private val trustGraphService: TrustGraphService,
     private val mailboxBindingService: com.keystone.feature.messaging.mailbox.MailboxBindingService,
     private val mailboxHost: com.keystone.feature.messaging.mailbox.MailboxHost,
+    private val ownPaymentAddressProvider: com.keystone.core.transport.OwnPaymentAddressProvider,
 ) {
 
     private val lock = Mutex()
@@ -592,6 +593,7 @@ class MessageSyncService @Inject constructor(
         bindingService = mailboxBindingService,
         mailboxHost = mailboxHost,
         database = database,
+        ownPaymentAddressProvider = ownPaymentAddressProvider,
     )
 
     /**

@@ -75,7 +75,38 @@ internal sealed interface MessageSyncFrame {
          * other paths).
          */
         val mailboxEnvelopes: List<MailboxEnvelope> = emptyList(),
+        /**
+         * Sprint W3 — payment-address advertisements. Each entry is
+         * `(chain, address)` — e.g. `("monero", "4xyz…")`. The
+         * receiver stores them in `peer_payment_address` so the
+         * "Send XMR to Alice" UX works without manual paste.
+         * Sourced from `OwnPaymentAddressProvider.ownAddresses()`
+         * each round; typically a single XMR entry (the user's
+         * wallet primary). Empty when the wallet hasn't bootstrapped.
+         */
+        val paymentAddresses: List<PaymentAddressEntry> = emptyList(),
     ) : MessageSyncFrame
+
+    /**
+     * Sprint W3 wire form for one payment-address advertisement
+     * carried in [Push.paymentAddresses]. Chain string + encoded
+     * address. CBOR: `[chain: tstr, address: tstr]`.
+     */
+    data class PaymentAddressEntry(val chain: String, val address: String) {
+        init {
+            require(chain.isNotBlank()) { "chain must not be blank" }
+            require(address.isNotBlank()) { "address must not be blank" }
+            require(chain.length <= 32) { "chain string too long: ${chain.length}" }
+            require(address.length <= MAX_ADDRESS_BYTES) {
+                "address too long: ${address.length}"
+            }
+        }
+        companion object {
+            /** Loose ceiling — Monero standard addresses are 95 chars; integrated 106; subaddresses 95. */
+            const val MAX_ADDRESS_BYTES = 256
+        }
+    }
+
     data class Ack(val ids: List<ByteArray>) : MessageSyncFrame
     /**
      * "I have read the messages with these ids." Receiver looks up
@@ -88,7 +119,7 @@ internal sealed interface MessageSyncFrame {
 
     fun wireBytes(): ByteArray = when (this) {
         is Push -> Cbor.encode {
-            arrayHeader(6)
+            arrayHeader(7)
             uint(TAG_PUSH.toLong())
             arrayHeader(envelopes.size)
             for (env in envelopes) bytes(env.wireBytes())
@@ -100,6 +131,12 @@ internal sealed interface MessageSyncFrame {
             for (b in mailboxBindings) bytes(b.wireBytes())
             arrayHeader(mailboxEnvelopes.size)
             for (env in mailboxEnvelopes) bytes(env.wireBytes())
+            arrayHeader(paymentAddresses.size)
+            for (entry in paymentAddresses) {
+                arrayHeader(2)
+                bytes(entry.chain.encodeToByteArray())
+                bytes(entry.address.encodeToByteArray())
+            }
         }
         is Ack -> Cbor.encode {
             arrayHeader(2)
@@ -132,7 +169,10 @@ internal sealed interface MessageSyncFrame {
          */
         fun fromWire(bytes: ByteArray): MessageSyncFrame = Cbor.decode(bytes) {
             val outerLen = arrayHeader()
-            require(outerLen in 1..6) { "frame outer array must be 1..6 elements" }
+            // Loose upper bound (1..32) for forward-compat: an older
+            // receiver getting a newer-encoded Push reads only the
+            // fields it knows about. Tighter checks happen per-tag.
+            require(outerLen in 1..32) { "frame outer array implausible: $outerLen elements" }
             val tag = uint().toInt()
             when (tag) {
                 TAG_PUSH -> {
@@ -144,9 +184,10 @@ internal sealed interface MessageSyncFrame {
                     //   v0.8    → 4-element  (+membershipCerts)
                     //   v0.9    → 5-element  (+mailboxBindings)
                     //   v0.9    → 6-element  (+mailboxEnvelopes)
-                    // Encoder always writes the current 6-element shape.
-                    require(outerLen in 2..6) {
-                        "Push frame must be 2..6 elements"
+                    //   W3      → 7-element  (+paymentAddresses)
+                    // Encoder always writes the current 7-element shape.
+                    require(outerLen in 2..16) {
+                        "Push frame must be 2..16 elements"
                     }
                     val count = arrayHeader()
                     require(count in 0..MAX_BATCH) {
@@ -213,7 +254,33 @@ internal sealed interface MessageSyncFrame {
                     } else {
                         emptyList()
                     }
-                    Push(envelopes, groupEnvelopes, membershipCerts, mailboxBindings, mailboxEnvelopes)
+                    val paymentAddresses: List<PaymentAddressEntry> = if (outerLen >= 7) {
+                        val paCount = arrayHeader()
+                        require(paCount in 0..MAX_BATCH) {
+                            "Payment-address count $paCount out of range"
+                        }
+                        ArrayList<PaymentAddressEntry>(paCount).also { list ->
+                            repeat(paCount) {
+                                val tupleLen = arrayHeader()
+                                require(tupleLen == 2) {
+                                    "PaymentAddressEntry tuple must be 2 elements, got $tupleLen"
+                                }
+                                val chain = String(bytes(), Charsets.UTF_8)
+                                val address = String(bytes(), Charsets.UTF_8)
+                                list.add(PaymentAddressEntry(chain, address))
+                            }
+                        }
+                    } else {
+                        emptyList()
+                    }
+                    Push(
+                        envelopes = envelopes,
+                        groupEnvelopes = groupEnvelopes,
+                        membershipCerts = membershipCerts,
+                        mailboxBindings = mailboxBindings,
+                        mailboxEnvelopes = mailboxEnvelopes,
+                        paymentAddresses = paymentAddresses,
+                    )
                 }
                 TAG_ACK -> {
                     require(outerLen == 2) { "Ack frame missing payload" }

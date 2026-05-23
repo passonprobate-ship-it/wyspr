@@ -51,6 +51,7 @@ internal class MessageSyncEngine(
     private val bindingService: MailboxBindingService,
     private val mailboxHost: MailboxHost,
     private val database: KeystoneDatabase,
+    private val ownPaymentAddressProvider: com.keystone.core.transport.OwnPaymentAddressProvider,
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
     private val frameTimeoutMs: Long = DEFAULT_FRAME_TIMEOUT_MS,
 ) {
@@ -186,6 +187,13 @@ internal class MessageSyncEngine(
         // rows are skipped (already confirmed received).
         val mailboxEnvelopes = sealForMailboxPeer(pending)
 
+        // Sprint W3: advertise our payment addresses to this peer.
+        // Sourced from the OwnPaymentAddressProvider — the Monero
+        // wallet provider returns our XMR primary address when the
+        // wallet is bootstrapped, empty list otherwise.
+        val paymentAddresses = ownPaymentAddressProvider.ownAddresses()
+            .map { MessageSyncFrame.PaymentAddressEntry(it.chain, it.address) }
+
         // Even when all lists are empty we still send a Push so the
         // peer's awaitPushAndAck sees something — the protocol shape
         // expects exactly one Push from each side per round.
@@ -196,6 +204,7 @@ internal class MessageSyncEngine(
                 membershipCerts = membershipCerts,
                 mailboxBindings = mailboxBindings,
                 mailboxEnvelopes = mailboxEnvelopes,
+                paymentAddresses = paymentAddresses,
             ),
         )
         val frame = receiveFrame() ?: return 0
@@ -282,7 +291,8 @@ internal class MessageSyncEngine(
             push.groupEnvelopes.isEmpty() &&
             push.membershipCerts.isEmpty() &&
             push.mailboxBindings.isEmpty() &&
-            push.mailboxEnvelopes.isEmpty()
+            push.mailboxEnvelopes.isEmpty() &&
+            push.paymentAddresses.isEmpty()
         if (totallyEmpty) {
             sendFrame(MessageSyncFrame.Ack(emptyList()))
             return 0
@@ -305,6 +315,35 @@ internal class MessageSyncEngine(
         // for third-party owners and redirecting future pushes.
         for (binding in push.mailboxBindings) {
             bindingService.ingest(binding, peerPub, sodium, received)
+        }
+
+        // Sprint W3: ingest the peer's payment addresses into
+        // `peer_payment_address`. Channel binding has authenticated
+        // the sender, so we attribute these to peerPub (the same
+        // peer can't forge an address-for-someone-else here — only
+        // their own). Same-address re-pushes are no-ops via the
+        // REPLACE upsert on composite (peer_pub, chain, address).
+        for (entry in push.paymentAddresses) {
+            try {
+                database.peerPaymentAddressDao.upsert(
+                    com.keystone.core.database.entities.PeerPaymentAddressEntity(
+                        peerPub = peerPub.bytes,
+                        chain = entry.chain,
+                        address = entry.address,
+                        createdAt = received,
+                        revokedAt = null,
+                        notes = null,
+                    ),
+                )
+            } catch (t: Throwable) {
+                Log.w(
+                    TAG,
+                    "payment-address ingest failed for chain=${entry.chain}: " +
+                        "${t::class.simpleName}",
+                )
+                // Continue processing the rest of the Push frame —
+                // one bad entry doesn't poison the round.
+            }
         }
 
         // 1:1 envelopes. Channel binding has authenticated peerPub, so

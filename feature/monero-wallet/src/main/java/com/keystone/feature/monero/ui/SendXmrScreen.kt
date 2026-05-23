@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.keystone.core.identity.PublicKey
+import kotlinx.coroutines.launch
 import com.keystone.core.ui.components.KeystonePanel
 import com.keystone.feature.monero.MoneroWalletService
 import com.keystone.feature.monero.atomicUnitsAsXmr
@@ -59,11 +60,23 @@ fun SendXmrScreen(
     peer: PublicKey,
     displayName: String?,
     onBack: () -> Unit,
+    /**
+     * Sprint W3: spending real money requires biometric confirm.
+     * Wired by the NavHost — same prompt the Marketplace + other
+     * sensitive flows already use. Returns true iff the user
+     * authenticated; false (or thrown exception) means abort send.
+     */
+    biometricPrompt: suspend () -> Boolean = { true },
     viewModel: SendXmrViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(peer.bytes.contentHashCode()) { viewModel.bind(peer) }
     val state by viewModel.state.collectAsState()
-    val peerLabel = displayName?.takeIf { it.isNotBlank() } ?: peer.fingerprint.toString().take(20)
+    // Prefer the contact-table lookup over whatever the navigator
+    // happened to pass in — the VM is the source of truth for the
+    // peer's display name.
+    val resolvedName = state.displayName ?: displayName
+    val peerLabel = resolvedName?.takeIf { it.isNotBlank() }
+        ?: peer.fingerprint.toString().take(20)
 
     Scaffold(
         topBar = {
@@ -88,7 +101,21 @@ fun SendXmrScreen(
             MyAddressPanel(state.myAddress)
             val bound = state.peerBoundAddress
             if (bound != null) {
-                BoundPanel(bound = bound, onSend = viewModel::send, lastResult = state.lastSendResult)
+                val scope = androidx.compose.runtime.rememberCoroutineScope()
+                BoundPanel(
+                    bound = bound,
+                    onSend = { atomic ->
+                        scope.launch {
+                            // Biometric confirm BEFORE building the
+                            // tx — abort cleanly if the user backs
+                            // out or fails auth. Spending real money
+                            // is never a single-tap action.
+                            val ok = try { biometricPrompt() } catch (_: Throwable) { false }
+                            if (ok) viewModel.send(atomic)
+                        }
+                    },
+                    lastResult = state.lastSendResult,
+                )
             } else {
                 UnboundPanel(onBind = viewModel::bindPastedAddress)
             }

@@ -126,14 +126,13 @@ class MessageSyncWirePushTest {
     }
 
     @Test
-    fun push_encode_emitsCurrent6ElementForm() {
-        // The encoder MUST always emit the 6-element shape so a peer
-        // on the current build can rely on the count to decode. CBOR
-        // major type 4 (array) with length 6 == 0x86. Pin the leading
-        // byte directly so a future encoder regression surfaces
+    fun push_encode_emitsCurrent7ElementForm() {
+        // Sprint W3: encoder now emits 7 elements (added paymentAddresses).
+        // CBOR major type 4 (array) with length 7 == 0x87. Pin the
+        // leading byte so a future encoder regression surfaces
         // loudly without needing to walk the rest of the structure.
         val bytes = MessageSyncFrame.Push(envelopes = emptyList()).wireBytes()
-        assertEquals(0x86.toByte(), bytes[0])
+        assertEquals(0x87.toByte(), bytes[0])
     }
 
     @Test
