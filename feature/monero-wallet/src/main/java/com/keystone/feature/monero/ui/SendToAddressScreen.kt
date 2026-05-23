@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.keystone.core.ui.components.KeystonePanel
+import com.keystone.feature.monero.AddressValidator
 import com.keystone.feature.monero.MoneroWalletService
 import com.keystone.feature.monero.atomicUnitsAsXmr
 import im.molly.monero.sdk.FeePriority
@@ -114,6 +115,7 @@ fun SendToAddressScreen(
             val atomic = amountStr.toBigDecimalOrNull()
                 ?.multiply(java.math.BigDecimal(1_000_000_000_000L))
                 ?.toLong() ?: 0L
+            val addressValid = address.isNotBlank() && AddressValidator.isValidMonero(address)
             Button(
                 onClick = {
                     scope.launch {
@@ -128,7 +130,7 @@ fun SendToAddressScreen(
                         }
                     }
                 },
-                enabled = address.isNotBlank() && atomic > 0L,
+                enabled = addressValid && atomic > 0L,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Send")
@@ -201,6 +203,13 @@ private fun ComposePanel(
                 text = "Recipient",
                 style = MaterialTheme.typography.titleMedium,
             )
+            val validity = remember(address) {
+                when {
+                    address.isBlank() -> AddressValidity.EMPTY
+                    AddressValidator.isValidMonero(address) -> AddressValidity.VALID
+                    else -> AddressValidity.INVALID
+                }
+            }
             OutlinedTextField(
                 value = address,
                 onValueChange = onAddressChange,
@@ -208,6 +217,20 @@ private fun ComposePanel(
                 minLines = 2,
                 maxLines = 4,
                 placeholder = { Text("4… (Monero address)") },
+                isError = validity == AddressValidity.INVALID,
+                supportingText = {
+                    when (validity) {
+                        AddressValidity.EMPTY -> Unit
+                        AddressValidity.VALID -> Text(
+                            "✓ Valid Monero address",
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        AddressValidity.INVALID -> Text(
+                            "Not a recognised Monero address",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
             )
             OutlinedTextField(
                 value = saveLabel,
@@ -250,6 +273,8 @@ private fun ComposePanel(
         }
     }
 }
+
+private enum class AddressValidity { EMPTY, VALID, INVALID }
 
 @Composable
 private fun ResultLine(result: MoneroWalletService.SendResult) {

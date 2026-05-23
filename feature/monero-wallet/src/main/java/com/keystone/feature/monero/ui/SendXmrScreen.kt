@@ -40,6 +40,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.keystone.core.identity.PublicKey
 import kotlinx.coroutines.launch
 import com.keystone.core.ui.components.KeystonePanel
+import com.keystone.feature.monero.AddressValidator
 import com.keystone.feature.monero.MoneroWalletService
 import com.keystone.feature.monero.atomicUnitsAsXmr
 
@@ -292,6 +293,7 @@ private fun UnboundPanel(onBind: (String) -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            val valid = pasted.isNotBlank() && AddressValidator.isValidMonero(pasted)
             OutlinedTextField(
                 value = pasted,
                 onValueChange = { pasted = it.trim() },
@@ -299,10 +301,24 @@ private fun UnboundPanel(onBind: (String) -> Unit) {
                 singleLine = false,
                 maxLines = 4,
                 placeholder = { Text("4… (Monero address)") },
+                isError = pasted.isNotBlank() && !valid,
+                supportingText = {
+                    when {
+                        pasted.isBlank() -> Unit
+                        valid -> Text(
+                            "✓ Valid Monero address",
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        else -> Text(
+                            "Not a recognised Monero address",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
             )
             OutlinedButton(
                 onClick = { onBind(pasted) },
-                enabled = pasted.isNotBlank(),
+                enabled = valid,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Bind this address")

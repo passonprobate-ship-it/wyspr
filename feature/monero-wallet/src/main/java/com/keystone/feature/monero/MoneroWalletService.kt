@@ -464,6 +464,7 @@ class MoneroWalletService @Inject constructor(
                         confirmedAtomicUnits = balance.confirmedAmount.atomicUnits,
                         pendingAtomicUnits = balance.pendingAmount.atomicUnits,
                         txCount = ledger.transactions.size,
+                        lastCheckedHeight = ledger.checkedAt.height,
                         transactions = buildHistory(ledger.transactions),
                         receivedBySub = buildReceivedBySub(ledger),
                     )
@@ -535,6 +536,14 @@ class MoneroWalletService @Inject constructor(
             val confirmedAtomicUnits: Long,
             val pendingAtomicUnits: Long,
             val txCount: Int,
+            /**
+             * Sprint W8: block height the wallet has scanned through.
+             * Updated each ledger emission. Lets the UI render a
+             * "Synced through block N" indicator so the user sees
+             * progress during a long catchup instead of staring at
+             * an apparently-stuck "0 XMR".
+             */
+            val lastCheckedHeight: Int = 0,
             /**
              * Sprint W4: transaction history. Sorted newest-first.
              * Empty before the first ledger snapshot; populated on

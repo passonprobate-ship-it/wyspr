@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.keystone.core.ui.components.KeystonePanel
+import com.keystone.feature.monero.AddressValidator
 import com.keystone.feature.monero.MoneroWalletService
 import com.keystone.feature.monero.atomicUnitsAsXmr
 import im.molly.monero.sdk.FeePriority
@@ -91,6 +92,7 @@ fun SweepWalletScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    val destValid = dest.isNotBlank() && AddressValidator.isValidMonero(dest)
                     OutlinedTextField(
                         value = dest,
                         onValueChange = { dest = it.trim() },
@@ -98,6 +100,20 @@ fun SweepWalletScreen(
                         minLines = 2,
                         maxLines = 4,
                         placeholder = { Text("4… (Monero address)") },
+                        isError = dest.isNotBlank() && !destValid,
+                        supportingText = {
+                            when {
+                                dest.isBlank() -> Unit
+                                destValid -> Text(
+                                    "✓ Valid Monero address",
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                else -> Text(
+                                    "Not a recognised Monero address",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        },
                     )
                     Text(
                         text = "Fee priority",
@@ -122,7 +138,7 @@ fun SweepWalletScreen(
                         if (ok) vm.sweep(dest, priority)
                     }
                 },
-                enabled = dest.isNotBlank(),
+                enabled = dest.isNotBlank() && AddressValidator.isValidMonero(dest),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Sweep entire wallet")

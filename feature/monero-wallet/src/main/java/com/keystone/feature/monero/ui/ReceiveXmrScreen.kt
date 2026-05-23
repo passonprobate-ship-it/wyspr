@@ -17,6 +17,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -85,10 +86,23 @@ fun ReceiveXmrScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
             } else {
-                QrPanel(address = address)
+                var amountStr by remember { mutableStateOf("") }
+                var labelStr by remember { mutableStateOf("") }
+                val payload = remember(address, amountStr, labelStr) {
+                    buildMoneroUri(address, amountStr, labelStr)
+                }
+                QrPanel(payload = payload)
+                InvoicePanel(
+                    amount = amountStr,
+                    onAmountChange = { v -> amountStr = v.filter { it.isDigit() || it == '.' } },
+                    label = labelStr,
+                    onLabelChange = { labelStr = it },
+                )
                 AddressPanel(
                     address = address,
-                    onCopy = { clipboard.setText(AnnotatedString(address)) },
+                    payload = payload,
+                    onCopyAddress = { clipboard.setText(AnnotatedString(address)) },
+                    onCopyUri = { clipboard.setText(AnnotatedString(payload)) },
                 )
             }
         }
@@ -96,16 +110,17 @@ fun ReceiveXmrScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun QrPanel(address: String) {
+private fun QrPanel(payload: String) {
     KeystonePanel(modifier = Modifier.fillMaxWidth()) {
         // Compute a sensible size based on the screen — 280dp is
         // big enough to scan at arm's length but leaves room for
         // the address below. The Bitmap is re-rendered only when
-        // the address or size changes.
+        // the payload or size changes (so toggling amount or label
+        // mints a fresh QR).
         val density = LocalDensity.current
         val sizePx = with(density) { 280.dp.roundToPx() }
-        val bitmap = remember(address, sizePx) {
-            QrRenderer.render(address, sizePx)
+        val bitmap = remember(payload, sizePx) {
+            QrRenderer.render(payload, sizePx)
         }
         Box(
             modifier = Modifier
@@ -116,7 +131,7 @@ private fun QrPanel(address: String) {
         ) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
-                contentDescription = "Receive address QR",
+                contentDescription = "Receive QR",
                 modifier = Modifier.fillMaxSize().padding(12.dp),
             )
         }
@@ -124,14 +139,65 @@ private fun QrPanel(address: String) {
 }
 
 @Composable
-private fun AddressPanel(address: String, onCopy: () -> Unit) {
-    var copied by remember { mutableStateOf(false) }
-    LaunchedEffect(copied) {
-        if (copied) {
-            kotlinx.coroutines.delay(1200)
-            copied = false
+private fun InvoicePanel(
+    amount: String,
+    onAmountChange: (String) -> Unit,
+    label: String,
+    onLabelChange: (String) -> Unit,
+) {
+    KeystonePanel(modifier = Modifier.fillMaxWidth()) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Request a specific amount (optional)",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = "Filling these in encodes a Monero URI in the QR above — the " +
+                    "sender's wallet pre-fills the amount and description on scan.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = amount,
+                onValueChange = onAmountChange,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("0.00") },
+                suffix = { Text("XMR") },
+            )
+            OutlinedTextField(
+                value = label,
+                onValueChange = onLabelChange,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                placeholder = { Text("Description (e.g. \"Coffee\")") },
+            )
         }
     }
+}
+
+@Composable
+private fun AddressPanel(
+    address: String,
+    payload: String,
+    onCopyAddress: () -> Unit,
+    onCopyUri: () -> Unit,
+) {
+    var copiedAddress by remember { mutableStateOf(false) }
+    var copiedUri by remember { mutableStateOf(false) }
+    LaunchedEffect(copiedAddress) {
+        if (copiedAddress) {
+            kotlinx.coroutines.delay(1200)
+            copiedAddress = false
+        }
+    }
+    LaunchedEffect(copiedUri) {
+        if (copiedUri) {
+            kotlinx.coroutines.delay(1200)
+            copiedUri = false
+        }
+    }
+    val hasInvoice = payload != address
     KeystonePanel(modifier = Modifier.fillMaxWidth()) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
@@ -144,12 +210,23 @@ private fun AddressPanel(address: String, onCopy: () -> Unit) {
             )
             OutlinedButton(
                 onClick = {
-                    onCopy()
-                    copied = true
+                    onCopyAddress()
+                    copiedAddress = true
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (copied) "Copied" else "Copy address")
+                Text(if (copiedAddress) "Copied" else "Copy address")
+            }
+            if (hasInvoice) {
+                OutlinedButton(
+                    onClick = {
+                        onCopyUri()
+                        copiedUri = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (copiedUri) "Copied" else "Copy invoice URI")
+                }
             }
             Text(
                 text = "Anyone with this address can send you XMR. For paired peers, " +
@@ -160,4 +237,28 @@ private fun AddressPanel(address: String, onCopy: () -> Unit) {
             )
         }
     }
+}
+
+/**
+ * Build a Monero URI per the BIP21-style scheme:
+ *
+ *   `monero:<address>[?tx_amount=N][&tx_description=L]`
+ *
+ * When [amount] is blank and [label] is blank, returns the bare
+ * address — wallets scanning this still parse it, but there's no
+ * invoice. When either field is set, parameters are URL-encoded
+ * and joined with `&`.
+ */
+private fun buildMoneroUri(address: String, amount: String, label: String): String {
+    val params = mutableListOf<String>()
+    val amt = amount.trim()
+    if (amt.isNotEmpty() && amt.toDoubleOrNull() != null && amt != "." && amt != "0") {
+        params += "tx_amount=$amt"
+    }
+    val lbl = label.trim()
+    if (lbl.isNotEmpty()) {
+        params += "tx_description=" + java.net.URLEncoder.encode(lbl, "UTF-8")
+    }
+    return if (params.isEmpty()) address
+    else "monero:$address?" + params.joinToString("&")
 }

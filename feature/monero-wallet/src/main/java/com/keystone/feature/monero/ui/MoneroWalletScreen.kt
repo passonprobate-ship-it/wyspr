@@ -224,6 +224,11 @@ private fun ReadyPanel(
             Spacer(modifier = Modifier.height(8.dp))
             KeyValue("Confirmed", "${state.confirmedAtomicUnits.atomicUnitsAsXmr()} XMR")
             KeyValue("Transactions seen", "${state.txCount}")
+            if (state.lastCheckedHeight > 0) {
+                KeyValue("Synced through block", "${state.lastCheckedHeight}")
+            } else {
+                KeyValue("Sync status", "Connecting to node…")
+            }
         }
     }
     KeystonePanel(modifier = Modifier.fillMaxWidth()) {
