@@ -6,7 +6,19 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Wyspr has no server component)
-- **Status**: 2026-05-24 — **v0.9.4 (build 25).** Auto key rotation
+- **Status**: 2026-05-24 — **v0.9.5 (build 26).** Payment notifications
+  ("Received 0.1 XMR from Bob") — `PaymentNotifier` interface +
+  `AndroidPaymentNotifier` with dedicated "Payments" channel.
+  `MoneroWalletService` diffs tx hashes across ledger emissions;
+  reverse-lookups peer via `PeerSubAddressMintDao.forSubAddress`.
+  "Buy the developer a beer" XMR donation row in Settings.
+  13-finding bug sweep: `applyRotation` self-edge double-delete +
+  `certSigner` rekey, `ConversationViewModel` flow leak, group
+  message REPLACE→IGNORE, `FileBubble` path traversal,
+  `ProfileFetcher` OOM cap, audio temp file cleanup, schema v22
+  (key_rotation.newPub index). Auto-scroll always on send/receive.
+
+  Earlier (2026-05-24): **v0.9.4 (build 25).** Auto key rotation
   (90-day interval) with cert chaining. `KeyRotationSettings` stores
   the last rotation timestamp in SharedPreferences; `MainActivity`
   checks on every cold start and silently rotates if due.
@@ -609,6 +621,33 @@ group chats (`GroupConversationViewModel.sendVoiceNote`,
 
 New files: `KeyRotationSettings.kt`.
 
+### 2026-05-24 — v0.9.5: Payment notifications + bug sweep + donate
+
+**Payment notifications.** `PaymentNotifier` interface in
+`core:transport:api` + `AndroidPaymentNotifier` in `:app` with a
+dedicated "Payments" notification channel. `MoneroWalletService`
+tracks seen tx hashes; first ledger emission seeds the set (no
+notifications for historical txs), subsequent emissions fire
+notifications for new inbound transactions. Peer reverse-lookup via
+`PeerSubAddressMintDao.forSubAddress` resolves which contact paid —
+notification shows "Received 0.5 XMR — From Bob" or fingerprint.
+
+**13-finding bug sweep.** CRITICAL: `applyRotation` self-edge
+double-delete fixed (single-pass rekey), `certSigner` now rekeyed,
+`ConversationViewModel` reaction flow leak fixed (nested `.collect`
+→ `flatMapLatest`), `GroupConversationViewModel` CancellationException
+rethrow. SECURITY: `GroupMessageDao` REPLACE→IGNORE, `FileBubble`
+path traversal sanitization, `ProfileFetcher` 1MB body cap. HIGH:
+audio temp file cleanup, schema v22 (`key_rotation.newPub` index),
+`GroupConversationScreen` stable LazyColumn keys, `MainActivity`
+rotation dispatched to IO, pending rotation recovery on startup,
+cross-community haveSet filtering.
+
+**"Buy the developer a beer"** — expandable XMR donation row in
+Settings with copy-to-clipboard.
+
+New files: `PaymentNotifier.kt`, `AndroidPaymentNotifier.kt`.
+
 ## What's NOT Built Yet
 
 - **Vault** feature (encrypted personal-record store) — empty module.
@@ -627,11 +666,11 @@ New files: `KeyRotationSettings.kt`.
 
 ## Memory / Plan State
 
-v0.9.4 is the current build (2026-05-24, build 25). Auto key rotation
-(90-day) with cert chaining shipped. Chat composer cleaned up (unified
-`+` drawer). Both BLE and Tor-only messaging are hardware-verified.
-Revocation propagation is live. 68 audit fixes landed. Next
-priorities: hardware-verify key rotation, then CI or Vault.
+v0.9.5 is the current build (2026-05-24, build 26). Payment
+notifications wired up (ready when Monero JNI engine lands).
+13-finding bug sweep landed. Auto key rotation (90-day) with cert
+chaining shipped. Both BLE and Tor-only messaging are hardware-
+verified. Next priorities: hardware-verify key rotation, then CI.
 
 Auto-memory references:
 - [[wyspr-messaging-works]] — 22-build journey, all fixes

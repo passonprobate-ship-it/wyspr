@@ -1,11 +1,14 @@
 # Wyspr — Next Steps
 
-Refreshed 2026-05-24 against `android` branch (v0.9.4, build 25).
+Refreshed 2026-05-24 against `android` branch (v0.9.5, build 26).
 
 ## Completed since last refresh
 
 | Item | Version | Status |
 |------|---------|--------|
+| Payment notifications | v0.9.5 | **Done** — "Received 0.1 XMR from Bob", peer reverse-lookup, dedicated channel |
+| 13-finding bug sweep | v0.9.5 | **Done** — applyRotation, flow leak, path traversal, GroupMessageDao, schema v22 |
+| XMR donation row | v0.9.5 | **Done** — "Buy the developer a beer" in Settings |
 | Auto key rotation (90-day) + cert chaining | v0.9.4 | **Done** — silent rotation, batch chain resolution, max depth 10 |
 | Chat composer cleanup | v0.9.4 | **Done** — unified `+` drawer, location fix, voice/file in groups |
 | Key rotation envelope | v0.9.3 | **Done** — cert + propagation + ingestion + issuer UI |
@@ -45,7 +48,7 @@ and Room schema export enabled — all untested in automation.
 
 **Status.** Metadata is ready (`metadata/com.wyspr.yml`, fastlane
 descriptions + changelogs). Needs:
-- Tag `v0.9.4` on the repo
+- Tag `v0.9.5` on the repo
 - Fork `f-droid/fdroiddata`, submit PR with `metadata/com.wyspr.yml`
 - Accept that reproducible-build check will flag pre-built native
   deps (lazysodium, kmp-tor) — documented in `docs/FDROID.md`
