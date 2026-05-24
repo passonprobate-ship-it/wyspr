@@ -42,6 +42,7 @@ class ConversationViewModel @Inject constructor(
     private val notifier: MessagingNotifier,
     private val mailboxNotifyClient: MailboxNotifyClient,
     private val bindingService: MailboxBindingService,
+    private val trustGraphService: com.wyspr.core.trust.TrustGraphService,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<UiState>(UiState.Loading)
@@ -250,6 +251,19 @@ class ConversationViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    fun revokePeer(onResult: (Boolean) -> Unit) {
+        val peer = peerPub ?: run { onResult(false); return }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                trustGraphService.revokePeer(
+                    targetPub = PublicKey(peer),
+                    reasonCode = com.wyspr.core.trust.RevocationCertificate.ReasonCode.COMPROMISED,
+                )
+            }
+            onResult(ok)
         }
     }
 

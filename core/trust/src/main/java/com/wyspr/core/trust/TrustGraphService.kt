@@ -84,6 +84,41 @@ class TrustGraphService(
         }
     }
 
+    suspend fun revokePeer(
+        targetPub: PublicKey,
+        reasonCode: RevocationCertificate.ReasonCode,
+    ): Boolean = lock.withLock {
+        withContext(Dispatchers.Default) {
+            val ownPub = runCatching {
+                PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
+            }.getOrNull() ?: return@withContext false
+            val graph = buildGraph(ownPub) ?: return@withContext false
+            val ownLevel = graph.trustLevel(ownPub)
+            if (ownLevel != TrustLevel.Full && ownLevel != TrustLevel.Root) return@withContext false
+            val membership = database.communityMembershipDao.firstOrNull()
+                ?: return@withContext false
+            val communityId = CommunityId(membership.communityId)
+            val cert = RevocationCertificate.issue(
+                keystore = keystore,
+                issuerPub = ownPub,
+                targetPub = targetPub,
+                communityId = communityId,
+                reasonCode = reasonCode,
+            )
+            database.revocationDao.upsert(
+                RevocationEntity(
+                    issuerPub = cert.issuerPub.bytes,
+                    targetPub = cert.targetPub.bytes,
+                    issuedAt = cert.issuedAt,
+                    reasonCode = cert.reasonCode.name,
+                    signature = cert.signature,
+                    communityId = cert.communityId.bytes,
+                ),
+            )
+            true
+        }
+    }
+
     private suspend fun buildGraph(ownPub: PublicKey): TrustGraph? {
         if (!database.isOpen) database.open()
         val membership = database.communityMembershipDao.firstOrNull()

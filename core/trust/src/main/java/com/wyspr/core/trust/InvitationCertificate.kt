@@ -264,6 +264,35 @@ data class RevocationCertificate(
         const val VERSION = 1
         const val SIG_LENGTH = 64
 
+        fun issue(
+            keystore: KeystoreManager,
+            issuerPub: PublicKey,
+            targetPub: PublicKey,
+            communityId: CommunityId,
+            reasonCode: ReasonCode,
+            now: Long = System.currentTimeMillis() / 1000,
+        ): RevocationCertificate {
+            val signedBytes = Cbor.encode {
+                arrayHeader(6)
+                uint(VERSION.toLong())
+                bytes(issuerPub.bytes)
+                bytes(targetPub.bytes)
+                bytes(communityId.bytes)
+                uint(now)
+                uint(reasonCode.tag.toLong())
+            }
+            val signature = keystore.sign(signedBytes)
+            return RevocationCertificate(
+                version = VERSION,
+                issuerPub = issuerPub,
+                targetPub = targetPub,
+                communityId = communityId,
+                issuedAt = now,
+                reasonCode = reasonCode,
+                signature = signature,
+            )
+        }
+
         fun fromWire(blob: ByteArray): RevocationCertificate = Cbor.decode(blob) {
             val n = arrayHeader()
             require(n == 7) { "RevocationCertificate must have 7 fields, got $n" }

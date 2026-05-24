@@ -332,6 +332,8 @@ fun ConversationScreen(
         }
     }
 
+    var showRevokeConfirm by remember { mutableStateOf(false) }
+
     if (peerDetailsOpen) {
         PeerDetailsSheet(
             peer = peer,
@@ -347,6 +349,39 @@ fun ConversationScreen(
             onSendXmr = {
                 viewModel.closePeerDetails()
                 onSendXmr()
+            },
+            onRevoke = {
+                viewModel.closePeerDetails()
+                showRevokeConfirm = true
+            },
+        )
+    }
+
+    if (showRevokeConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRevokeConfirm = false },
+            title = { Text("Revoke this peer?") },
+            text = {
+                Text(
+                    "This permanently quarantines ${currentDisplayName ?: "this peer"} " +
+                        "for you and every paired contact who syncs with you. " +
+                        "This cannot be undone.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRevokeConfirm = false
+                        viewModel.revokePeer { }
+                    },
+                ) {
+                    Text("Revoke", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRevokeConfirm = false }) {
+                    Text("Cancel")
+                }
             },
         )
     }
@@ -393,6 +428,7 @@ private fun PeerDetailsSheet(
     onDisappearTimer: () -> Unit,
     onViewPage: () -> Unit,
     onSendXmr: () -> Unit,
+    onRevoke: () -> Unit = {},
 ) {
     val sheetState = androidx.compose.material3.rememberModalBottomSheetState()
     androidx.compose.material3.ModalBottomSheet(
@@ -427,6 +463,14 @@ private fun PeerDetailsSheet(
             }
             androidx.compose.material3.TextButton(onClick = onSendXmr, modifier = Modifier.fillMaxWidth()) {
                 Text("Send XMR", modifier = Modifier.fillMaxWidth())
+            }
+            androidx.compose.material3.HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            androidx.compose.material3.TextButton(onClick = onRevoke, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    "Revoke this peer",
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
             androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(16.dp))
         }
