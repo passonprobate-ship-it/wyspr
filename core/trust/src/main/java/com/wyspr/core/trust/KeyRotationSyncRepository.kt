@@ -11,7 +11,9 @@ class KeyRotationSyncRepository(
 ) {
 
     suspend fun haveSet(database: WysprDatabase): List<Pair<ByteArray, ByteArray>> =
-        database.keyRotationDao.all().map { it.oldPub to it.newPub }
+        database.keyRotationDao.all()
+            .filter { it.communityId.contentEquals(communityId) }
+            .map { it.oldPub to it.newPub }
 
     suspend fun want(
         database: WysprDatabase,
@@ -208,24 +210,20 @@ class KeyRotationSyncRepository(
 
         val edges = database.trustEdgeDao.all()
         for (edge in edges) {
-            if (edge.fromPub.contentEquals(oldBytes)) {
-                database.trustEdgeDao.delete(edge.fromPub, edge.toPub)
-                database.trustEdgeDao.upsert(
-                    edge.copy(
-                        fromPub = newBytes,
-                        peerOnion = newOnion ?: edge.peerOnion,
-                    )
+            val fromMatch = edge.fromPub.contentEquals(oldBytes)
+            val toMatch = edge.toPub.contentEquals(oldBytes)
+            val signerMatch = edge.certSigner?.let { it.contentEquals(oldBytes) } == true
+            if (!fromMatch && !toMatch && !signerMatch) continue
+
+            database.trustEdgeDao.delete(edge.fromPub, edge.toPub)
+            database.trustEdgeDao.upsert(
+                edge.copy(
+                    fromPub = if (fromMatch) newBytes else edge.fromPub,
+                    toPub = if (toMatch) newBytes else edge.toPub,
+                    certSigner = if (signerMatch) newBytes else edge.certSigner,
+                    peerOnion = if (fromMatch || toMatch) newOnion ?: edge.peerOnion else edge.peerOnion,
                 )
-            }
-            if (edge.toPub.contentEquals(oldBytes)) {
-                database.trustEdgeDao.delete(edge.fromPub, edge.toPub)
-                database.trustEdgeDao.upsert(
-                    edge.copy(
-                        toPub = newBytes,
-                        peerOnion = newOnion ?: edge.peerOnion,
-                    )
-                )
-            }
+            )
         }
 
         val contact = database.contactDao.byPub(oldBytes)

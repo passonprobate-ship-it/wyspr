@@ -198,7 +198,7 @@ fun GroupConversationScreen(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                                 contentPadding = PaddingValues(vertical = 8.dp),
                             ) {
-                                items(s.messages, key = { it.id.contentHashCode() }) { msg ->
+                                items(s.messages, key = { it.id.toList() }) { msg ->
                                     val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)
                                     val quoted = decoded?.replyToId?.let { id ->
                                         byId[com.wyspr.core.identity.PeerKey(id)]

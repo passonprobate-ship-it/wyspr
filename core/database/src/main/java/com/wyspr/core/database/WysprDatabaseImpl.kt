@@ -108,6 +108,7 @@ class WysprDatabaseImpl(
                     MIGRATION_18_19,
                     MIGRATION_19_20,
                     MIGRATION_20_21,
+                    MIGRATION_21_22,
                 )
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
                 .build()

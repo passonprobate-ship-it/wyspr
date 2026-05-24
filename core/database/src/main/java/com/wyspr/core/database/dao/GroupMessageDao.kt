@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface GroupMessageDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun upsert(message: GroupMessageEntity)
 
     /** Reactive stream of one group's messages, oldest first. */

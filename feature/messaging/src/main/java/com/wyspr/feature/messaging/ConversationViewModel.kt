@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -194,24 +195,27 @@ class ConversationViewModel @Inject constructor(
                         row?.disappearAfter,
                     )
                 }
-                .collectLatest { info ->
+                .flatMapLatest { info ->
+                    val ids = info.messages.map { it.id }
+                    val reactionsFlow = if (ids.isNotEmpty()) {
+                        messageStore.reactionsForMessages(ids)
+                    } else {
+                        kotlinx.coroutines.flow.flowOf(emptyList())
+                    }
+                    reactionsFlow.map { list ->
+                        info to list.groupBy { com.wyspr.core.identity.PeerKey(it.msgId) }
+                    }
+                }
+                .collectLatest { (info, reactions) ->
                     _state.value = UiState.Ready(
                         own = ownPub?.let { PublicKey(it) },
                         peer = peer,
                         displayName = info.displayName,
                         notes = info.notes,
                         messages = info.messages,
-                        reactions = (_state.value as? UiState.Ready)?.reactions ?: emptyMap(),
+                        reactions = reactions,
                         disappearAfter = info.disappearAfter,
                     )
-                    val ids = info.messages.map { it.id }
-                    if (ids.isNotEmpty()) {
-                        messageStore.reactionsForMessages(ids).collect { list ->
-                            val reactions = list.groupBy { com.wyspr.core.identity.PeerKey(it.msgId) }
-                            val cur = _state.value as? UiState.Ready ?: return@collect
-                            _state.value = cur.copy(reactions = reactions)
-                        }
-                    }
                     val hasUnviewed = info.messages.any { m ->
                         m.status == MessageStore.STATUS_RECEIVED &&
                             m.fromPub.contentEquals(peer.bytes)

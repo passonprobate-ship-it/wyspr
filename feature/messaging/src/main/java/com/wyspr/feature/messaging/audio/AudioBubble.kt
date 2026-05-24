@@ -50,6 +50,7 @@ internal fun AudioBubble(
     DisposableEffect(cacheKey) {
         onDispose {
             player?.release()
+            File(context.cacheDir, "audio_play_$cacheKey.m4a").delete()
         }
     }
 

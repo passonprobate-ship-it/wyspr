@@ -253,6 +253,7 @@ class GroupConversationViewModel @Inject constructor(
             delay(INITIAL_SYNC_DELAY_MS)
             while (isActive) {
                 runCatching { syncService.runOnce(timeoutMs = AUTO_SYNC_TIMEOUT_MS) }
+                    .onFailure { if (it is kotlin.coroutines.cancellation.CancellationException) throw it }
                 delay(AUTO_SYNC_INTERVAL_MS)
             }
         }

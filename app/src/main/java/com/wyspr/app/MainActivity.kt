@@ -96,9 +96,12 @@ class MainActivity : FragmentActivity() {
                         LaunchedEffect(Unit) {
                             runCatching { torBackend.start() }
                             runCatching { profileHttpServer.start() }
-                            keyRotationSettings.seedIfNeeded()
-                            if (keyRotationService.isDue()) {
-                                runCatching { keyRotationService.rotate() }
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                keyRotationService.recoverPendingRotation()
+                                keyRotationSettings.seedIfNeeded()
+                                if (keyRotationService.isDue()) {
+                                    runCatching { keyRotationService.rotate() }
+                                }
                             }
                         }
                         WysprNavHost(

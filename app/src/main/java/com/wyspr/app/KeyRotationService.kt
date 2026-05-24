@@ -26,6 +26,29 @@ class KeyRotationService(
 
     fun isDue(): Boolean = rotationSettings.isDueForRotation()
 
+    suspend fun recoverPendingRotation() {
+        val pendingFile = File(context.filesDir, PENDING_ROTATION_FILE)
+        if (!pendingFile.exists()) return
+        runCatching {
+            if (!database.isOpen) database.open()
+            val wireBytes = pendingFile.readBytes()
+            val cert = KeyRotationCertificate.fromWire(wireBytes)
+            val onionString = cert.newOnion?.let { String(it, Charsets.US_ASCII) }
+            database.keyRotationDao.upsert(
+                KeyRotationEntity(
+                    oldPub = cert.oldPub.bytes,
+                    newPub = cert.newPub.bytes,
+                    communityId = cert.communityId.bytes,
+                    issuedAt = cert.issuedAt,
+                    newOnion = onionString,
+                    signature = cert.signature,
+                ),
+            )
+            pendingFile.delete()
+            rotationSettings.recordRotation()
+        }
+    }
+
     suspend fun rotate(): Boolean {
         val oldPub = runCatching {
             PublicKey(keystore.loadOrCreateIdentityKey().publicKey)

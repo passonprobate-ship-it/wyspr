@@ -1,0 +1,1141 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 22,
+    "identityHash": "c1844dbbcac4644fae44e5ff08abd0a8",
+    "entities": [
+      {
+        "tableName": "trust_edge",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`fromPub` BLOB NOT NULL, `toPub` BLOB NOT NULL, `vouchLevel` TEXT NOT NULL, `establishedAt` INTEGER NOT NULL, `certBlob` BLOB NOT NULL, `certSigner` BLOB NOT NULL, `peerOnion` TEXT, PRIMARY KEY(`fromPub`, `toPub`))",
+        "fields": [
+          {
+            "fieldPath": "fromPub",
+            "columnName": "fromPub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toPub",
+            "columnName": "toPub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "vouchLevel",
+            "columnName": "vouchLevel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "establishedAt",
+            "columnName": "establishedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "certBlob",
+            "columnName": "certBlob",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "certSigner",
+            "columnName": "certSigner",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peerOnion",
+            "columnName": "peerOnion",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "fromPub",
+            "toPub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "revocation",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`issuerPub` BLOB NOT NULL, `targetPub` BLOB NOT NULL, `issuedAt` INTEGER NOT NULL, `reasonCode` TEXT NOT NULL, `signature` BLOB NOT NULL, `communityId` BLOB NOT NULL, PRIMARY KEY(`issuerPub`, `targetPub`))",
+        "fields": [
+          {
+            "fieldPath": "issuerPub",
+            "columnName": "issuerPub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetPub",
+            "columnName": "targetPub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "issuedAt",
+            "columnName": "issuedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reasonCode",
+            "columnName": "reasonCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signature",
+            "columnName": "signature",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "communityId",
+            "columnName": "communityId",
+            "affinity": "BLOB",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "issuerPub",
+            "targetPub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "account",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`pub` BLOB NOT NULL, `seq` INTEGER NOT NULL, `balanceCached` INTEGER NOT NULL, `slashed` INTEGER NOT NULL, PRIMARY KEY(`pub`))",
+        "fields": [
+          {
+            "fieldPath": "pub",
+            "columnName": "pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "seq",
+            "columnName": "seq",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "balanceCached",
+            "columnName": "balanceCached",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "slashed",
+            "columnName": "slashed",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "pub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "currency_envelope",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`community` BLOB NOT NULL, `typeTag` INTEGER NOT NULL, `primaryKey` BLOB NOT NULL, `body` BLOB NOT NULL, `observedAt` INTEGER NOT NULL, PRIMARY KEY(`community`, `typeTag`, `primaryKey`))",
+        "fields": [
+          {
+            "fieldPath": "community",
+            "columnName": "community",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "typeTag",
+            "columnName": "typeTag",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "primaryKey",
+            "columnName": "primaryKey",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "body",
+            "columnName": "body",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observedAt",
+            "columnName": "observedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "community",
+            "typeTag",
+            "primaryKey"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_currency_envelope_community_typeTag",
+            "unique": false,
+            "columnNames": [
+              "community",
+              "typeTag"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_currency_envelope_community_typeTag` ON `${TABLE_NAME}` (`community`, `typeTag`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "community_membership",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`communityId` BLOB NOT NULL, `foundedAt` INTEGER NOT NULL, `isFounder` INTEGER NOT NULL, `displayName` TEXT, PRIMARY KEY(`communityId`))",
+        "fields": [
+          {
+            "fieldPath": "communityId",
+            "columnName": "communityId",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "foundedAt",
+            "columnName": "foundedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isFounder",
+            "columnName": "isFounder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "communityId"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "message",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` BLOB NOT NULL, `thread_pub` BLOB NOT NULL, `from_pub` BLOB NOT NULL, `to_pub` BLOB NOT NULL, `created_at` INTEGER NOT NULL, `received_at` INTEGER, `body` TEXT NOT NULL, `status` TEXT NOT NULL, `signature` BLOB NOT NULL, `expires_at` INTEGER, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "threadPub",
+            "columnName": "thread_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromPub",
+            "columnName": "from_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toPub",
+            "columnName": "to_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receivedAt",
+            "columnName": "received_at",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "body",
+            "columnName": "body",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signature",
+            "columnName": "signature",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expiresAt",
+            "columnName": "expires_at",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_message_thread_pub_created_at",
+            "unique": false,
+            "columnNames": [
+              "thread_pub",
+              "created_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_message_thread_pub_created_at` ON `${TABLE_NAME}` (`thread_pub`, `created_at`)"
+          },
+          {
+            "name": "index_message_status",
+            "unique": false,
+            "columnNames": [
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_message_status` ON `${TABLE_NAME}` (`status`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "contact",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`peerPub` BLOB NOT NULL, `displayName` TEXT, `notes` TEXT, `disappear_after` INTEGER, PRIMARY KEY(`peerPub`))",
+        "fields": [
+          {
+            "fieldPath": "peerPub",
+            "columnName": "peerPub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "disappearAfter",
+            "columnName": "disappear_after",
+            "affinity": "INTEGER",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "peerPub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "group_entity",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`group_id` BLOB NOT NULL, `name` TEXT NOT NULL, `creator_pub` BLOB NOT NULL, `created_at` INTEGER NOT NULL, `local_nickname` TEXT, PRIMARY KEY(`group_id`))",
+        "fields": [
+          {
+            "fieldPath": "groupId",
+            "columnName": "group_id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "creatorPub",
+            "columnName": "creator_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "localNickname",
+            "columnName": "local_nickname",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "group_id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "group_member",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`group_id` BLOB NOT NULL, `member_pub` BLOB NOT NULL, `cert_bytes` BLOB NOT NULL, `added_at` INTEGER NOT NULL, `status` TEXT NOT NULL, PRIMARY KEY(`group_id`, `member_pub`))",
+        "fields": [
+          {
+            "fieldPath": "groupId",
+            "columnName": "group_id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "memberPub",
+            "columnName": "member_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "certBytes",
+            "columnName": "cert_bytes",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "addedAt",
+            "columnName": "added_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "group_id",
+            "member_pub"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_group_member_member_pub",
+            "unique": false,
+            "columnNames": [
+              "member_pub"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_group_member_member_pub` ON `${TABLE_NAME}` (`member_pub`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "group_message",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` BLOB NOT NULL, `group_id` BLOB NOT NULL, `from_pub` BLOB NOT NULL, `body` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `received_at` INTEGER, `status` TEXT NOT NULL, `signature` BLOB NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`group_id`) REFERENCES `group_entity`(`group_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "groupId",
+            "columnName": "group_id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromPub",
+            "columnName": "from_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "body",
+            "columnName": "body",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "receivedAt",
+            "columnName": "received_at",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signature",
+            "columnName": "signature",
+            "affinity": "BLOB",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_group_message_group_id_created_at",
+            "unique": false,
+            "columnNames": [
+              "group_id",
+              "created_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_group_message_group_id_created_at` ON `${TABLE_NAME}` (`group_id`, `created_at`)"
+          },
+          {
+            "name": "index_group_message_status",
+            "unique": false,
+            "columnNames": [
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_group_message_status` ON `${TABLE_NAME}` (`status`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "group_entity",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "group_id"
+            ],
+            "referencedColumns": [
+              "group_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "user_profile",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `display_name` TEXT, `bio` TEXT, `avatar_emoji` TEXT, `links` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "display_name",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "bio",
+            "columnName": "bio",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "avatarEmoji",
+            "columnName": "avatar_emoji",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "links",
+            "columnName": "links",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "mailbox_binding",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`owner_pub` BLOB NOT NULL, `mailbox_pub` BLOB NOT NULL, `mailbox_onion` TEXT, `cert_bytes` BLOB NOT NULL, `created_at` INTEGER NOT NULL, `expires_at` INTEGER NOT NULL, PRIMARY KEY(`owner_pub`, `mailbox_pub`))",
+        "fields": [
+          {
+            "fieldPath": "ownerPub",
+            "columnName": "owner_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mailboxPub",
+            "columnName": "mailbox_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mailboxOnion",
+            "columnName": "mailbox_onion",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "certBytes",
+            "columnName": "cert_bytes",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expiresAt",
+            "columnName": "expires_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "owner_pub",
+            "mailbox_pub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "mailbox_stored",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`envelope_id` BLOB NOT NULL, `to_pub` BLOB NOT NULL, `from_pub` BLOB NOT NULL, `ciphertext` BLOB NOT NULL, `signature` BLOB NOT NULL, `size_bytes` INTEGER NOT NULL, `created_at` INTEGER NOT NULL, `expires_at` INTEGER NOT NULL, PRIMARY KEY(`envelope_id`))",
+        "fields": [
+          {
+            "fieldPath": "envelopeId",
+            "columnName": "envelope_id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toPub",
+            "columnName": "to_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromPub",
+            "columnName": "from_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ciphertext",
+            "columnName": "ciphertext",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "signature",
+            "columnName": "signature",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "size_bytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expiresAt",
+            "columnName": "expires_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "envelope_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_mailbox_stored_to_pub_created_at",
+            "unique": false,
+            "columnNames": [
+              "to_pub",
+              "created_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mailbox_stored_to_pub_created_at` ON `${TABLE_NAME}` (`to_pub`, `created_at`)"
+          },
+          {
+            "name": "index_mailbox_stored_expires_at",
+            "unique": false,
+            "columnNames": [
+              "expires_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_mailbox_stored_expires_at` ON `${TABLE_NAME}` (`expires_at`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "mailbox_pull_cursor",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`mailbox_pub` BLOB NOT NULL, `since_cursor` INTEGER NOT NULL, PRIMARY KEY(`mailbox_pub`))",
+        "fields": [
+          {
+            "fieldPath": "mailboxPub",
+            "columnName": "mailbox_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sinceCursor",
+            "columnName": "since_cursor",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "mailbox_pub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "handshake_quarantine",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`peer_pub` BLOB NOT NULL, `quarantined_until` INTEGER NOT NULL, PRIMARY KEY(`peer_pub`))",
+        "fields": [
+          {
+            "fieldPath": "peerPub",
+            "columnName": "peer_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quarantinedUntil",
+            "columnName": "quarantined_until",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "peer_pub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "seen_cert_nonce",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`nonce` BLOB NOT NULL, `observed_at` INTEGER NOT NULL, PRIMARY KEY(`nonce`))",
+        "fields": [
+          {
+            "fieldPath": "nonce",
+            "columnName": "nonce",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observedAt",
+            "columnName": "observed_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "nonce"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "peer_payment_address",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`peer_pub` BLOB NOT NULL, `chain` TEXT NOT NULL, `address` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `revoked_at` INTEGER, `notes` TEXT, PRIMARY KEY(`peer_pub`, `chain`, `address`))",
+        "fields": [
+          {
+            "fieldPath": "peerPub",
+            "columnName": "peer_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chain",
+            "columnName": "chain",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "address",
+            "columnName": "address",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "revokedAt",
+            "columnName": "revoked_at",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "notes",
+            "columnName": "notes",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "peer_pub",
+            "chain",
+            "address"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_peer_payment_address_peer_pub_chain_revoked_at",
+            "unique": false,
+            "columnNames": [
+              "peer_pub",
+              "chain",
+              "revoked_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_peer_payment_address_peer_pub_chain_revoked_at` ON `${TABLE_NAME}` (`peer_pub`, `chain`, `revoked_at`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "peer_subaddress_mint",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`peer_pub` BLOB NOT NULL, `chain` TEXT NOT NULL, `account_index` INTEGER NOT NULL, `sub_address_index` INTEGER NOT NULL, `address` TEXT NOT NULL, `created_at` INTEGER NOT NULL, PRIMARY KEY(`peer_pub`, `chain`))",
+        "fields": [
+          {
+            "fieldPath": "peerPub",
+            "columnName": "peer_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chain",
+            "columnName": "chain",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "accountIndex",
+            "columnName": "account_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "subAddressIndex",
+            "columnName": "sub_address_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "address",
+            "columnName": "address",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "peer_pub",
+            "chain"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_peer_subaddress_mint_chain_account_index_sub_address_index",
+            "unique": false,
+            "columnNames": [
+              "chain",
+              "account_index",
+              "sub_address_index"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_peer_subaddress_mint_chain_account_index_sub_address_index` ON `${TABLE_NAME}` (`chain`, `account_index`, `sub_address_index`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "address_book",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chain` TEXT NOT NULL, `label` TEXT NOT NULL, `address` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `last_used_at` INTEGER NOT NULL, PRIMARY KEY(`chain`, `label`))",
+        "fields": [
+          {
+            "fieldPath": "chain",
+            "columnName": "chain",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "label",
+            "columnName": "label",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "address",
+            "columnName": "address",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastUsedAt",
+            "columnName": "last_used_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "chain",
+            "label"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_address_book_chain_last_used_at",
+            "unique": false,
+            "columnNames": [
+              "chain",
+              "last_used_at"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_address_book_chain_last_used_at` ON `${TABLE_NAME}` (`chain`, `last_used_at`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "message_reaction",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`msg_id` BLOB NOT NULL, `from_pub` BLOB NOT NULL, `emoji` TEXT NOT NULL, `created_at` INTEGER NOT NULL, PRIMARY KEY(`msg_id`, `from_pub`))",
+        "fields": [
+          {
+            "fieldPath": "msgId",
+            "columnName": "msg_id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fromPub",
+            "columnName": "from_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "emoji",
+            "columnName": "emoji",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "created_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "msg_id",
+            "from_pub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "group_message_delivery",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`msg_id` BLOB NOT NULL, `peer_pub` BLOB NOT NULL, `delivered_at` INTEGER NOT NULL, PRIMARY KEY(`msg_id`, `peer_pub`))",
+        "fields": [
+          {
+            "fieldPath": "msgId",
+            "columnName": "msg_id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "peerPub",
+            "columnName": "peer_pub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deliveredAt",
+            "columnName": "delivered_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "msg_id",
+            "peer_pub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "key_rotation",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`oldPub` BLOB NOT NULL, `newPub` BLOB NOT NULL, `communityId` BLOB NOT NULL, `issuedAt` INTEGER NOT NULL, `newOnion` TEXT, `signature` BLOB NOT NULL, PRIMARY KEY(`oldPub`, `newPub`))",
+        "fields": [
+          {
+            "fieldPath": "oldPub",
+            "columnName": "oldPub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "newPub",
+            "columnName": "newPub",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "communityId",
+            "columnName": "communityId",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "issuedAt",
+            "columnName": "issuedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "newOnion",
+            "columnName": "newOnion",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "signature",
+            "columnName": "signature",
+            "affinity": "BLOB",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "oldPub",
+            "newPub"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'c1844dbbcac4644fae44e5ff08abd0a8')"
+    ]
+  }
+}

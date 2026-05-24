@@ -92,8 +92,9 @@ class ProfileFetcher @Inject constructor(
                     }
                     String(buf, 0, read)
                 } else {
-                    // No content-length — read until peer closes.
-                    reader.readText()
+                    val buf = CharArray(MAX_BODY_NO_CL)
+                    val n = reader.read(buf, 0, MAX_BODY_NO_CL)
+                    if (n <= 0) "" else String(buf, 0, n)
                 }
                 Result.Ok(body)
             } catch (t: Throwable) {
@@ -107,5 +108,6 @@ class ProfileFetcher @Inject constructor(
 
     private companion object {
         private const val TAG = "ProfileFetcher"
+        private const val MAX_BODY_NO_CL = 1024 * 1024
     }
 }

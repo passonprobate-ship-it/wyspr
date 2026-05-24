@@ -51,7 +51,11 @@ internal fun FileBubble(
             try {
                 val dir = File(context.cacheDir, "shared_files")
                 dir.mkdirs()
-                val file = File(dir, decoded.fileName)
+                val safeName = decoded.fileName
+                    .replace("/", "_")
+                    .replace("\\", "_")
+                    .replace("..", "_")
+                val file = File(dir, safeName)
                 file.writeBytes(decoded.fileBytes)
                 val uri = FileProvider.getUriForFile(
                     context,

@@ -109,7 +109,7 @@ import com.wyspr.core.database.entities.UserProfileEntity
         GroupMessageDeliveryEntity::class,
         KeyRotationEntity::class,
     ],
-    version = 21,
+    version = 22,
     exportSchema = true,
 )
 abstract class WysprRoomDatabase : RoomDatabase() {
@@ -502,6 +502,14 @@ internal val MIGRATION_20_21 = object : Migration(20, 21) {
                 "`newOnion` TEXT, " +
                 "`signature` BLOB NOT NULL, " +
                 "PRIMARY KEY(`oldPub`, `newPub`))"
+        )
+    }
+}
+
+internal val MIGRATION_21_22 = object : Migration(21, 22) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_key_rotation_newPub` ON `key_rotation`(`newPub`)"
         )
     }
 }
