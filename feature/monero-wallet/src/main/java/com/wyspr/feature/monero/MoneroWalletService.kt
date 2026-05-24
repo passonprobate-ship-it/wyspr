@@ -111,6 +111,9 @@ class MoneroWalletService @Inject constructor(
     private val _walletState = MutableStateFlow<WalletState>(WalletState.Idle)
     val walletState: StateFlow<WalletState> = _walletState.asStateFlow()
 
+    private val _xmrUsdRate = MutableStateFlow<Double?>(null)
+    val xmrUsdRate: StateFlow<Double?> = _xmrUsdRate.asStateFlow()
+
     /**
      * Current fee market snapshot from the Monero daemon. Updated
      * whenever mollyim's [MoneroWallet.dynamicFeeRate] flow emits.
@@ -177,6 +180,7 @@ class MoneroWalletService @Inject constructor(
             claimForegroundIfNeeded()
             startLedgerCollector(w)
             startFeeRateCollector(w)
+            startPriceCollector()
         } catch (t: Throwable) {
             Log.w(TAG, "bootstrap failed: ${t::class.simpleName}: ${t.message}", t)
             _walletState.value = WalletState.Failed(t.message ?: "bootstrap failed")
@@ -242,6 +246,7 @@ class MoneroWalletService @Inject constructor(
             claimForegroundIfNeeded()
             startLedgerCollector(w)
             startFeeRateCollector(w)
+            startPriceCollector()
             RestoreResult.Ok
         } catch (t: Throwable) {
             Log.w(TAG, "restoreFromSeed failed: ${t::class.simpleName}: ${t.message}", t)
@@ -268,6 +273,41 @@ class MoneroWalletService @Inject constructor(
             acc[key] = (acc[key] ?: 0L) + enote.amount.atomicUnits
         }
         return acc
+    }
+
+    private fun startPriceCollector() {
+        scope.launch {
+            while (true) {
+                try {
+                    val request = okhttp3.Request.Builder()
+                        .url(COINGECKO_PRICE_URL)
+                        .header("Accept", "application/json")
+                        .build()
+                    val response = httpClient.newCall(request).execute()
+                    response.use { resp ->
+                        if (resp.isSuccessful) {
+                            val body = resp.body?.string() ?: return@use
+                            val price = parsePriceJson(body)
+                            if (price != null && price > 0.0) {
+                                _xmrUsdRate.value = price
+                            }
+                        }
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "price fetch failed: ${t::class.simpleName}: ${t.message}")
+                }
+                kotlinx.coroutines.delay(PRICE_POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun parsePriceJson(json: String): Double? {
+        return try {
+            val obj = org.json.JSONObject(json)
+            obj.getJSONObject("monero").getDouble("usd")
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun startFeeRateCollector(w: MoneroWallet) {
@@ -690,6 +730,9 @@ class MoneroWalletService @Inject constructor(
 
     private companion object {
         const val TAG = "MoneroWalletService"
+        const val COINGECKO_PRICE_URL =
+            "https://api.coingecko.com/api/v3/simple/price?ids=monero&vs_currencies=usd"
+        const val PRICE_POLL_INTERVAL_MS = 10L * 60 * 1000
     }
 }
 
@@ -698,3 +741,10 @@ fun Long.atomicUnitsAsXmr(): String =
     java.math.BigDecimal(this)
         .divide(java.math.BigDecimal(1_000_000_000_000L))
         .toPlainString()
+
+fun Long.atomicUnitsAsUsd(rate: Double): String {
+    val xmr = java.math.BigDecimal(this)
+        .divide(java.math.BigDecimal(1_000_000_000_000L))
+    val usd = xmr.multiply(java.math.BigDecimal(rate))
+    return "$%.2f".format(usd.toDouble())
+}
