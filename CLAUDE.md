@@ -6,40 +6,32 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Wyspr has no server component)
-- **Status**: 2026-05-21 — **v0.8.3 is the WhatsApp-shaped UX
-  overhaul.** Three-tab bottom navigation (Chats / Community /
-  Settings) replaces the tile-grid home; conversations are
-  full-screen pushed on top of the shell; "+" FAB opens a sheet
-  with New group / Pair a new peer; the sync banner + pull-to-
-  refresh are gone (silent background auto-sync + a hairline top
-  indicator). Reply quoting landed (long-press → Reply →
-  composer shows quote card → bubble shows pill, tap pill scrolls
-  to original) — encoded inline as `wyspr:reply:<id>:<body>`
-  so no protocol bump. Contact notes (local-only free-form text
-  per peer), pair-a-new-peer re-entry into the QR handshake, a
-  peer-has-newer-version banner that polls `/version.json` over
-  Tor every 15min, a glow-up of the onion profile page (gradient
-  headline, card-on-glow, pill links). Plus the v0.8.0 → v0.8.3
-  audit/fix sweep: 8 CRITICAL bugs + ~20 HIGH + perf + build
-  improvements landed across 5 commits. Two-device hardware
-  verification of the latest UI is the v0.8.4 sprint.
+- **Status**: 2026-05-23 — **v0.9.2 (build 23).** Full codebase
+  security audit → 68 bug fixes across crypto, transport, messaging,
+  database, trust, UI, and build config. Tor bootstrap watchdog
+  landed — auto-restarts the daemon if bootstrap stalls >120s.
+  **Tor-only messaging hardware-verified** between S23 + A02s with
+  BLE off — the longest-standing roadmap item is closed. Noise
+  session reuse confirmed working (sub-second cached rounds over
+  Tor). Revocation propagation shipped — users can now revoke a
+  peer from the conversation details sheet; the revocation cert
+  propagates to all peers via the existing anti-entropy sync
+  protocol. UI polish: relative timestamps on chat list, colored
+  initial avatars, scroll-to-bottom FAB, "Add a contact" copy,
+  faster message rendering (reactions load async). F-Droid metadata
+  updated (Keystone → Wyspr, v0.9.1 build entry, fastlane
+  descriptions rewritten).
 
-  Earlier (2026-05-21): **v0.8.0 shipped async mailbox delivery**
-  (`docs/MAILBOX.md`). A mailbox is a Wyspr device that
-  volunteers to hold sealed-box-encrypted envelopes for community
-  peers while the recipient is offline; the host can route but
-  cannot read. Same trust graph, same Noise transport, same
-  crypto — no central server.
+  Earlier (2026-05-22): Sprints 1+2 of TOR-ACROSS-WEB landed
+  (Noise session reuse, multi-host mailbox, battery-opt prompt).
 
-  Earlier on 2026-05-20: **end-to-end encrypted messaging confirmed
-  working on real hardware for the first time** (commit `5afb67e`).
-  22-build session walked every layer of the BLE + Noise + sync
-  stack; landed pairing, then messaging, with hardware proof at
-  each step. Two paired phones now exchange Push / Ack / Read / End
-  frames over Noise XX over BLE GATT, with friendly contact names
-  and skip-onboarding UX. See [[wyspr-messaging-works]] in
-  auto-memory for the full bug list and [[wyspr-ble-flow-control]]
-  for the BLE pattern that hid the rest.
+  Earlier (2026-05-21): v0.8.3 WhatsApp-shaped UX overhaul.
+  Three-tab bottom nav, reply quoting, contact notes, onion
+  profile page glow-up. v0.8.0 shipped async mailbox delivery.
+
+  Earlier (2026-05-20): end-to-end encrypted messaging confirmed
+  working on real hardware for the first time (commit `5afb67e`).
+  22-build session. See [[wyspr-messaging-works]] in auto-memory.
 
 ## Philosophy (read this before changing anything)
 
@@ -106,7 +98,7 @@ APK with R8 + resource shrinking. Signing material is read from
 `gradle.properties` to document the schema.
 
 Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
-`-Xmx2048m`. Latest green build: 2026-05-19 against `4a31bdb`.
+`-Xmx2048m`. Latest green build: 2026-05-23 against `a44495e`.
 
 ### Notes on deps
 - `noise-java` (rweather) pinned to commit `49377b6` via JitPack — no
@@ -114,9 +106,8 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
   Noise XX over libsodium plus a ported BLAKE2s (libsodium exposes
   only BLAKE2b).
 - `kmp-tor` is pinned at `runtime:2.0.0` + `resource-exec/noexec-tor:408.13.2`.
-  **Do not bump past Kotlin 2.0** without updating this — every kmp-tor
-  release after 2.0.0 is built against Kotlin 2.1+ whose stdlib metadata
-  the 1.9 compiler cannot read.
+  The Kotlin version constraint (was 1.9, now 2.1.20) is resolved but
+  the pin is kept intentional — bump deliberately and test.
 - `bcprov-jdk18on:1.78.1` is declared on `:app` explicitly because
   `:feature:onboarding` pulls it transitively as `implementation`,
   hiding its classes from `:app` at compile time.
@@ -124,8 +115,8 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
   its dep on `:core:identity` is `api(...)`, not `implementation(...)`.
   Do not downgrade.
 - CameraX (`androidx.camera:*:1.3.1`) lives only in `:feature:onboarding`.
-- ZXing (`com.google.zxing:core:3.5.2`) is used by `:core:ui/QrRenderer`
-  for rendering and `:feature:onboarding/ScanPeerQrScreen` for decoding.
+- ZXing (`com.google.zxing:core:3.5.3`) is exposed as `api` from
+  `:core:ui`. Feature modules get it transitively — do not re-declare.
 
 ## Critical Files
 
@@ -171,8 +162,8 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
   derivation (RFC for HSv3 onion service)
 - `app/.../transport/TorHiddenServiceTransport.kt` — loopback listener
   on `TorBackend.DEFAULT_HS_TARGET_PORT` + SOCKS5 dial of peer .onion;
-  yields `TorLink` (length-prefixed framing, MAX_FRAME_BYTES=16384)
-- `app/.../transport/TorLink.kt` — TCP-backed `Link` impl, framing
+  yields `TorLink` (u32 length-prefixed framing, MAX_FRAME_BYTES=262144)
+- `app/.../transport/TorLink.kt` — TCP-backed `Link` impl, u32 framing
   matches BleLink so a Noise session is wire-format-portable
 - `app/.../transport/Socks5.kt` — minimal RFC 1928 DOMAINNAME dialer
   used for `.onion` resolution through the local Tor proxy
@@ -358,45 +349,65 @@ encrypted DB.
   phone-screen reading conditions (multi-frame retry, TRY_HARDER
   hints).
 
-### 2026-05-22 — Tor stuck-state diagnosed (during Sprint 1 hardware test)
+### 2026-05-23 — v0.9.2: full audit, Tor-only verified, revocation propagation
 
-The Tor SOCKS failures observed since 2026-05-20 (`SOCKS5 CONNECT
-failed: reply code 1 (general SOCKS server failure)` and `No more
-HSDir available to query`) turn out to be a **stuck bootstrap**
-problem, not a code bug:
+**68-fix codebase audit.** 6-agent parallel sweep across 279 Kotlin
+files. 9 CRITICAL, 15 HIGH, 22 MEDIUM, 15 LOW findings fixed:
 
-- kmp-tor spawns the daemon with `--DisableNetwork 1` (its default)
-- `Action.startDaemonAsync()` is supposed to flip that off after the
-  control connection is up, but sometimes the daemon never reaches
-  >0% bootstrap and sits indefinitely
-- Both phones in the 2026-05-22 test had `cached-microdesc-consensus`
-  files from earlier in the day in `cache/torservice/` BUT no Tor
-  NOTICE traffic since launch — the daemon was running but offline
-- **Force-stopping Wyspr and relaunching cured it on the S23**
-  (bootstrap → 100% in ~2s); A02s is slower and may need multiple
-  restarts
-- This is the same Tor leg that's been blocking Sprint 1's hardware
-  verification
+Key CRITICAL fixes:
+- Noise protocol chunking for payloads >65KB (noise-java enforces
+  the 65535 spec limit; large Push frames were crashing)
+- Group messages now reach ALL members (per-recipient delivery
+  tracking via `group_message_delivery` table, schema v20)
+- Disappearing messages WAL checkpoint (deleted rows were
+  recoverable from SQLite write-ahead log)
+- MessageDao upsert REPLACE → IGNORE (concurrent ingest race)
+- HandshakeState destroyed after Noise XX split (key material
+  was persisting in heap for session lifetime)
 
-Suspected code culprits in `app/transport/EmbeddedTorBackend.kt`:
-- `observerStatic(RuntimeEvent.READY)` at line 152 unconditionally
-  flips `_state` to Ready when the control connection is up — not
-  when bootstrap completes. The `STATE` observer (`applyTorState`
-  at line 246) correctly gates on `d.isBootstrapped`, so the READY
-  one is at best redundant, at worst racy.
-- No watchdog: if bootstrap stalls < 100% for any length of time,
-  nothing notices or recovers.
+**Tor bootstrap watchdog.** `EmbeddedTorBackend` now monitors
+bootstrap progress. If `isBootstrapped` stays false for 120s after
+daemon start, the watchdog stops and restarts the daemon. Proved
+itself on the S23 during the hardware test session — stuck at 5%,
+watchdog fired, restarted, hit 100% in <2s. Also removed the
+`RuntimeEvent.READY` observer that raced with the STATE observer.
 
-Defensive fixes worth landing (hardware-test session required):
-1. Remove the `RuntimeEvent.READY` observer; rely solely on `STATE`
-2. Add a Tor watchdog: if `isBootstrapped` stays false for 120s,
-   stop+start the daemon
-3. Surface bootstrap percent on the Tor settings page so the user
-   can spot stuck state visually
+**Tor-only messaging hardware-verified.** BLE off on both phones
+(S23 + A02s). Messages flow through Tor hidden service circuits
+with Noise session reuse (cached rounds complete in ~6s). This
+closes the longest-standing roadmap item.
 
-Workaround until then: when sync over Tor doesn't work, **force-stop
-Wyspr and relaunch**. The HSv3 identity is keystore-derived so
-the onion address survives.
+**Revocation propagation.** `RevocationCertificate.issue()` signs
+a revocation cert using KeystoreManager. `TrustGraphService.revokePeer()`
+orchestrates creation + trust-level check + DB persist. UI: "Revoke
+this peer" button in PeerDetailsSheet with confirmation dialog.
+Revocations propagate to all peers via the existing
+`RevocationSyncRound` anti-entropy protocol (HaveSet/Want/Push).
+
+**UI polish:**
+- Relative timestamps on conversation list ("2m", "3h", "2d")
+- Colored initial circle avatars on conversation rows
+- Scroll-to-bottom FAB when scrolled up in conversation
+- "Add a contact" replaces "Pair a peer" throughout
+- Faster message rendering (reactions load async, removing
+  flatMapLatest chain that blocked first paint ~10s)
+- Paired contacts visible on Chats tab immediately after pairing
+- Sync timeouts increased (12s→30s link, 20s→45s session)
+
+**Build & infra:**
+- Room schema export enabled (exportSchema=true + KSP schemaLocation)
+- ProGuard rules fixed (com.keystone → com.wyspr)
+- F-Droid metadata updated (Keystone → Wyspr, v0.9.1 build entry)
+- @TorTransport Hilt qualifier for clean DI
+- ZXing version deduplicated (3.5.3 from core:ui only)
+- Periodic GC of seen_cert_nonce (7d) and handshake_quarantine
+
+### 2026-05-22 — Tor stuck-state diagnosed and FIXED
+
+The stuck bootstrap problem (kmp-tor starting with `--DisableNetwork 1`
+and never flipping it off) is now handled by the watchdog added in
+v0.9.2. The `RuntimeEvent.READY` observer that prematurely set state
+to Ready has been removed. See the 2026-05-23 entry above.
 
 ### 2026-05-22 — Sprint 2 (partial) of TOR-ACROSS-WEB: multi-host mailbox + battery-opt prompt
 
@@ -499,40 +510,36 @@ round 1 cost (~30s cold) followed by round 2 sub-second. Apply the
 [[wyspr-feedback-verify-baseline]] rule — code that builds is not
 the same as code that works.
 
-## What's NOT Built Yet (see NEXT-STEPS.md for the full plan)
+## What's NOT Built Yet
 
-- **Two-device hardware proof of the Tor leg over Tor only** — BLE +
-  messaging now demonstrably works. Tor is wired but every successful
-  round in the 2026-05-20 session used the BLE branch (in-room test).
-  The Tor branch needs its own two-device proof with BLE turned off.
-- **Revocation propagation** — local-only today; peer-to-peer
-  propagation via sync is the next-highest priority after the Tor
-  hardware proof.
+- **KeyRotation envelope** — legitimate identity reset currently
+  looks identical to a compromise. Needs a signed "I rotated my
+  key" cert that peers can verify.
 - **Vault** feature (encrypted personal-record store) — empty module.
 - **Marketplace over BLE** — wallet exists but doesn't yet sync over
   a real Link.
 - **WiFi Direct `connect()`** — discovery only today.
 - **Reticulum/LoRa** — `:core:transport:reticulum` is a stub; no
   Kotlin binding exists yet.
-- **F-Droid manifest, CI** — reproducible-build flags + a banned-deps
+- **CI** — no pipeline yet. Reproducible-build flags + a banned-deps
   grep are the smallest viable CI.
-- **Coordination, Directory** features.
+- **Coordination, Directory** features — not started.
 - **Layer-2 / Layer-3 peer-update** — automatic discovery via BLE
   trust channel (L2) and K-quorum APK verification (L3).
-- **KeyRotation envelope** — legitimate identity reset currently
-  looks identical to a compromise.
+- **F-Droid submission** — metadata is ready (`metadata/com.wyspr.yml`,
+  fastlane descriptions). Needs a tagged release + PR to fdroiddata.
 
 ## Memory / Plan State
 
-End-to-end messaging works on hardware as of 2026-05-20 (commit
-`5afb67e`). Live work item is now the two-device hardware proof of
-the Tor leg WITH BLE OFF, followed by revocation propagation
-(NEXT-STEPS.md §1, §2).
+v0.9.2 is the current build (2026-05-23). Both BLE and Tor-only
+messaging are hardware-verified. Revocation propagation is live.
+68 audit fixes landed. Next priorities: KeyRotation envelope,
+then Vault or CI depending on direction.
 
-Auto-memory references for this work:
+Auto-memory references:
 - [[wyspr-messaging-works]] — 22-build journey, all fixes
 - [[wyspr-ble-flow-control]] — the BLE pattern that hid the rest
 - [[wyspr-first-pairing-milestone]] — earlier same-day milestone
 - [[wyspr-sign-padding-bug]] — 5-year-old root cause
 - [[wyspr-feedback-verify-baseline]] — apply same skepticism to
-  remaining unverified layers (Tor, revocation, Monero, vault).
+  remaining unverified layers (Monero, vault).

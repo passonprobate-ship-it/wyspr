@@ -196,13 +196,12 @@ four checks in order:
 1. **CBOR decode.** Malformed input rejected silently.
 2. **Signature verify.** Ed25519 `verify(signedBytes, signature,
    issuer_pub)` must succeed. Forgeries dropped.
-3. **Issuer trust check.** If `trustGraph.trustLevel(issuer) ∈
-   {Unknown, Quarantined}`, drop silently. This is the security-
-   critical gate: an attacker who learns *any* TrustEdge cannot
-   impersonate its revoker because their pub key is not in any
-   honest peer's trust graph. A previously-trusted member who is
-   themselves later revoked cannot retroactively revoke others
-   because their own subsequent revocations will be rejected.
+3. **Issuer trust check.** The issuer must be `Full` or `Root`.
+   `Provisional`, `Unknown`, and `Quarantined` issuers are rejected.
+   Additionally, a `Root` target can only be revoked by another
+   `Root` — `Full` members cannot revoke Roots. This hierarchy
+   prevents a single Provisional edge (manufactured by one
+   colluding node) from quarantining the community founder.
 4. **Persist + graph update.** The cert is upserted into the
    `revocation` table and `TrustGraph.ingestRevocation` updates
    the in-memory state, so the next cert in the same batch sees
