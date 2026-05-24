@@ -26,4 +26,15 @@ interface PeerSubAddressMintDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: PeerSubAddressMintEntity)
+
+    @Query(
+        "SELECT * FROM peer_subaddress_mint " +
+            "WHERE account_index = :accountIndex AND sub_address_index = :subAddressIndex " +
+            "AND chain = :chain LIMIT 1",
+    )
+    suspend fun forSubAddress(
+        accountIndex: Int,
+        subAddressIndex: Int,
+        chain: String = "monero",
+    ): PeerSubAddressMintEntity?
 }

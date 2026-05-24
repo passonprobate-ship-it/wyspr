@@ -2,8 +2,10 @@ package com.wyspr.feature.monero
 
 import android.content.Context
 import android.util.Log
+import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.identity.PublicKey
 import com.wyspr.core.transport.ForegroundClaim
+import com.wyspr.core.transport.PaymentNotifier
 import com.wyspr.feature.monero.persistence.EncryptedWalletDataStore
 import com.wyspr.feature.monero.persistence.SeedStorage
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -76,6 +78,8 @@ class MoneroWalletService @Inject constructor(
     private val httpClient: OkHttpClient,
     private val paymentAddressService: PaymentAddressService,
     private val foregroundClaim: ForegroundClaim,
+    private val paymentNotifier: PaymentNotifier,
+    private val database: WysprDatabase,
 ) {
 
     /**
@@ -87,6 +91,8 @@ class MoneroWalletService @Inject constructor(
      * collection).
      */
     @Volatile private var foregroundHeld: Boolean = false
+    private val seenTxHashes = HashSet<String>()
+    @Volatile private var ledgerInitialized = false
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val mutex = Mutex()
@@ -458,6 +464,7 @@ class MoneroWalletService @Inject constructor(
                 )
                 w.ledger().collectLatest { ledger ->
                     val balance = ledger.getBalance()
+                    val history = buildHistory(ledger.transactions)
                     _walletState.value = WalletState.Ready(
                         primaryAddress = primaryAddress,
                         balanceAtomicUnits = balance.totalAmount.atomicUnits,
@@ -465,15 +472,59 @@ class MoneroWalletService @Inject constructor(
                         pendingAtomicUnits = balance.pendingAmount.atomicUnits,
                         txCount = ledger.transactions.size,
                         lastCheckedHeight = ledger.checkedAt.height,
-                        transactions = buildHistory(ledger.transactions),
+                        transactions = history,
                         receivedBySub = buildReceivedBySub(ledger),
                     )
+                    notifyNewInboundTxs(history)
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "ledger collector ended: ${t::class.simpleName}: ${t.message}")
                 _walletState.value = WalletState.Failed(t.message ?: "ledger collector failed")
                 releaseForegroundIfHeld()
             }
+        }
+    }
+
+    private suspend fun notifyNewInboundTxs(history: List<TxHistoryEntry>) {
+        if (!ledgerInitialized) {
+            for (tx in history) seenTxHashes.add(tx.txHash)
+            ledgerInitialized = true
+            return
+        }
+        for (tx in history) {
+            if (!tx.isInbound) continue
+            if (!seenTxHashes.add(tx.txHash)) continue
+            val peerInfo = resolvePayerPeer(tx)
+            paymentNotifier.notifyInboundPayment(
+                peerPub = peerInfo?.first,
+                peerName = peerInfo?.second,
+                amountAtomicUnits = tx.amountAtomicUnits,
+                txHash = tx.txHash,
+            )
+        }
+    }
+
+    private suspend fun resolvePayerPeer(
+        tx: TxHistoryEntry,
+    ): Pair<ByteArray, String?>? {
+        val state = _walletState.value as? WalletState.Ready ?: return null
+        val receivedBySub = state.receivedBySub
+        if (receivedBySub.isEmpty()) return null
+        return try {
+            if (!database.isOpen) database.open()
+            val mintDao = database.peerSubAddressMintDao
+            for ((subKey, _) in receivedBySub) {
+                if (subKey.accountIndex == 0 && subKey.subAddressIndex == 0) continue
+                val mint = mintDao.forSubAddress(subKey.accountIndex, subKey.subAddressIndex)
+                    ?: continue
+                val contact = database.contactDao.byPub(mint.peerPub)
+                val name = contact?.displayName?.takeIf { it.isNotBlank() }
+                return mint.peerPub to name
+            }
+            null
+        } catch (t: Throwable) {
+            Log.w(TAG, "resolvePayerPeer failed: ${t::class.simpleName}")
+            null
         }
     }
 

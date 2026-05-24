@@ -1,0 +1,107 @@
+package com.wyspr.app.transport
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import com.wyspr.app.MainActivity
+import com.wyspr.app.R
+import com.wyspr.core.transport.PaymentNotifier
+import dagger.hilt.android.qualifiers.ApplicationContext
+import javax.inject.Inject
+import javax.inject.Singleton
+
+@Singleton
+class AndroidPaymentNotifier @Inject constructor(
+    @ApplicationContext private val context: Context,
+) : PaymentNotifier {
+
+    private val nm = NotificationManagerCompat.from(context)
+    private val systemNm = context.getSystemService(NotificationManager::class.java)
+
+    @Volatile private var walletScreenActive: Boolean = false
+
+    init { ensureChannel() }
+
+    override fun setActiveWalletScreen(active: Boolean) {
+        walletScreenActive = active
+        if (active) nm.cancel(NOTIFICATION_ID)
+    }
+
+    override fun notifyInboundPayment(
+        peerPub: ByteArray?,
+        peerName: String?,
+        amountAtomicUnits: Long,
+        txHash: String,
+    ) {
+        if (!nm.areNotificationsEnabled()) return
+        if (walletScreenActive) return
+
+        val xmr = formatXmr(amountAtomicUnits)
+        val title = "Received $xmr XMR"
+        val body = when {
+            peerName != null -> "From $peerName"
+            peerPub != null -> "From ${shortFingerprint(peerPub)}"
+            else -> "New incoming payment"
+        }
+
+        val openIntent = PendingIntent.getActivity(
+            context,
+            NOTIFICATION_ID,
+            Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                action = ACTION_OPEN_WALLET
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_monochrome)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(openIntent)
+            .build()
+
+        runCatching { nm.notify(NOTIFICATION_ID, notification) }
+    }
+
+    private fun ensureChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val mgr = systemNm ?: return
+        if (mgr.getNotificationChannel(CHANNEL_ID) != null) return
+        mgr.createNotificationChannel(
+            NotificationChannel(
+                CHANNEL_ID,
+                "Payments",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply {
+                description = "Shown when you receive a Monero payment."
+                setShowBadge(true)
+            },
+        )
+    }
+
+    private fun formatXmr(atomicUnits: Long): String =
+        java.math.BigDecimal(atomicUnits)
+            .divide(java.math.BigDecimal(1_000_000_000_000L))
+            .stripTrailingZeros()
+            .toPlainString()
+
+    private fun shortFingerprint(pub: ByteArray): String {
+        val hex = pub.joinToString("") { "%02x".format(it) }
+        return hex.take(8) + "…"
+    }
+
+    companion object {
+        private const val CHANNEL_ID = "payments"
+        private const val NOTIFICATION_ID = 0x50415900
+        const val ACTION_OPEN_WALLET = "com.wyspr.app.OPEN_WALLET"
+    }
+}
