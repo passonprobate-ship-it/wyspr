@@ -212,12 +212,8 @@ fun ConversationScreen(
                         val listState = rememberLazyListState()
                         LaunchedEffect(s.messages.size) {
                             if (s.messages.isNotEmpty()) {
-                                val nearBottom = listState.firstVisibleItemIndex >= s.messages.size - 5 ||
-                                    listState.layoutInfo.totalItemsCount == 0
-                                if (nearBottom) {
-                                    kotlinx.coroutines.delay(50)
-                                    listState.animateScrollToItem(s.messages.lastIndex)
-                                }
+                                kotlinx.coroutines.delay(50)
+                                listState.animateScrollToItem(s.messages.lastIndex)
                             }
                         }
                         if (s.messages.isEmpty()) {
