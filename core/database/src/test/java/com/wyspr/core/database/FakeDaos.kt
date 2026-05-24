@@ -294,7 +294,7 @@ class FakeMessageDao : MessageDao {
 
     override fun totalUnreadFlow(): Flow<Int> =
         changeCounter.map {
-            store.values.count { it.status != "read" }
+            store.values.count { it.status == "received" }
         }
 
     override suspend fun pendingOutboundFromTo(
@@ -364,6 +364,48 @@ class FakeMessageDao : MessageDao {
             .filter { it.key in keys && it.value.status == status }
             .map { it.value.id }
     }
+
+    override suspend fun search(query: String, limit: Int): List<MessageEntity> =
+        store.values
+            .filter { it.body.contains(query, ignoreCase = true) }
+            .sortedByDescending { it.createdAt }
+            .take(limit)
+
+    override suspend fun deleteExpired(nowSeconds: Long): Int {
+        val expired = store.entries.filter { (_, v) ->
+            v.expiresAt != null && v.expiresAt <= nowSeconds
+        }.map { it.key }
+        expired.forEach { store.remove(it) }
+        if (expired.isNotEmpty()) changeCounter.value++
+        return expired.size
+    }
+
+    override suspend fun setExpiresAt(id: ByteArray, expiresAt: Long?) {
+        val key = IdKey(id)
+        store.computeIfPresent(key) { _, v -> v.copy(expiresAt = expiresAt) }
+        changeCounter.value++
+    }
+
+    override suspend fun latestInThread(peerPub: ByteArray): MessageEntity? =
+        store.values
+            .filter { it.threadPub.contentEquals(peerPub) }
+            .maxByOrNull { it.createdAt }
+
+    override suspend fun unreadInboundCount(peerPub: ByteArray): Int =
+        store.values.count {
+            it.threadPub.contentEquals(peerPub) &&
+                it.fromPub.contentEquals(peerPub) &&
+                it.status == "received"
+        }
+
+    override suspend fun unreadIdsFor(peerPub: ByteArray): List<ByteArray> =
+        store.values
+            .filter {
+                it.threadPub.contentEquals(peerPub) &&
+                    it.fromPub.contentEquals(peerPub) &&
+                    it.status == "received"
+            }
+            .map { it.id }
 
     fun clear() { store.clear(); changeCounter.value = 0 }
 

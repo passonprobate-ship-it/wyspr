@@ -181,10 +181,10 @@ internal class MessageSyncEngine(
         // stores it (if running as a mailbox) or silently drops it
         // (the unacked envelope means we keep retrying next round).
         //
-        // We treat status=pending AND status=sent rows as candidates —
-        // sent rows haven't been acked by the recipient yet, so the
-        // mailbox is still useful insurance. Status=delivered/read
-        // rows are skipped (already confirmed received).
+        // Only status=pending rows are candidates (sourced from
+        // store.pendingOutboundFor). Status=sent/delivered/read rows
+        // are excluded — they've already been pushed to at least one
+        // peer directly.
         val mailboxEnvelopes = sealForMailboxPeer(pending)
 
         // Sprint W3/W4: advertise our payment addresses to this peer.
@@ -381,6 +381,11 @@ internal class MessageSyncEngine(
         // mailbox. handlePush returns NotHosting silently if the
         // toggle is off; the envelope id is not acked, so the sender
         // keeps retrying with other paths.
+        // Track mailbox-stored IDs separately so the returned count
+        // only reflects real messages (1:1 + group). Mailbox-stored
+        // envelopes are acked on the wire but should not inflate
+        // receivedCount — they don't trigger notifications.
+        val mailboxAccepted = ArrayList<ByteArray>()
         for (mxEnv in push.mailboxEnvelopes) {
             val outcome = mailboxHost.handlePush(
                 envelope = mxEnv,
@@ -388,10 +393,10 @@ internal class MessageSyncEngine(
                 now = received,
             )
             if (outcome is MailboxHost.PushOutcome.Stored) {
-                accepted.add(outcome.envelopeId)
+                mailboxAccepted.add(outcome.envelopeId)
             }
         }
-        sendFrame(MessageSyncFrame.Ack(accepted))
+        sendFrame(MessageSyncFrame.Ack(accepted + mailboxAccepted))
         return accepted.size
     }
 
@@ -400,6 +405,7 @@ internal class MessageSyncEngine(
         // the link early is acceptable — the sync is already done
         // from our side.
         runCatching { receiveFrame() }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
 
     /**

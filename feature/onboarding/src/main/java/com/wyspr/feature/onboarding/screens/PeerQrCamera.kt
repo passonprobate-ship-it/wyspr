@@ -16,6 +16,7 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -105,10 +106,9 @@ fun PeerQrCamera(
                     color = Color.White,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier
-                        .padding(16.dp),
+                        .padding(16.dp)
+                        .clickable { launcher.launch(Manifest.permission.CAMERA) },
                 )
-                // Launch on tap by re-firing the permission request.
-                LaunchedEffect(Unit) { /* no-op; launcher fires above */ }
             }
             done -> {
                 Text(

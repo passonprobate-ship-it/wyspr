@@ -115,6 +115,16 @@ class WysprDatabaseImpl(
             // rotated externally), this throws here, not silently later.
             val db = built.openHelper.writableDatabase
             db.execSQL("PRAGMA cipher_memory_security = ON")
+
+            // Periodic garbage collection of replay-protection and
+            // quarantine tables. Running at open() is sufficient — the
+            // app restarts at least once a day on real devices, and
+            // both tables are small enough that a stale-row scan is
+            // negligible.
+            val nowSeconds = System.currentTimeMillis() / 1000
+            runCatching { built.seenCertNonceDao().sweepBefore(nowSeconds - 7 * 86400) }
+            runCatching { built.handshakeQuarantineDao().sweepExpired(nowSeconds) }
+            Unit
         }
     }
 

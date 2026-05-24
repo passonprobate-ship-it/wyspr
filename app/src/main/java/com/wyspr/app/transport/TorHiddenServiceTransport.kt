@@ -180,6 +180,11 @@ class TorHiddenServiceTransport(
             val r = current.accepted.tryReceive()
             val link = r.getOrNull() ?: break
             drained++
+            // Remove from the tracking map so the ConcurrentHashMap
+            // doesn't grow unbounded with stale entries.
+            if (link is TorLink) {
+                current.acceptedLinks.values.remove(link)
+            }
             current.scope.launch { runCatching { link.close() } }
         }
         if (drained > 0) Log.d(TAG, "drainAccepted: closed $drained stale link(s)")

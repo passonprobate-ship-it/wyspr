@@ -199,6 +199,7 @@ fun ConversationListScreen(
             } else when (val s = state) {
                 ConversationListViewModel.UiState.Loading -> LoadingPanel()
                 ConversationListViewModel.UiState.NoPeers -> EmptyPanel(onOpenFindPeers)
+                ConversationListViewModel.UiState.Empty -> EmptyPanel(onOpenFindPeers)
                 is ConversationListViewModel.UiState.Ready -> {
                     LazyColumn(
                         modifier = Modifier

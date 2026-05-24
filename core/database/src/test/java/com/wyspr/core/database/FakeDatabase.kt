@@ -2,6 +2,8 @@ package com.wyspr.core.database
 
 import com.wyspr.core.database.dao.AccountDao
 import com.wyspr.core.database.dao.AddressBookDao
+import com.wyspr.core.database.dao.GroupMessageDeliveryDao
+import com.wyspr.core.database.dao.ReactionDao
 import com.wyspr.core.database.dao.CommunityMembershipDao
 import com.wyspr.core.database.dao.ContactDao
 import com.wyspr.core.database.dao.CurrencyEnvelopeDao
@@ -84,6 +86,10 @@ class FakeDatabase : WysprDatabase {
         get() = TODO("PeerSubAddressMintDao not faked")
     override val addressBookDao: AddressBookDao
         get() = TODO("AddressBookDao not faked")
+    override val reactionDao: ReactionDao
+        get() = TODO("ReactionDao not faked")
+    override val groupMessageDeliveryDao: GroupMessageDeliveryDao
+        get() = TODO("GroupMessageDeliveryDao not faked")
 
     override suspend fun open() {
         open = true
@@ -98,6 +104,8 @@ class FakeDatabase : WysprDatabase {
         open = false
         clearState()
     }
+
+    override suspend fun walCheckpointTruncate() { }
 
     private fun clearState() {
         _trustEdgeDao.clear()

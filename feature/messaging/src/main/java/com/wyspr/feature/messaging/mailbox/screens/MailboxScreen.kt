@@ -48,7 +48,10 @@ import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.wyspr.core.ui.QrRenderer
 import com.wyspr.feature.messaging.mailbox.MailboxBinding
 import com.wyspr.feature.messaging.mailbox.MailboxClientViewModel
@@ -272,7 +275,13 @@ private fun BindingCard(
 @Composable
 private fun BatteryOptCard() {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var isExempt by remember { mutableStateOf(context.isIgnoringBatteryOptimizations()) }
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            isExempt = context.isIgnoringBatteryOptimizations()
+        }
+    }
     if (isExempt) return
     Card(
         modifier = Modifier.fillMaxWidth(),

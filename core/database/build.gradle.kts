@@ -15,6 +15,10 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(project(":core:crypto"))
     implementation(project(":core:identity"))
@@ -29,7 +33,7 @@ dependencies {
     implementation("androidx.sqlite:sqlite:2.4.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("androidx.core:core-ktx:1.12.0")
-    // compileOnly so we can annotate entities with @Immutable for
+    // compileOnly so we can annotate entities with @Stable for
     // Compose stability inference without pulling Compose into the
     // runtime classpath. The annotation is a marker only — no Compose
     // code runs against these entities outside of UI modules that

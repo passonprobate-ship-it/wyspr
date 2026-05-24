@@ -6,8 +6,10 @@ import com.wyspr.core.database.entities.RevocationEntity
 import com.wyspr.core.database.entities.TrustEdgeEntity
 import com.wyspr.core.identity.CommunityId
 import com.wyspr.core.identity.PublicKey
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * App-level orchestrator that hydrates a [TrustGraph] from the
@@ -52,17 +54,19 @@ class TrustGraphService(
      *   - device is non-founder and graph quorum is unmet
      */
     suspend fun canIssueInvitations(self: PublicKey): Boolean = lock.withLock {
-        val ownPub = runCatching {
-            PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
-        }.getOrNull() ?: return@withLock false
-        // Defence-in-depth: refuse unless the caller's claimed self
-        // matches the local identity. The handshake passes its own
-        // local pub here, so any divergence indicates a logic bug
-        // upstream.
-        if (!self.bytes.contentEquals(ownPub.bytes)) return@withLock false
+        withContext(Dispatchers.Default) {
+            val ownPub = runCatching {
+                PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
+            }.getOrNull() ?: return@withContext false
+            // Defence-in-depth: refuse unless the caller's claimed self
+            // matches the local identity. The handshake passes its own
+            // local pub here, so any divergence indicates a logic bug
+            // upstream.
+            if (!self.bytes.contentEquals(ownPub.bytes)) return@withContext false
 
-        val graph = buildGraph(ownPub) ?: return@withLock false
-        graph.canIssueInvitations(self)
+            val graph = buildGraph(ownPub) ?: return@withContext false
+            graph.canIssueInvitations(self)
+        }
     }
 
     /**
@@ -72,10 +76,12 @@ class TrustGraphService(
      * is no active community on this device.
      */
     suspend fun snapshot(): TrustGraph? = lock.withLock {
-        val ownPub = runCatching {
-            PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
-        }.getOrNull() ?: return@withLock null
-        buildGraph(ownPub)
+        withContext(Dispatchers.Default) {
+            val ownPub = runCatching {
+                PublicKey(keystore.loadOrCreateIdentityKey().publicKey)
+            }.getOrNull() ?: return@withContext null
+            buildGraph(ownPub)
+        }
     }
 
     private suspend fun buildGraph(ownPub: PublicKey): TrustGraph? {

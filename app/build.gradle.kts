@@ -185,13 +185,10 @@ dependencies {
     // must be present for the runtime to pick the right path on
     // each device.
     //
-    // Pinned to 2.0.0 + resource 408.13.2 because Wyspr runs on
-    // Kotlin 1.9.22 (tied to Compose Compiler 1.5.10). Every kmp-tor
-    // release after 2.0.x is built against Kotlin 2.1+ and pulls in
-    // a kotlin-stdlib whose binary metadata version (2.x) the 1.9
-    // compiler cannot read. 2.0.0 was built with 1.9.24, so its
-    // class metadata is binary-compatible with our compiler.
-    // Re-evaluate the moment Wyspr upgrades past Kotlin 2.0.
+    // Pinned to 2.0.0 + resource 408.13.2. Wyspr now runs on
+    // Kotlin 2.1.20, so the original Kotlin-version constraint is
+    // resolved. However, kmp-tor releases after 2.0.x may introduce
+    // breaking API changes — re-evaluate and bump intentionally.
     implementation("io.matthewnelson.kmp-tor:runtime:2.0.0")
     implementation("io.matthewnelson.kmp-tor:resource-exec-tor:408.13.2")
     implementation("io.matthewnelson.kmp-tor:resource-noexec-tor:408.13.2")

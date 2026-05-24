@@ -107,7 +107,7 @@ import com.wyspr.core.database.entities.UserProfileEntity
         GroupMessageDeliveryEntity::class,
     ],
     version = 20,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class WysprRoomDatabase : RoomDatabase() {
     abstract fun trustEdgeDao(): TrustEdgeDao

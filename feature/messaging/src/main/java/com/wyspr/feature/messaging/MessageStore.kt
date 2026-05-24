@@ -297,7 +297,12 @@ class MessageStore @Inject constructor(
 
     fun reactionsForMessages(msgIds: List<ByteArray>): Flow<List<ReactionEntity>> {
         ensureOpen()
-        return database.reactionDao.forMessagesFlow(msgIds)
+        // Room generates one SQL bind variable per id. SQLite's limit
+        // is 999 variables; cap the input to stay safely under that.
+        // In practice this is called per-screen with visible messages
+        // only (typically < 100).
+        val capped = if (msgIds.size > 900) msgIds.take(900) else msgIds
+        return database.reactionDao.forMessagesFlow(capped)
     }
 
     private fun ensureOpen() {

@@ -1,17 +1,14 @@
 package com.wyspr.core.database.entities
 
-import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.Stable
 import androidx.room.ColumnInfo
 import androidx.room.Entity
 
 @Entity(
     tableName = "message_reaction",
     primaryKeys = ["msg_id", "from_pub"],
-    indices = [
-        androidx.room.Index(value = ["msg_id"]),
-    ],
 )
-@Immutable
+@Stable
 data class ReactionEntity(
     @ColumnInfo("msg_id") val msgId: ByteArray,
     @ColumnInfo("from_pub") val fromPub: ByteArray,
