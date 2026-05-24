@@ -67,6 +67,8 @@ interface WysprDatabase {
      */
     suspend fun walCheckpointTruncate()
 
+    suspend fun rekey(newPassphrase: ByteArray)
+
     /** Available after open(). */
     val isOpen: Boolean
 

@@ -138,6 +138,29 @@ class WysprDatabaseImpl(
         }
     }
 
+    override suspend fun rekey(newPassphrase: ByteArray) = openLock.withLock {
+        withContext(Dispatchers.IO) {
+            room?.close()
+            room = null
+            passphrase?.fill(0)
+            passphrase = null
+
+            System.loadLibrary("sqlcipher")
+            val dbPath = appContext.getDatabasePath(DB_FILENAME).absolutePath
+            val oldKey = keystore.deriveSubkey(DB_KEY_INFO, length = 32)
+            try {
+                val db = net.zetetic.database.sqlcipher.SQLiteDatabase.openDatabase(
+                    dbPath, oldKey, null,
+                    net.zetetic.database.sqlcipher.SQLiteDatabase.OPEN_READWRITE, null,
+                )
+                db.changePassword(newPassphrase)
+                db.close()
+            } finally {
+                oldKey.fill(0)
+            }
+        }
+    }
+
     override suspend fun close() = openLock.withLock {
         withContext(Dispatchers.IO) {
             room?.close()

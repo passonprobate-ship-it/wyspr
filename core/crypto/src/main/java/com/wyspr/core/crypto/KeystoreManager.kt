@@ -254,6 +254,7 @@ class AndroidKeystoreManager(
         }
         cachedHandle = null
         cachedBacking = null
+        cachedWrappingKey = null
     }
 
     override fun plantSeed(seed: ByteArray) {
@@ -278,7 +279,9 @@ class AndroidKeystoreManager(
         check(backing != KeystoreManager.Backing.SOFTWARE_REJECTED) {
             "Wyspr requires hardware-backed key storage. Refusing to run."
         }
+        android.util.Log.d("KeystoreMgr", "loadOrCreateIdentityKey: ensureWrappingKey")
         ensureWrappingKey()
+        android.util.Log.d("KeystoreMgr", "loadOrCreateIdentityKey: loadOrCreateSeed")
         val seed = loadOrCreateSeed()
         try {
             val publicKey = ByteArray(Sign.PUBLICKEYBYTES)
@@ -377,7 +380,18 @@ class AndroidKeystoreManager(
 
     private fun ensureWrappingKey() {
         val ks = keystoreInstance()
-        if (ks.containsAlias(WRAPPING_ALIAS)) return
+        if (ks.containsAlias(WRAPPING_ALIAS)) {
+            try {
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.ENCRYPT_MODE, wrappingKey())
+            } catch (t: Throwable) {
+                android.util.Log.w("KeystoreMgr", "wrapping key unusable, recreating", t)
+                runCatching { ks.deleteEntry(WRAPPING_ALIAS) }
+                cachedWrappingKey = null
+                seedFile.delete()
+            }
+            if (ks.containsAlias(WRAPPING_ALIAS)) return
+        }
         // Try StrongBox first when the device advertises it. Some devices
         // expose the feature flag but still fail at generateKey time
         // (e.g. backend not provisioned on Pixel imports). Fall back to a
@@ -470,7 +484,13 @@ class AndroidKeystoreManager(
         ensureWrappingKey()
         val file = seedFile
         return if (file.exists()) {
-            unwrapSeed(file.readBytes())
+            try {
+                unwrapSeed(file.readBytes())
+            } catch (t: Throwable) {
+                android.util.Log.w("KeystoreMgr", "unwrapSeed failed, deleting stale seed and creating fresh", t)
+                file.delete()
+                return loadOrCreateSeed()
+            }
         } else {
             val fresh = ByteArray(SEED_BYTES).also { SecureRandom().nextBytes(it) }
             try {

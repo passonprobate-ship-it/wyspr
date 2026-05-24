@@ -169,16 +169,11 @@ fun GroupConversationScreen(
                     }
                     is GroupConversationViewModel.UiState.Ready -> {
                         val listState = rememberLazyListState()
-                        // Scroll to bottom whenever the message count grows.
-                        // delay(50) lets the LazyColumn measure its items
-                        // first — without it, the initial open of a thread
-                        // with pre-existing messages tries to scroll before
-                        // layout exists and lands at index 0 (so the user
-                        // sees the OLDEST messages instead of the newest).
+                        val reversed = remember(s.messages) { s.messages.asReversed() }
                         LaunchedEffect(s.messages.size) {
                             if (s.messages.isNotEmpty()) {
                                 kotlinx.coroutines.delay(50)
-                                listState.scrollToItem(s.messages.lastIndex)
+                                listState.animateScrollToItem(0)
                             }
                         }
                         if (s.messages.isEmpty()) {
@@ -192,13 +187,14 @@ fun GroupConversationScreen(
                             }
                             LazyColumn(
                                 state = listState,
+                                reverseLayout = true,
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(horizontal = 16.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                                 contentPadding = PaddingValues(vertical = 8.dp),
                             ) {
-                                items(s.messages, key = { it.id.toList() }) { msg ->
+                                items(reversed, key = { it.id.toList() }) { msg ->
                                     val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)
                                     val quoted = decoded?.replyToId?.let { id ->
                                         byId[com.wyspr.core.identity.PeerKey(id)]
@@ -215,7 +211,7 @@ fun GroupConversationScreen(
                                             quoted.fromPub.contentEquals(ownBytes),
                                         onReply = { viewModel.pickReply(msg) },
                                         onScrollToQuoted = { id ->
-                                            val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
+                                            val idx = reversed.indexOfFirst { it.id.contentEquals(id) }
                                             if (idx >= 0) {
                                                 scope.launch { listState.animateScrollToItem(idx) }
                                             }

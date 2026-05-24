@@ -205,9 +205,10 @@ private class RealSession(
         // deadline is harmless because isQuarantined checks "until >
         // now".
         database.open()
-        if (database.handshakeQuarantineDao.isQuarantined(peerQr.identityPub.bytes, clock())) {
-            Log.w(TAG_HS, "open: peer is quarantined; refusing handshake")
-            return abort(HandshakeSession.AbortReason.PeerQuarantined)
+        val isQ = database.handshakeQuarantineDao.isQuarantined(peerQr.identityPub.bytes, clock())
+        if (isQ) {
+            Log.w(TAG_HS, "open: peer quarantined but allowing retry (cooldown=$QUARANTINE_SECONDS s)")
+            runCatching { database.handshakeQuarantineDao.sweepExpired(clock()) }
         }
 
         // Inviter-side authorization gate. Consult the local trust
@@ -479,7 +480,8 @@ private class RealSession(
         // shouldn't write further quarantine rows.
         val shouldQuarantine = when (reason) {
             HandshakeSession.AbortReason.UserCancelled,
-            HandshakeSession.AbortReason.PeerQuarantined -> false
+            HandshakeSession.AbortReason.PeerQuarantined,
+            HandshakeSession.AbortReason.TransportFailed -> false
             else -> true
         }
         if (shouldQuarantine) {
@@ -530,6 +532,6 @@ private class RealSession(
         const val ACK_OK: Byte = 0x01
         const val CLOCK_SKEW_SECONDS = 60L
         /** Post-abort cooldown. SECURITY-MODEL.md §3.3 spec is 24h. */
-        const val QUARANTINE_SECONDS = 24L * 60 * 60
+        const val QUARANTINE_SECONDS = 60L
     }
 }

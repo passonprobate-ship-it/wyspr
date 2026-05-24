@@ -90,7 +90,13 @@ class KeyRotationService(
             val isFounder = membership.isFounder
             val communityIdBytes = membership.communityId.copyOf()
 
-            database.close()
+            val newDbKey = hkdfDeriveSubkey(newSeed, DB_KEY_INFO)
+            try {
+                database.rekey(newDbKey)
+            } finally {
+                newDbKey.fill(0)
+            }
+
             keystore.reset()
 
             keystore.plantSeed(newSeed)
@@ -167,5 +173,6 @@ class KeyRotationService(
         const val PENDING_ROTATION_FILE = "pending_rotation.cbor"
         val HKDF_SALT = "WYSPR/v1/HKDF-SALT".encodeToByteArray()
         val TOR_HS_INFO = "WYSPR/v1/tor-hs".encodeToByteArray()
+        val DB_KEY_INFO = "WYSPR/v1/db".encodeToByteArray()
     }
 }

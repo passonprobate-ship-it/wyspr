@@ -111,6 +111,7 @@ class MessageSyncService @Inject constructor(
      * their actual exit isn't on the round's critical path.
      */
     private val raceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var consecutiveFailures = 0
 
     // === Sprint 1: cached Noise sessions over Tor ==========================
     //
@@ -240,6 +241,7 @@ class MessageSyncService @Inject constructor(
                 val outcome = withTimeoutOrNull(timeoutMs) { firstAvailableLink(ownPub.bytes, preferInitiator) }
                     ?: run {
                         Log.w(TAG_SYNC, "runOnce: timed out waiting for a link")
+                        consecutiveFailures++
                         return Result(0, 0, 0, errorReason = "No peer in range")
                     }
                 val link = outcome.link
@@ -287,6 +289,7 @@ class MessageSyncService @Inject constructor(
                         }
                         SessionOutcome.TimedOut -> {
                             Log.w(TAG_SYNC, "runOnce: session timed out (${SESSION_TIMEOUT_MS}ms — peer didn't complete Noise XX)")
+                            consecutiveFailures++
                             return Result(
                                 attemptedPeers = 1,
                                 pushedMessages = 0,
@@ -363,6 +366,7 @@ class MessageSyncService @Inject constructor(
                             keepLinkAlive = true
                             noiseRetained = true
                         }
+                        consecutiveFailures = 0
                         return Result(
                             attemptedPeers = 1,
                             pushedMessages = sessionResult.engineResult.pushedCount,
@@ -419,12 +423,9 @@ class MessageSyncService @Inject constructor(
         // But that's actually a feature — a failed round just times
         // out cleanly and the auto-sync loop retries 8s later. No
         // silent role flip.
-        val outcome: LinkOutcome = if (preferInitiator) {
-            Log.d(TAG_SYNC, "firstAvailableLink: dial-only mode")
-            dialOnly(ownPubBytes)
-        } else {
-            Log.d(TAG_SYNC, "firstAvailableLink: accept-only mode")
-            acceptOnly()
+        val outcome: LinkOutcome = run {
+            Log.d(TAG_SYNC, "firstAvailableLink: racing dial+accept")
+            raceBoth(ownPubBytes)
         }
         Log.d(TAG_SYNC, "firstAvailableLink: returning (role=${outcome.role})")
         return outcome
@@ -485,6 +486,44 @@ class MessageSyncService @Inject constructor(
         val link = transports.acceptedLinks().first()
         Log.d(TAG_SYNC, "accept deferred: first() returned a link")
         return LinkOutcome(link, MessageSyncEngine.HandshakeRole.Responder)
+    }
+
+    private suspend fun raceBoth(ownPubBytes: ByteArray): LinkOutcome {
+        transports.drainStaleAccepted()
+        val bleConnectDeferred = raceScope.async {
+            delay(Random.nextLong(0, DIAL_JITTER_MS))
+            val link = transports.bleDiscoverAndConnect()
+            LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
+        }
+        val torDialDeferred = raceScope.async {
+            delay(Random.nextLong(0, DIAL_JITTER_MS))
+            val link = transports.dialFirstKnownOnion(ownPubBytes)
+                ?: awaitCancellation()
+            LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
+        }
+        val acceptDeferred = raceScope.async {
+            val link = transports.acceptedLinks().first()
+            LinkOutcome(link, MessageSyncEngine.HandshakeRole.Responder)
+        }
+        val deferreds = listOf(bleConnectDeferred, torDialDeferred, acceptDeferred)
+        try {
+            val outcome = kotlinx.coroutines.selects.select<LinkOutcome> {
+                bleConnectDeferred.onAwait { it }
+                torDialDeferred.onAwait { it }
+                acceptDeferred.onAwait { it }
+            }
+            for (d in deferreds) {
+                if (d.isCompleted) {
+                    val loser = runCatching { d.getCompleted() }.getOrNull() ?: continue
+                    if (loser.link !== outcome.link) {
+                        raceScope.launch { runCatching { loser.link.close() } }
+                    }
+                }
+            }
+            return outcome
+        } finally {
+            for (d in deferreds) if (!d.isCompleted) d.cancel()
+        }
     }
 
     /**
@@ -565,7 +604,21 @@ class MessageSyncService @Inject constructor(
             }
             // Channel binding: who did we actually talk to?
             val peerX25519 = noise.remoteStaticPublicKey
-            val peerPub = peerLookup[com.wyspr.core.identity.PeerKey(peerX25519)] ?: return null
+            val peerPub = peerLookup[com.wyspr.core.identity.PeerKey(peerX25519)]
+            if (peerPub == null) {
+                Log.w(TAG_SYNC, "openSessionAndSync: unknown peer X25519, running rotation sync before rejecting")
+                runCatching {
+                    val graph = trustGraphService.snapshot()
+                    runKeyRotationSyncRound(
+                        link = link,
+                        database = database,
+                        communityId = communityId.bytes,
+                        trustGraph = graph,
+                        sodium = sodium,
+                    )
+                }
+                return null
+            }
 
             val engine = buildEngine(
                 role = role,

@@ -210,38 +210,36 @@ fun ConversationScreen(
                     ConversationViewModel.UiState.Loading -> LoadingPanel()
                     is ConversationViewModel.UiState.Ready -> {
                         val listState = rememberLazyListState()
+                        val reversed = remember(s.messages) { s.messages.asReversed() }
                         LaunchedEffect(s.messages.size) {
                             if (s.messages.isNotEmpty()) {
                                 kotlinx.coroutines.delay(50)
-                                listState.animateScrollToItem(s.messages.lastIndex)
+                                listState.animateScrollToItem(0)
                             }
                         }
                         if (s.messages.isEmpty()) {
                             EmptyThread()
                         } else {
                             val ownBytes = s.own?.bytes
-                            // Build a lookup once per emission so each
-                            // bubble can resolve the message it's replying
-                            // to in O(1). Hoisted OUT of LazyColumn because
-                            // LazyListScope content isn't a Composable scope.
                             val byId = remember(s.messages) {
                                 s.messages.associateBy {
                                     com.wyspr.core.identity.PeerKey(it.id)
                                 }
                             }
                             val showScrollFab = remember {
-                                derivedStateOf { listState.firstVisibleItemIndex < s.messages.size - 5 }
+                                derivedStateOf { listState.firstVisibleItemIndex > 5 }
                             }
                             Box(modifier = Modifier.fillMaxSize()) {
                                 LazyColumn(
                                     state = listState,
+                                    reverseLayout = true,
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .padding(horizontal = 16.dp),
                                     verticalArrangement = Arrangement.spacedBy(6.dp),
                                     contentPadding = PaddingValues(vertical = 8.dp),
                                 ) {
-                                    items(s.messages, key = { it.id.toList() }) { msg ->
+                                    items(reversed, key = { it.id.toList() }) { msg ->
                                         if (ReactionPayload.isReaction(msg.body)) return@items
                                         if (DisappearPayload.isDisappear(msg.body)) return@items
                                         val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)
@@ -263,8 +261,8 @@ fun ConversationScreen(
                                             onReact = { emoji -> viewModel.sendReaction(msg, emoji) },
                                             onRetractReaction = { viewModel.retractReaction(msg) },
                                             onScrollToQuoted = { id ->
-                                                val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
-                                                if (idx >= 0 && idx in s.messages.indices) {
+                                                val idx = reversed.indexOfFirst { it.id.contentEquals(id) }
+                                                if (idx >= 0 && idx in reversed.indices) {
                                                     scope.launch { listState.animateScrollToItem(idx) }
                                                 }
                                             },
@@ -278,7 +276,7 @@ fun ConversationScreen(
                                     exit = fadeOut() + scaleOut(),
                                 ) {
                                     SmallFloatingActionButton(
-                                        onClick = { scope.launch { listState.animateScrollToItem(s.messages.lastIndex) } },
+                                        onClick = { scope.launch { listState.animateScrollToItem(0) } },
                                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
                                     ) {
                                         Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Scroll to bottom")
