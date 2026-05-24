@@ -15,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode2
@@ -40,7 +42,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -194,6 +198,9 @@ fun AppSettingsScreen(
                 },
             )
 
+            SectionHeader("Support")
+            DonateRow()
+
             SectionHeader("Identity management")
             LinkRow(
                 icon = Icons.Filled.Refresh,
@@ -292,6 +299,70 @@ fun AppSettingsScreen(
                 }
             },
         )
+    }
+}
+
+private const val DEVELOPER_XMR_ADDRESS =
+    "YOUR_MONERO_ADDRESS_HERE"
+
+@Composable
+private fun DonateRow() {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Filled.Favorite,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Spacer(modifier = Modifier.size(16.dp))
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Buy the developer a beer", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "Wyspr is free and open-source. If you find it useful, a small XMR tip is appreciated.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (expanded) {
+            Spacer(modifier = Modifier.size(12.dp))
+            androidx.compose.material3.Surface(
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        DEVELOPER_XMR_ADDRESS,
+                        style = MaterialTheme.typography.labelSmall,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 3,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    IconButton(onClick = {
+                        clipboard.setText(AnnotatedString(DEVELOPER_XMR_ADDRESS))
+                        Toast.makeText(context, "XMR address copied", Toast.LENGTH_SHORT).show()
+                    }) {
+                        Icon(
+                            Icons.Filled.ContentCopy,
+                            contentDescription = "Copy address",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
