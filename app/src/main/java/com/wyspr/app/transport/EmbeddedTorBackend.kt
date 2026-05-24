@@ -16,8 +16,14 @@ import io.matthewnelson.kmp.tor.runtime.core.OnEvent
 import io.matthewnelson.kmp.tor.runtime.core.TorEvent
 import io.matthewnelson.kmp.tor.runtime.core.config.TorOption
 import io.matthewnelson.kmp.tor.runtime.core.net.Port.Companion.toPort
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -69,9 +75,12 @@ class EmbeddedTorBackend(
     override val hsTargetPort: Int = TorBackend.DEFAULT_HS_TARGET_PORT
 
     private val startMutex = Mutex()
+    private val watchdogScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
     private var runtime: TorRuntime? = null
+    @Volatile
+    private var watchdogJob: Job? = null
 
     override suspend fun start(): Unit = startMutex.withLock {
         // If a previous start() set runtime but then failed (state ==
@@ -105,6 +114,7 @@ class EmbeddedTorBackend(
         _state.value = TorBackend.State.Bootstrapping(percent = 0)
         try {
             r.startDaemonAsync()
+            startWatchdog(r)
         } catch (t: Throwable) {
             Log.w(TAG, "Tor StartDaemon failed", t)
             _state.value = TorBackend.State.Failed(t.message ?: "Tor failed to start")
@@ -112,6 +122,8 @@ class EmbeddedTorBackend(
     }
 
     override suspend fun stop(): Unit = startMutex.withLock {
+        watchdogJob?.cancel()
+        watchdogJob = null
         val r = runtime ?: return
         try {
             r.stopDaemonAsync()
@@ -253,10 +265,35 @@ class EmbeddedTorBackend(
                     _state.value = TorBackend.State.Idle
                 }
             }
-            d.isBootstrapped -> _state.value = TorBackend.State.Ready
+            d.isBootstrapped -> {
+                _state.value = TorBackend.State.Ready
+                watchdogJob?.cancel()
+                watchdogJob = null
+            }
             else -> {
                 val pct = (d.bootstrap.toInt() and 0xFF).coerceIn(0, 100)
                 _state.value = TorBackend.State.Bootstrapping(percent = pct)
+            }
+        }
+    }
+
+    private fun startWatchdog(r: TorRuntime) {
+        watchdogJob?.cancel()
+        watchdogJob = watchdogScope.launch {
+            delay(WATCHDOG_TIMEOUT_MS)
+            val current = _state.value
+            if (current is TorBackend.State.Ready) return@launch
+            val pct = (current as? TorBackend.State.Bootstrapping)?.percent ?: -1
+            Log.w(TAG, "Tor watchdog: bootstrap stalled at $pct% after ${WATCHDOG_TIMEOUT_MS / 1000}s — restarting daemon")
+            _state.value = TorBackend.State.Bootstrapping(percent = 0)
+            try {
+                r.stopDaemonAsync()
+                delay(1_000)
+                r.startDaemonAsync()
+                startWatchdog(r)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Tor watchdog: restart failed", t)
+                _state.value = TorBackend.State.Failed("Bootstrap stalled; restart failed: ${t.message}")
             }
         }
     }
@@ -299,6 +336,7 @@ class EmbeddedTorBackend(
 
     private companion object {
         private const val TAG = "EmbeddedTorBackend"
+        private const val WATCHDOG_TIMEOUT_MS = 120_000L
         // Namespaces this subkey distinctly from the SQLCipher DB key
         // and any future keystore-derived subkeys. See KeystoreManager
         // HKDF info convention in PROTOCOLS.md §5.
