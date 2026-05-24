@@ -6,7 +6,16 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Wyspr has no server component)
-- **Status**: 2026-05-23 — **v0.9.2 (build 23).** Full codebase
+- **Status**: 2026-05-24 — **v0.9.3.** Key rotation envelope shipped.
+  `KeyRotationCertificate` (signed by old key, 7-field CBOR) with
+  anti-entropy propagation (tags `0x34`/`0x35`/`0x36`), trust-edge +
+  contact + message rekeying on ingestion, issuer-side "Rotate identity"
+  UI in Settings, `plantSeed()` on KeystoreManager for pre-generating the
+  new identity. DB schema v21 (`key_rotation` table). The old key is
+  retired (added to revoked set) so it cannot issue further operations.
+  Closes the longest-standing open question in SECURITY-MODEL.md.
+
+  Earlier (2026-05-23): **v0.9.2 (build 23).** Full codebase
   security audit → 68 bug fixes across crypto, transport, messaging,
   database, trust, UI, and build config. Tor bootstrap watchdog
   landed — auto-restarts the daemon if bootstrap stalls >120s.
@@ -140,6 +149,10 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
   SECURITY-MODEL.md §3.8 — keep them in sync.**
 - `core/trust/.../InvitationCertificate.kt` — canonical CBOR
   encode/decode/sign/verify. `RevocationCertificate` symmetric.
+- `core/trust/.../KeyRotationCertificate.kt` — signed cert linking
+  old pub → new pub; `KeyRotationSyncRound.kt` propagates it
+- `app/.../KeyRotationService.kt` — issuer-side orchestrator:
+  sign cert, reset, plant new seed, re-open DB
 - `core/database/.../TrustEdgeEntity.kt` — includes `peerOnion`
   column (schema v5)
 - `core/transport/api/.../Transport.kt` — the only abstraction every
@@ -510,11 +523,50 @@ round 1 cost (~30s cold) followed by round 2 sub-second. Apply the
 [[wyspr-feedback-verify-baseline]] rule — code that builds is not
 the same as code that works.
 
+### 2026-05-24 — v0.9.3: Key rotation envelope
+
+**KeyRotationCertificate** — signed by the old key, proves the holder
+authorized the transition to a new identity. 7-field canonical CBOR:
+`[version, oldPub, newPub, communityId, issuedAt, newOnion|null,
+signature]`.
+
+**Anti-entropy propagation** — tags `0x34`/`0x35`/`0x36` mirror the
+revocation sync round pattern. Runs after `runRevocationSyncRound` on
+the same Noise link at both sync sites in `MessageSyncService`.
+
+**Ingestion** — `KeyRotationSyncRepository.ingest` verifies community,
+signature, time bounds, and issuer trust level. Rejects quarantined
+keys, rejects duplicate rotations to a different newPub. On accept:
+rekeys trust edges (`fromPub`/`toPub`), contacts (`peerPub`), and
+message threads (`thread_pub`, `from_pub`, `to_pub`). Atomically
+updates `peerOnion` from the cert. Retires the old key in the trust
+graph (added to revoked set).
+
+**Issuer-side flow** — "Rotate identity" in Settings. `KeyRotationService`
+generates a new seed, derives the new Ed25519 pubkey and `.onion`,
+signs the rotation cert with the old key, persists it to a pending file,
+resets the keystore, plants the new seed via `KeystoreManager.plantSeed()`,
+re-opens the DB, persists the cert, and re-creates the community
+membership. The pending file guards against data loss if the process
+dies mid-rotation.
+
+**Database** — schema v21: `key_rotation` table (composite PK
+`(oldPub, newPub)`). `KeyRotationDao` with upsert, all, byOldPub.
+`MessageDao` gains `rekeyThread`/`rekeyFromPub`/`rekeyToPub`.
+
+**KeystoreManager** — `plantSeed(seed)` added to the interface and
+`AndroidKeystoreManager`. Wraps the pre-generated seed with the
+wrapping key and writes it to the seed file.
+
+New files: `KeyRotationCertificate.kt`, `KeyRotationSyncMessage.kt`,
+`KeyRotationSyncRepository.kt`, `KeyRotationSyncRound.kt`,
+`KeyRotationEntity.kt`, `KeyRotationDao.kt`, `KeyRotationService.kt`.
+
+Hardware verification owed — two-device test where one side rotates
+and the other picks up the cert on next sync.
+
 ## What's NOT Built Yet
 
-- **KeyRotation envelope** — legitimate identity reset currently
-  looks identical to a compromise. Needs a signed "I rotated my
-  key" cert that peers can verify.
 - **Vault** feature (encrypted personal-record store) — empty module.
 - **Marketplace over BLE** — wallet exists but doesn't yet sync over
   a real Link.
@@ -531,10 +583,10 @@ the same as code that works.
 
 ## Memory / Plan State
 
-v0.9.2 is the current build (2026-05-23). Both BLE and Tor-only
-messaging are hardware-verified. Revocation propagation is live.
-68 audit fixes landed. Next priorities: KeyRotation envelope,
-then Vault or CI depending on direction.
+v0.9.3 is the current build (2026-05-24). Key rotation envelope
+shipped. Both BLE and Tor-only messaging are hardware-verified.
+Revocation propagation is live. 68 audit fixes landed. Next
+priorities: hardware-verify key rotation, then Vault or CI.
 
 Auto-memory references:
 - [[wyspr-messaging-works]] — 22-build journey, all fixes

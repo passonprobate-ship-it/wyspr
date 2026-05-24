@@ -61,6 +61,7 @@ class TrustGraphImpl(
     private val parameters: TrustGraph.Parameters = TrustGraph.Parameters(),
     initialEdges: Collection<TrustEdge> = emptyList(),
     initialRevocations: Collection<RevocationCertificate> = emptyList(),
+    initialKeyRotations: Collection<KeyRotationCertificate> = emptyList(),
 ) : TrustGraph {
 
     private val lock = ReentrantReadWriteLock()
@@ -80,6 +81,7 @@ class TrustGraphImpl(
     init {
         for (e in initialEdges) addEdgeInternal(e)
         for (r in initialRevocations) ingestRevocationInternal(r)
+        for (kr in initialKeyRotations) ingestKeyRotationInternal(kr)
     }
 
     override fun addEdge(edge: TrustEdge) = lock.write { addEdgeInternal(edge) }
@@ -95,6 +97,9 @@ class TrustGraphImpl(
 
     override fun ingestRevocation(cert: RevocationCertificate): Unit =
         lock.write { ingestRevocationInternal(cert) }
+
+    override fun ingestKeyRotation(cert: KeyRotationCertificate): Unit =
+        lock.write { ingestKeyRotationInternal(cert) }
 
     override fun trustLevel(peer: PublicKey): TrustLevel = lock.read {
         val peerKey = peer.bytes.wrap()
@@ -137,6 +142,41 @@ class TrustGraphImpl(
     private fun ingestRevocationInternal(cert: RevocationCertificate) {
         revocations.add(cert)
         revoked.add(cert.targetPub.bytes.wrap())
+    }
+
+    private fun ingestKeyRotationInternal(cert: KeyRotationCertificate) {
+        val oldKey = cert.oldPub.bytes.wrap()
+        val newKey = cert.newPub.bytes.wrap()
+        val newOnion = cert.newOnion?.let { String(it, Charsets.US_ASCII) }
+
+        // Rekey all edges referencing the old pubkey
+        val toRekey = mutableListOf<Pair<ByteBuffer, TrustEdge>>()
+        for ((fromBuf, edges) in outgoing) {
+            for (edge in edges) {
+                if (edge.from.bytes.wrap() == oldKey || edge.to.bytes.wrap() == oldKey) {
+                    toRekey.add(fromBuf to edge)
+                }
+            }
+        }
+        for ((fromBuf, edge) in toRekey) {
+            outgoing[fromBuf]?.remove(edge)
+            if (outgoing[fromBuf]?.isEmpty() == true) outgoing.remove(fromBuf)
+            edgeSet.remove(EdgeKey(edge.from.bytes.wrap(), edge.to.bytes.wrap()))
+
+            val newEdge = TrustEdge(
+                from = if (edge.from.bytes.wrap() == oldKey) cert.newPub else edge.from,
+                to = if (edge.to.bytes.wrap() == oldKey) cert.newPub else edge.to,
+                vouchLevel = edge.vouchLevel,
+                establishedAt = edge.establishedAt,
+                certBlob = edge.certBlob,
+                certSigner = edge.certSigner,
+                peerOnion = newOnion ?: edge.peerOnion,
+            )
+            addEdgeInternal(newEdge)
+        }
+
+        // Retire the old key
+        revoked.add(oldKey)
     }
 
     /**

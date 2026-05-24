@@ -19,6 +19,7 @@ import com.wyspr.core.database.dao.MailboxStoredDao
 import com.wyspr.core.database.dao.MessageDao
 import com.wyspr.core.database.dao.PeerPaymentAddressDao
 import com.wyspr.core.database.dao.PeerSubAddressMintDao
+import com.wyspr.core.database.dao.KeyRotationDao
 import com.wyspr.core.database.dao.ReactionDao
 import com.wyspr.core.database.dao.RevocationDao
 import com.wyspr.core.database.dao.SeenCertNonceDao
@@ -41,6 +42,7 @@ import com.wyspr.core.database.entities.PeerPaymentAddressEntity
 import com.wyspr.core.database.entities.PeerSubAddressMintEntity
 import com.wyspr.core.database.dao.GroupMessageDeliveryDao
 import com.wyspr.core.database.entities.GroupMessageDeliveryEntity
+import com.wyspr.core.database.entities.KeyRotationEntity
 import com.wyspr.core.database.entities.ReactionEntity
 import com.wyspr.core.database.entities.RevocationEntity
 import com.wyspr.core.database.entities.SeenCertNonceEntity
@@ -105,8 +107,9 @@ import com.wyspr.core.database.entities.UserProfileEntity
         AddressBookEntity::class,
         ReactionEntity::class,
         GroupMessageDeliveryEntity::class,
+        KeyRotationEntity::class,
     ],
-    version = 20,
+    version = 21,
     exportSchema = true,
 )
 abstract class WysprRoomDatabase : RoomDatabase() {
@@ -131,6 +134,7 @@ abstract class WysprRoomDatabase : RoomDatabase() {
     abstract fun addressBookDao(): AddressBookDao
     abstract fun reactionDao(): ReactionDao
     abstract fun groupMessageDeliveryDao(): GroupMessageDeliveryDao
+    abstract fun keyRotationDao(): KeyRotationDao
 }
 
 /**
@@ -483,6 +487,21 @@ internal val MIGRATION_19_20 = object : Migration(19, 20) {
                 "`peer_pub` BLOB NOT NULL, " +
                 "`delivered_at` INTEGER NOT NULL, " +
                 "PRIMARY KEY(`msg_id`, `peer_pub`))"
+        )
+    }
+}
+
+internal val MIGRATION_20_21 = object : Migration(20, 21) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `key_rotation` (" +
+                "`oldPub` BLOB NOT NULL, " +
+                "`newPub` BLOB NOT NULL, " +
+                "`communityId` BLOB NOT NULL, " +
+                "`issuedAt` INTEGER NOT NULL, " +
+                "`newOnion` TEXT, " +
+                "`signature` BLOB NOT NULL, " +
+                "PRIMARY KEY(`oldPub`, `newPub`))"
         )
     }
 }

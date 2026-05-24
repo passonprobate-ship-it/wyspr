@@ -2,6 +2,7 @@ package com.wyspr.core.trust
 
 import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.database.WysprDatabase
+import com.wyspr.core.database.entities.KeyRotationEntity
 import com.wyspr.core.database.entities.RevocationEntity
 import com.wyspr.core.database.entities.TrustEdgeEntity
 import com.wyspr.core.identity.CommunityId
@@ -136,11 +137,13 @@ class TrustGraphService(
         // revocations issued by an already-revoked attacker from being
         // accepted in this round.
         val revocations = database.revocationDao.all().map { it.toRevocation(communityId) }
+        val keyRotations = database.keyRotationDao.all().map { it.toKeyRotation() }
         return TrustGraphImpl(
             communityId = communityId,
             roots = roots,
             initialEdges = edges,
             initialRevocations = revocations,
+            initialKeyRotations = keyRotations,
         )
     }
 
@@ -152,6 +155,17 @@ class TrustGraphService(
             communityId = communityId,
             issuedAt = issuedAt,
             reasonCode = RevocationCertificate.ReasonCode.valueOf(reasonCode),
+            signature = signature,
+        )
+
+    private fun KeyRotationEntity.toKeyRotation(): KeyRotationCertificate =
+        KeyRotationCertificate(
+            version = KeyRotationCertificate.VERSION,
+            oldPub = PublicKey(oldPub),
+            newPub = PublicKey(newPub),
+            communityId = CommunityId(communityId),
+            issuedAt = issuedAt,
+            newOnion = newOnion?.toByteArray(Charsets.US_ASCII),
             signature = signature,
         )
 

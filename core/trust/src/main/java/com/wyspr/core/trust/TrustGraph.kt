@@ -23,6 +23,9 @@ interface TrustGraph {
     /** Ingest a revocation; moves the target to Quarantined locally. */
     fun ingestRevocation(cert: RevocationCertificate)
 
+    /** Ingest a key rotation; rekeys edges and retires the old key. */
+    fun ingestKeyRotation(cert: KeyRotationCertificate)
+
     /** Compute the current trust level for a peer. */
     fun trustLevel(peer: PublicKey): TrustLevel
 

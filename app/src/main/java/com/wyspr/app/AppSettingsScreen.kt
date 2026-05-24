@@ -72,6 +72,7 @@ fun AppSettingsScreen(
     onOpenFindPeers: () -> Unit,
     onOpenShareApp: () -> Unit,
     onIdentityReset: () -> Unit,
+    onIdentityRotate: suspend () -> Boolean,
     biometricPrompt: suspend () -> Boolean,
     onBack: () -> Unit,
 ) {
@@ -81,6 +82,8 @@ fun AppSettingsScreen(
     val context = LocalContext.current
     var sharePreparing by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
+    var showRotateConfirm by remember { mutableStateOf(false) }
+    var rotating by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -191,6 +194,14 @@ fun AppSettingsScreen(
                 },
             )
 
+            SectionHeader("Identity management")
+            LinkRow(
+                icon = Icons.Filled.Refresh,
+                title = if (rotating) "Rotating…" else "Rotate identity",
+                subtitle = "New key, same peers. Your contacts update automatically.",
+                onClick = { if (!rotating) showRotateConfirm = true },
+            )
+            HorizontalDivider()
             SectionHeader("Danger zone")
             LinkRow(
                 icon = Icons.Filled.Refresh,
@@ -201,6 +212,56 @@ fun AppSettingsScreen(
 
             Spacer(modifier = Modifier.size(32.dp))
         }
+    }
+
+    if (showRotateConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRotateConfirm = false },
+            title = { Text("Rotate identity?") },
+            text = {
+                Text(
+                    "This generates a new identity key and signs a rotation " +
+                        "certificate so your peers can verify it's still you. " +
+                        "Your contacts and message history are preserved.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRotateConfirm = false
+                        rotating = true
+                        scope.launch {
+                            if (biometricPrompt()) {
+                                val ok = onIdentityRotate()
+                                rotating = false
+                                if (ok) {
+                                    Toast.makeText(
+                                        context,
+                                        "Identity rotated. Peers will update on next sync.",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        "Rotation failed — identity unchanged.",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                }
+                            } else {
+                                rotating = false
+                            }
+                        }
+                    },
+                ) {
+                    Text("Rotate")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRotateConfirm = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 
     if (showResetConfirm) {

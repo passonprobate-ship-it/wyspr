@@ -38,9 +38,15 @@ launch:
   rendered as five space-separated groups of base32 (e.g.
   `K5T2N AB3FR HJ8MQ XYZ4P 7VN2K`). This is the only identifier a human ever
   reads or types.
-- **Rotation**: Identity keys do not rotate. Devices reset their identity by
-  full reinstall. Membership transfer between devices is an explicit,
-  vouched operation. (Per-peer `KeyRotation` propagation remains open — see §7.)
+- **Rotation**: A device can rotate its identity key by signing a
+  `KeyRotationCertificate` (old key signs `[version, oldPub, newPub,
+  communityId, issuedAt, newOnion?]`). The certificate propagates via
+  the key-rotation anti-entropy sync round (tags `0x34`/`0x35`/`0x36`).
+  Peers who trust the old key verify the cert, rekey their trust edges,
+  contacts, and message history to point to the new key, and retire the
+  old key (added to the revoked set). A quarantined key cannot issue a
+  rotation; the compromise path is revocation, not rotation. Chain
+  rotations (A→B, then B→C) apply sequentially.
 
 There is **no display name** stored on the wire. Local nicknames are a
 per-device UI preference and never sync.
@@ -390,10 +396,12 @@ These decisions are not final and should be revisited before v1.0:
 4. **Group key rotation** — Vault groups have no rotation story yet;
    when a group member is revoked, do we re-encrypt or accept that
    their old reads were already cached?
-5. **KeyRotation envelope** — a legitimate identity reset currently
-   looks identical to a compromise. A signed `KeyRotation` linking
-   old pub → new pub would let peers age in the new identity without
-   losing the trust graph.
+5. **KeyRotation envelope — RESOLVED (v0.9.3).** `KeyRotationCertificate`
+   ships with issue/verify/fromWire, anti-entropy propagation via tags
+   `0x34`–`0x36`, trust-edge + contact + message rekeying on ingestion,
+   and an issuer-side "Rotate identity" UI in Settings. The old key is
+   retired (added to the revoked set) so it cannot issue further
+   operations. Hardware verification still owed.
 6. **Tor / clearnet correlation** — when both BLE and Tor are
    simultaneously available to the same peer pair, do we pick one or
    multiplex? Multiplexing helps reliability; it also widens the

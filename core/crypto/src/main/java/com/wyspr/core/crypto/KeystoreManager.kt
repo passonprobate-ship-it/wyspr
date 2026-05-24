@@ -89,6 +89,17 @@ interface KeystoreManager {
     /** Whether the wrapping key requires user authentication at all. */
     val isWrappingKeyBound: Boolean get() = false
 
+    fun reset()
+
+    /**
+     * Write a pre-generated seed so the next [loadOrCreateIdentityKey]
+     * call uses it instead of generating a random one. Used by key
+     * rotation: the new seed (and therefore the new pubkey) must be
+     * known BEFORE the old key is destroyed so the rotation cert can
+     * reference the new pubkey.
+     */
+    fun plantSeed(seed: ByteArray)
+
     enum class Backing { STRONGBOX, TEE, SOFTWARE_REJECTED }
 
     /** Opaque handle to a keystore-resident private key. */
@@ -229,7 +240,7 @@ class AndroidKeystoreManager(
      * responsible for deleting it separately (see
      * WysprDatabase.wipe()).
      */
-    fun reset() {
+    override fun reset() {
         try {
             val ks = keystoreInstance()
             if (ks.containsAlias(WRAPPING_ALIAS)) ks.deleteEntry(WRAPPING_ALIAS)
@@ -243,6 +254,20 @@ class AndroidKeystoreManager(
         }
         cachedHandle = null
         cachedBacking = null
+    }
+
+    override fun plantSeed(seed: ByteArray) {
+        require(seed.size == SEED_BYTES) { "seed must be $SEED_BYTES bytes" }
+        ensureWrappingKey()
+        val blob = wrapSeed(seed)
+        val file = seedFile
+        file.parentFile?.mkdirs()
+        file.writeBytes(blob)
+        file.setReadable(false, false)
+        file.setReadable(true, true)
+        file.setWritable(false, false)
+        file.setWritable(true, true)
+        cachedHandle = null
     }
 
     override val backing: KeystoreManager.Backing

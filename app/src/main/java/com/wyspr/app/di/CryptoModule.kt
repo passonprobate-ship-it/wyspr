@@ -5,6 +5,7 @@ import com.goterl.lazysodium.LazySodiumAndroid
 import com.goterl.lazysodium.SodiumAndroid
 import com.wyspr.app.biometric.BiometricCapability
 import com.wyspr.app.biometric.BiometricUnlocker
+import com.wyspr.app.KeyRotationService
 import com.wyspr.core.crypto.AndroidKeystoreManager
 import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.crypto.KeystoreOptions
@@ -118,6 +119,20 @@ object CryptoModule {
     fun provideBiometricSettings(
         @ApplicationContext context: Context,
     ): BiometricSettings = BiometricSettings(context)
+
+    @Provides
+    @Singleton
+    fun provideKeyRotationService(
+        @ApplicationContext context: Context,
+        keystore: KeystoreManager,
+        database: WysprDatabase,
+        sodium: LazySodiumAndroid,
+    ): KeyRotationService = KeyRotationService(
+        context = context,
+        keystore = keystore,
+        database = database,
+        sodium = sodium,
+    )
 
     @Provides
     @Singleton

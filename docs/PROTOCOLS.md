@@ -323,6 +323,49 @@ non-fatal — the messaging exchange is preserved, and propagation
 retries the next time the same two peers sync. See
 SECURITY-MODEL.md §3.6 for the full threat-model write-up.
 
+### 5.4 Key-rotation anti-entropy round (v0.9.3)
+
+Same structure as §5.3, runs immediately after the revocation round on
+the same Noise session. Tags `0x34`/`0x35`/`0x36`:
+
+```
+A                    B
+HaveSet (0x34)  -->
+                <--  HaveSet (0x34)
+Want (0x35)     -->
+                <--  Want (0x35)
+Push (0x36)     -->
+                <--  Push (0x36)
+```
+
+CBOR shape:
+
+```
+HaveSet = [0x34, [[old_pub(32), new_pub(32)], ...]]
+Want    = [0x35, [[old_pub(32), new_pub(32)], ...]]
+Push    = [0x36, [wire_cert_bytes, ...]]
+```
+
+Each `wire_cert_bytes` is a `KeyRotationCertificate` (7-element CBOR
+array: `[version, oldPub, newPub, communityId, issuedAt, newOnion|null,
+signature]`). Signed by `oldPub`. `newOnion` is CBOR null or 56-byte
+ASCII.
+
+Receive-side rules (`KeyRotationSyncRepository.ingest`):
+
+1. CBOR decode → drop malformed.
+2. Community-ID mismatch → drop (prevents cross-community attacks).
+3. `KeyRotationCertificate.verify(sodium)` → drop forgeries / future-dated.
+4. `trustGraph.trustLevel(oldPub)`:
+   - `Quarantined` or `Unknown` → drop.
+   - Otherwise → proceed.
+5. If a rotation from the same `oldPub` to a DIFFERENT `newPub` already
+   exists → drop (old key can only rotate once).
+6. Persist to `key_rotation` table.
+7. Apply: rekey trust edges, contacts, message threads.
+8. `TrustGraph.ingestKeyRotation(cert)` — rekeys in-memory edges and
+   retires the old key (added to revoked set).
+
 ## 6. Service UUIDs
 
 The BLE service UUID and WiFi Direct service-info hash are both derived

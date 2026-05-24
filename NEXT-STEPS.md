@@ -1,11 +1,12 @@
 # Wyspr — Next Steps
 
-Refreshed 2026-05-23 against `android` branch (v0.9.2, build 23).
+Refreshed 2026-05-24 against `android` branch (v0.9.3, build 24).
 
 ## Completed since last refresh
 
 | Item | Version | Status |
 |------|---------|--------|
+| Key rotation envelope | v0.9.3 | **Done** — cert + propagation + ingestion + issuer UI |
 | Tor end-to-end hardware proof | v0.9.1 | **Done** — BLE off, both directions, S23+A02s |
 | Revocation propagation | v0.9.2 | **Done** — issue + UI + peer-to-peer anti-entropy sync |
 | Tor bootstrap watchdog | v0.9.1 | **Done** — auto-restart on stall >120s |
@@ -16,31 +17,17 @@ Refreshed 2026-05-23 against `android` branch (v0.9.2, build 23).
 
 ---
 
-## 1. KeyRotation envelope
+## 1. Hardware-verify key rotation
 
-**Status.** Not started. Legitimate identity reset currently looks
-identical to a compromise — peers see `SignatureInvalid` and silently
-drop the old identity.
-
-**What's needed.**
-- A `KeyRotation` cert signed by the OLD key, containing the NEW
-  pubkey + a timestamp. Peers verify the old signature, then replace
-  the trust edge endpoint with the new pub.
-- Wire format: CBOR array, same shape as RevocationCertificate but
-  with `newPub` instead of `targetPub`.
-- Propagation: piggyback on the existing `RevocationSyncRound`
-  anti-entropy (add a new tag 0x34 for KeyRotation).
-- UI: "Reset identity" in Settings should sign the rotation cert
-  before wiping the keystore.
-
-**If skipped.** Users who reset their identity lose all trust edges
-permanently. Peers carry the old pub as `Quarantined: peer offline`.
+**Status.** Code-complete, NOT hardware-verified. Two-device test
+needed: one side rotates, the other picks up the cert on next sync
+and rekeys trust edges, contacts, and message history automatically.
 
 ---
 
 ## 2. CI pipeline
 
-**Status.** No CI. The codebase has 279 Kotlin files, 14 migrations,
+**Status.** No CI. The codebase has 280+ Kotlin files, 15 migrations,
 and Room schema export enabled — all untested in automation.
 
 **Smallest viable CI.**
@@ -54,7 +41,7 @@ and Room schema export enabled — all untested in automation.
 
 **Status.** Metadata is ready (`metadata/com.wyspr.yml`, fastlane
 descriptions + changelogs). Needs:
-- Tag `v0.9.2` on the repo
+- Tag `v0.9.3` on the repo
 - Fork `f-droid/fdroiddata`, submit PR with `metadata/com.wyspr.yml`
 - Accept that reproducible-build check will flag pre-built native
   deps (lazysodium, kmp-tor) — documented in `docs/FDROID.md`
@@ -119,8 +106,8 @@ the sync pipeline.
 
 | Priority | Theme | Rationale |
 |----------|-------|-----------|
-| 1 | KeyRotation | Security gap — identity reset is indistinguishable from compromise |
-| 2 | CI | Build hygiene — 14 migrations untested in automation |
+| 1 | Hardware-verify key rotation | Security — code-complete but unproven on real devices |
+| 2 | CI | Build hygiene — 15 migrations untested in automation |
 | 3 | F-Droid submission | Distribution — metadata ready, just needs tag + PR |
 | 4 | Monero JNI engine | Feature — scaffold is wired, binding is the last mile |
 | 5 | Vault | Feature — empty module, clear spec |

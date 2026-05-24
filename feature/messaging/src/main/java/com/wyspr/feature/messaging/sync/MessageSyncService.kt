@@ -14,6 +14,7 @@ import com.wyspr.core.transport.SyncTransportFacade
 import com.wyspr.core.transport.Transport
 import com.wyspr.core.transport.TransportLifecycle
 import com.wyspr.core.trust.TrustGraphService
+import com.wyspr.core.trust.runKeyRotationSyncRound
 import com.wyspr.core.trust.runRevocationSyncRound
 import com.wyspr.feature.messaging.MessageStore
 import javax.inject.Inject
@@ -337,6 +338,18 @@ class MessageSyncService @Inject constructor(
                             )
                             0
                         }
+                        val rotationsReceived = try {
+                            val graph = trustGraphService.snapshot()
+                            runKeyRotationSyncRound(
+                                link = link,
+                                database = database,
+                                communityId = communityId.bytes,
+                                trustGraph = graph,
+                                sodium = sodium,
+                            )
+                        } catch (ce: kotlinx.coroutines.CancellationException) {
+                            throw ce
+                        } catch (_: Throwable) { 0 }
                         // Sprint 1: stage (link, noise) for next round
                         // when the link is Tor. BLE returns false and
                         // we close both as before.
@@ -695,6 +708,18 @@ class MessageSyncService @Inject constructor(
                 )
                 0
             }
+            try {
+                val graph = trustGraphService.snapshot()
+                runKeyRotationSyncRound(
+                    link = cached.link,
+                    database = database,
+                    communityId = communityId.bytes,
+                    trustGraph = graph,
+                    sodium = sodium,
+                )
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (_: Throwable) { }
             Result(
                 attemptedPeers = 1,
                 pushedMessages = engineResult.pushedCount,

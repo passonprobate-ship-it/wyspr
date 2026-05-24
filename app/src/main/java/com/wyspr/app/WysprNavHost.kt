@@ -53,6 +53,7 @@ import com.wyspr.feature.onboarding.screens.UpdateFromPeerScreen
 fun WysprNavHost(
     unlocker: BiometricUnlocker,
     biometricSettings: BiometricSettings,
+    keyRotationService: KeyRotationService,
     pendingDeepLink: MainActivity.DeepLink? = null,
     onDeepLinkConsumed: () -> Unit = {},
 ) {
@@ -126,6 +127,7 @@ fun WysprNavHost(
                         popUpTo(0) { inclusive = true }
                     }
                 },
+                onIdentityRotate = { keyRotationService.rotate() },
             )
         }
         composable(

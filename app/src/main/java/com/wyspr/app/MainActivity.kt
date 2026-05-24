@@ -41,6 +41,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var biometricUnlocker: BiometricUnlocker
     @Inject lateinit var torBackend: TorBackend
     @Inject lateinit var profileHttpServer: ProfileHttpServer
+    @Inject lateinit var keyRotationService: KeyRotationService
 
     // Notification permission request landed in API 33 (Tiramisu). The
     // transport foreground service can run without it — Android just
@@ -97,6 +98,7 @@ class MainActivity : FragmentActivity() {
                         WysprNavHost(
                             unlocker = biometricUnlocker,
                             biometricSettings = biometricSettings,
+                            keyRotationService = keyRotationService,
                             pendingDeepLink = pendingDeepLink,
                             onDeepLinkConsumed = ::consumeDeepLink,
                         )

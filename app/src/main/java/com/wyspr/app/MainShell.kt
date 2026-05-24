@@ -56,6 +56,7 @@ fun MainShell(
     /** Open the create-group screen as a full-screen route. */
     onCreateGroup: () -> Unit,
     onIdentityReset: () -> Unit,
+    onIdentityRotate: suspend () -> Boolean,
 ) {
     // rememberSaveable so the tab persists across process death.
     var tab by rememberSaveable { mutableStateOf(Tab.Chats) }
@@ -98,6 +99,7 @@ fun MainShell(
                     onOpenFindPeers = onOpenFindPeers,
                     onOpenShareApp = onOpenShareApp,
                     onIdentityReset = onIdentityReset,
+                    onIdentityRotate = onIdentityRotate,
                     biometricPrompt = biometricPrompt,
                     onBack = { /* root tab */ },
                 )

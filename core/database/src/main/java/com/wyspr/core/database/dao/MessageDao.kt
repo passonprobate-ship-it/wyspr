@@ -137,4 +137,13 @@ interface MessageDao {
 
     @Query("UPDATE message SET expires_at = :expiresAt WHERE id = :id")
     suspend fun setExpiresAt(id: ByteArray, expiresAt: Long?)
+
+    @Query("UPDATE message SET thread_pub = :newPub WHERE thread_pub = :oldPub")
+    suspend fun rekeyThread(oldPub: ByteArray, newPub: ByteArray)
+
+    @Query("UPDATE message SET from_pub = :newPub WHERE from_pub = :oldPub")
+    suspend fun rekeyFromPub(oldPub: ByteArray, newPub: ByteArray)
+
+    @Query("UPDATE message SET to_pub = :newPub WHERE to_pub = :oldPub")
+    suspend fun rekeyToPub(oldPub: ByteArray, newPub: ByteArray)
 }

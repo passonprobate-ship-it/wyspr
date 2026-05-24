@@ -66,6 +66,7 @@ class WysprDatabaseImpl(
     override val addressBookDao get() = requireOpen().addressBookDao()
     override val reactionDao get() = requireOpen().reactionDao()
     override val groupMessageDeliveryDao get() = requireOpen().groupMessageDeliveryDao()
+    override val keyRotationDao get() = requireOpen().keyRotationDao()
 
     override suspend fun open() = openLock.withLock {
         withContext(Dispatchers.IO) {
@@ -106,6 +107,7 @@ class WysprDatabaseImpl(
                     MIGRATION_17_18,
                     MIGRATION_18_19,
                     MIGRATION_19_20,
+                    MIGRATION_20_21,
                 )
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
                 .build()
