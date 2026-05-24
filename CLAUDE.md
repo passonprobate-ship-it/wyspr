@@ -6,7 +6,20 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Wyspr has no server component)
-- **Status**: 2026-05-24 — **v0.9.3.** Key rotation envelope shipped.
+- **Status**: 2026-05-24 — **v0.9.4 (build 25).** Auto key rotation
+  (90-day interval) with cert chaining. `KeyRotationSettings` stores
+  the last rotation timestamp in SharedPreferences; `MainActivity`
+  checks on every cold start and silently rotates if due.
+  `KeyRotationSyncRepository` refactored: `storeIfValid()` persists
+  all signature-verified certs, `resolveAndIngestBatch()` applies them
+  in topological order with backward chain walking (up to depth 10)
+  for peers who missed intermediate rotations. `KeyRotationDao.byNewPub`
+  enables the chain walk. Chat composer unified: `+` drawer for
+  Photo/File/Location, mic + send always visible. Location sharing
+  fixed in 1-on-1 chats (callback existed but had no button). Voice
+  notes and file sharing added to group chats.
+
+  Earlier (2026-05-24): **v0.9.3 (build 24).** Key rotation envelope.
   `KeyRotationCertificate` (signed by old key, 7-field CBOR) with
   anti-entropy propagation (tags `0x34`/`0x35`/`0x36`), trust-edge +
   contact + message rekeying on ingestion, issuer-side "Rotate identity"
@@ -152,7 +165,10 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
 - `core/trust/.../KeyRotationCertificate.kt` — signed cert linking
   old pub → new pub; `KeyRotationSyncRound.kt` propagates it
 - `app/.../KeyRotationService.kt` — issuer-side orchestrator:
-  sign cert, reset, plant new seed, re-open DB
+  sign cert, reset, plant new seed, re-open DB; auto-rotation via
+  `KeyRotationSettings`
+- `core/ui/.../settings/KeyRotationSettings.kt` — SharedPreferences
+  store for 90-day auto-rotation timer
 - `core/database/.../TrustEdgeEntity.kt` — includes `peerOnion`
   column (schema v5)
 - `core/transport/api/.../Transport.kt` — the only abstraction every
@@ -565,6 +581,34 @@ New files: `KeyRotationCertificate.kt`, `KeyRotationSyncMessage.kt`,
 Hardware verification owed — two-device test where one side rotates
 and the other picks up the cert on next sync.
 
+### 2026-05-24 — v0.9.4: Auto key rotation + cert chaining + composer cleanup
+
+**90-day auto-rotation.** `KeyRotationSettings` (SharedPreferences)
+stores `lastRotationEpochSeconds`. `MainActivity` checks on cold start
+inside the biometric-gated `LaunchedEffect` — if 90+ days have passed,
+`KeyRotationService.rotate()` runs silently. `seedIfNeeded()` initializes
+the clock on first launch. Both manual and auto rotation reset the timer.
+
+**Cert chaining.** `KeyRotationSyncRepository` refactored into
+`storeIfValid()` (sig + community check, persist to DB) and
+`applyIfTrusted()` (trust-level gate, rekey edges/contacts/messages).
+New `resolveAndIngestBatch()` applies certs in topological order: first
+pass applies certs whose `oldPub` is already trusted, then
+`buildChainToTrusted()` walks backward through the DB (via new
+`KeyRotationDao.byNewPub`) to find a chain of stored certs leading to
+a trusted root, and applies the chain oldest-first. Max chain depth 10
+(~2.5 years of missed syncs). Cycle detection prevents infinite loops.
+
+**Chat composer unified.** Both 1-on-1 and group composers now share
+the same layout: `+` button expands an `AnimatedVisibility` tray with
+Photo / File / Location chips; mic button and send button remain
+top-level. Location sharing fixed in 1-on-1 chats (callback existed
+but no button rendered it). Voice notes and file sharing added to
+group chats (`GroupConversationViewModel.sendVoiceNote`,
+`sendFile`).
+
+New files: `KeyRotationSettings.kt`.
+
 ## What's NOT Built Yet
 
 - **Vault** feature (encrypted personal-record store) — empty module.
@@ -583,10 +627,11 @@ and the other picks up the cert on next sync.
 
 ## Memory / Plan State
 
-v0.9.3 is the current build (2026-05-24). Key rotation envelope
-shipped. Both BLE and Tor-only messaging are hardware-verified.
+v0.9.4 is the current build (2026-05-24, build 25). Auto key rotation
+(90-day) with cert chaining shipped. Chat composer cleaned up (unified
+`+` drawer). Both BLE and Tor-only messaging are hardware-verified.
 Revocation propagation is live. 68 audit fixes landed. Next
-priorities: hardware-verify key rotation, then Vault or CI.
+priorities: hardware-verify key rotation, then CI or Vault.
 
 Auto-memory references:
 - [[wyspr-messaging-works]] — 22-build journey, all fixes

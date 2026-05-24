@@ -198,6 +198,14 @@ class GroupConversationViewModel @Inject constructor(
         send(com.wyspr.feature.messaging.image.ImagePayload.encode(jpegBytes))
     }
 
+    fun sendVoiceNote(audioBytes: ByteArray, durationMs: Long) {
+        send(com.wyspr.feature.messaging.audio.AudioPayload.encode(audioBytes, durationMs))
+    }
+
+    fun sendFile(fileName: String, mimeType: String, fileBytes: ByteArray) {
+        send(com.wyspr.feature.messaging.file.FilePayload.encode(fileName, mimeType, fileBytes))
+    }
+
     fun send(body: String) {
         val gid = groupId ?: return
         val pub = ownPub ?: return

@@ -10,6 +10,7 @@ import com.wyspr.core.database.entities.KeyRotationEntity
 import com.wyspr.core.identity.CommunityId
 import com.wyspr.core.identity.PublicKey
 import com.wyspr.core.trust.KeyRotationCertificate
+import com.wyspr.core.ui.settings.KeyRotationSettings
 import java.io.File
 import java.security.SecureRandom
 import javax.crypto.Mac
@@ -20,7 +21,10 @@ class KeyRotationService(
     private val keystore: KeystoreManager,
     private val database: WysprDatabase,
     private val sodium: LazySodiumAndroid,
+    private val rotationSettings: KeyRotationSettings,
 ) {
+
+    fun isDue(): Boolean = rotationSettings.isDueForRotation()
 
     suspend fun rotate(): Boolean {
         val oldPub = runCatching {
@@ -91,6 +95,7 @@ class KeyRotationService(
             )
 
             pendingFile.delete()
+            rotationSettings.recordRotation()
             return true
         } finally {
             newSeed.fill(0)

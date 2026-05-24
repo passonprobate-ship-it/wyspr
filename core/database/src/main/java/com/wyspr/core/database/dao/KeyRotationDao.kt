@@ -20,4 +20,7 @@ interface KeyRotationDao {
 
     @Query("SELECT COUNT(*) FROM key_rotation WHERE oldPub = :oldPub")
     suspend fun countByOldPub(oldPub: ByteArray): Int
+
+    @Query("SELECT * FROM key_rotation WHERE newPub = :newPub")
+    suspend fun byNewPub(newPub: ByteArray): List<KeyRotationEntity>
 }

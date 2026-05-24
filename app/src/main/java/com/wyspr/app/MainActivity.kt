@@ -23,6 +23,7 @@ import com.wyspr.app.transport.AndroidMessagingNotifier
 import com.wyspr.core.transport.TorBackend
 import com.wyspr.core.ui.WysprTheme
 import com.wyspr.core.ui.settings.BiometricSettings
+import com.wyspr.core.ui.settings.KeyRotationSettings
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,6 +43,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var torBackend: TorBackend
     @Inject lateinit var profileHttpServer: ProfileHttpServer
     @Inject lateinit var keyRotationService: KeyRotationService
+    @Inject lateinit var keyRotationSettings: KeyRotationSettings
 
     // Notification permission request landed in API 33 (Tiramisu). The
     // transport foreground service can run without it — Android just
@@ -94,6 +96,10 @@ class MainActivity : FragmentActivity() {
                         LaunchedEffect(Unit) {
                             runCatching { torBackend.start() }
                             runCatching { profileHttpServer.start() }
+                            keyRotationSettings.seedIfNeeded()
+                            if (keyRotationService.isDue()) {
+                                runCatching { keyRotationService.rotate() }
+                            }
                         }
                         WysprNavHost(
                             unlocker = biometricUnlocker,

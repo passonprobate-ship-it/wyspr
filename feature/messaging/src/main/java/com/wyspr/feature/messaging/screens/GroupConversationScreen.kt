@@ -27,9 +27,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +58,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -230,6 +234,12 @@ fun GroupConversationScreen(
             val sharePhoto = rememberPhotoShareController { jpegBytes ->
                 viewModel.sendImage(jpegBytes)
             }
+            val recordVoice = rememberVoiceRecordController { audioBytes, durationMs ->
+                viewModel.sendVoiceNote(audioBytes, durationMs)
+            }
+            val shareFile = rememberFileShareController { fileName, mimeType, fileBytes ->
+                viewModel.sendFile(fileName, mimeType, fileBytes)
+            }
             val replyingTo by viewModel.replyingTo.collectAsStateWithLifecycle()
             replyingTo?.let { target ->
                 val ownB = (state as? GroupConversationViewModel.UiState.Ready)?.ownPub?.bytes
@@ -255,6 +265,8 @@ fun GroupConversationScreen(
                 },
                 onShareLocation = shareLocation,
                 onSharePhoto = sharePhoto,
+                onRecordVoice = recordVoice,
+                onShareFile = shareFile,
                 modifier = Modifier.navigationBarsPadding(),
             )
         }
@@ -387,48 +399,93 @@ private fun GroupComposerRow(
     onSend: () -> Unit,
     onShareLocation: () -> Unit,
     onSharePhoto: () -> Unit,
+    onRecordVoice: () -> Unit,
+    onShareFile: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        IconButton(onClick = onSharePhoto) {
-            Icon(
-                Icons.Filled.Image,
-                contentDescription = "Send a photo",
-                tint = MaterialTheme.colorScheme.primary,
-            )
+    var toolsExpanded by remember { mutableStateOf(false) }
+    Column(modifier = modifier.fillMaxWidth()) {
+        androidx.compose.animation.AnimatedVisibility(visible = toolsExpanded) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                GroupAttachmentChip(Icons.Filled.Image, "Photo") {
+                    toolsExpanded = false
+                    onSharePhoto()
+                }
+                GroupAttachmentChip(Icons.Filled.AttachFile, "File") {
+                    toolsExpanded = false
+                    onShareFile()
+                }
+                GroupAttachmentChip(Icons.Filled.LocationOn, "Location") {
+                    toolsExpanded = false
+                    onShareLocation()
+                }
+            }
         }
-        IconButton(onClick = onShareLocation) {
-            Icon(
-                Icons.Filled.LocationOn,
-                contentDescription = "Share my location",
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
-        OutlinedTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            placeholder = { Text("Message the group…") },
-            modifier = Modifier.weight(1f),
-            maxLines = 4,
-            shape = RoundedCornerShape(20.dp),
-        )
-        FilledIconButton(
-            onClick = {
-                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                onSend()
-            },
-            enabled = draft.isNotBlank(),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+            IconButton(onClick = { toolsExpanded = !toolsExpanded }) {
+                Icon(
+                    if (toolsExpanded) Icons.Filled.Close else Icons.Filled.Add,
+                    contentDescription = if (toolsExpanded) "Close tools" else "Attach",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            OutlinedTextField(
+                value = draft,
+                onValueChange = onDraftChange,
+                placeholder = { Text("Message the group…") },
+                modifier = Modifier.weight(1f),
+                maxLines = 4,
+                shape = RoundedCornerShape(20.dp),
+            )
+            IconButton(onClick = onRecordVoice) {
+                Icon(
+                    Icons.Filled.Mic,
+                    contentDescription = "Voice note",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+            FilledIconButton(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onSend()
+                },
+                enabled = draft.isNotBlank(),
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+            }
         }
     }
+}
+
+@Composable
+private fun GroupAttachmentChip(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    androidx.compose.material3.AssistChip(
+        onClick = onClick,
+        label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+        leadingIcon = {
+            Icon(
+                icon,
+                contentDescription = label,
+                modifier = Modifier.size(18.dp),
+            )
+        },
+    )
 }
 
 @Composable

@@ -1,27 +1,31 @@
 # Wyspr — Next Steps
 
-Refreshed 2026-05-24 against `android` branch (v0.9.3, build 24).
+Refreshed 2026-05-24 against `android` branch (v0.9.4, build 25).
 
 ## Completed since last refresh
 
 | Item | Version | Status |
 |------|---------|--------|
+| Auto key rotation (90-day) + cert chaining | v0.9.4 | **Done** — silent rotation, batch chain resolution, max depth 10 |
+| Chat composer cleanup | v0.9.4 | **Done** — unified `+` drawer, location fix, voice/file in groups |
 | Key rotation envelope | v0.9.3 | **Done** — cert + propagation + ingestion + issuer UI |
 | Tor end-to-end hardware proof | v0.9.1 | **Done** — BLE off, both directions, S23+A02s |
 | Revocation propagation | v0.9.2 | **Done** — issue + UI + peer-to-peer anti-entropy sync |
 | Tor bootstrap watchdog | v0.9.1 | **Done** — auto-restart on stall >120s |
 | Noise session reuse (Tor) | v0.9.1 | **Done** — hardware-verified, sub-second cached rounds |
 | 68-fix codebase audit | v0.9.1 | **Done** — crypto, transport, messaging, DB, UI, build |
-| F-Droid metadata | v0.9.1 | **Done** — Keystone→Wyspr, ready to tag+submit |
+| F-Droid metadata | v0.9.1 | **Done** — Keystone->Wyspr, ready to tag+submit |
 | Killer-app sprints 1-7 | v0.9.0 | **Done** — images, reactions, voice, search, disappearing, files, link previews |
 
 ---
 
 ## 1. Hardware-verify key rotation
 
-**Status.** Code-complete, NOT hardware-verified. Two-device test
-needed: one side rotates, the other picks up the cert on next sync
-and rekeys trust edges, contacts, and message history automatically.
+**Status.** Code-complete (including auto-rotation + cert chaining),
+NOT hardware-verified. Two-device test needed: one side rotates, the
+other picks up the cert on next sync and rekeys trust edges, contacts,
+and message history automatically. Also test chain resolution: rotate
+twice on one device while the other is offline, then sync.
 
 ---
 
@@ -41,7 +45,7 @@ and Room schema export enabled — all untested in automation.
 
 **Status.** Metadata is ready (`metadata/com.wyspr.yml`, fastlane
 descriptions + changelogs). Needs:
-- Tag `v0.9.3` on the repo
+- Tag `v0.9.4` on the repo
 - Fork `f-droid/fdroiddata`, submit PR with `metadata/com.wyspr.yml`
 - Accept that reproducible-build check will flag pre-built native
   deps (lazysodium, kmp-tor) — documented in `docs/FDROID.md`

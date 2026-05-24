@@ -28,13 +28,9 @@ suspend fun runKeyRotationSyncRound(
     link.sendMessage(KeyRotationSyncMessage.Push(push))
 
     val peerPush = link.receiveMessage<KeyRotationSyncMessage.Push>()
-    var accepted = 0
-    for (wireCert in peerPush.certs) {
-        if (repository.ingest(database, wireCert, trustGraph, sodium)) {
-            accepted++
-        }
-    }
-    return accepted
+    return repository.resolveAndIngestBatch(
+        database, peerPush.certs, trustGraph, sodium,
+    )
 }
 
 private suspend fun Link.sendMessage(msg: KeyRotationSyncMessage) {

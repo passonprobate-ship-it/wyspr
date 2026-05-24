@@ -15,6 +15,7 @@ import com.wyspr.core.database.WysprDatabaseImpl
 import com.wyspr.core.currency.WalletService
 import com.wyspr.core.transport.TorBackend
 import com.wyspr.core.ui.settings.BiometricSettings
+import com.wyspr.core.ui.settings.KeyRotationSettings
 import com.wyspr.core.trust.HandshakeProtocolImpl
 import com.wyspr.core.trust.TrustGraphService
 import dagger.Module
@@ -122,16 +123,24 @@ object CryptoModule {
 
     @Provides
     @Singleton
+    fun provideKeyRotationSettings(
+        @ApplicationContext context: Context,
+    ): KeyRotationSettings = KeyRotationSettings(context)
+
+    @Provides
+    @Singleton
     fun provideKeyRotationService(
         @ApplicationContext context: Context,
         keystore: KeystoreManager,
         database: WysprDatabase,
         sodium: LazySodiumAndroid,
+        rotationSettings: KeyRotationSettings,
     ): KeyRotationService = KeyRotationService(
         context = context,
         keystore = keystore,
         database = database,
         sodium = sodium,
+        rotationSettings = rotationSettings,
     )
 
     @Provides
