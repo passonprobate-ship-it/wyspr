@@ -36,7 +36,15 @@ class BiometricUnlocker {
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    if (cont.isActive) cont.resume(false)
+                    if (cont.isActive) {
+                        if (errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
+                            android.util.Log.w(
+                                "BiometricUnlocker",
+                                "Biometric locked. Unlock with your device PIN first.",
+                            )
+                        }
+                        cont.resume(false)
+                    }
                 }
 
                 override fun onAuthenticationFailed() {

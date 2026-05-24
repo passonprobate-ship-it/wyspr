@@ -49,9 +49,8 @@ class CommunityService(
         val now = clock()
         val nonce = ByteArray(NONCE_BYTES).also { random.nextBytes(it) }
         val communityId = deriveCommunityId(founderPub, nonce, now)
-        // v0 single-membership rule: wipe before inserting.
-        database.communityMembershipDao.deleteAll()
-        database.communityMembershipDao.upsert(
+        // v0 single-membership rule: atomic wipe + insert.
+        database.communityMembershipDao.replaceAll(
             CommunityMembershipEntity(
                 communityId = communityId.bytes,
                 foundedAt = now,
@@ -71,8 +70,7 @@ class CommunityService(
      */
     suspend fun switchCommunity(communityId: CommunityId, isFounder: Boolean = false) {
         ensureOpen()
-        database.communityMembershipDao.deleteAll()
-        database.communityMembershipDao.upsert(
+        database.communityMembershipDao.replaceAll(
             CommunityMembershipEntity(
                 communityId = communityId.bytes,
                 foundedAt = clock(),

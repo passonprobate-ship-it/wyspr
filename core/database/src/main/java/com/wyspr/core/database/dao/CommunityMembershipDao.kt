@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import com.wyspr.core.database.entities.CommunityMembershipEntity
 
 @Dao
@@ -23,4 +24,11 @@ interface CommunityMembershipDao {
 
     @Query("DELETE FROM community_membership")
     suspend fun deleteAll()
+
+    /** Atomic delete-all-then-upsert for one-community-per-device rule. */
+    @Transaction
+    suspend fun replaceAll(row: CommunityMembershipEntity) {
+        deleteAll()
+        upsert(row)
+    }
 }

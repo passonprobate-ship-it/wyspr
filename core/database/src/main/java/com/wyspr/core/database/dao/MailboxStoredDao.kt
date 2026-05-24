@@ -40,6 +40,10 @@ interface MailboxStoredDao {
         limit: Int,
     ): List<MailboxStoredEntity>
 
+    /** Count envelopes held for a single recipient — used by the per-recipient quota check. */
+    @Query("SELECT COUNT(*) FROM mailbox_stored WHERE to_pub = :toPub")
+    suspend fun countForRecipient(toPub: ByteArray): Int
+
     /** All-recipient lookup (no cursor, no limit) — used by Ack handler for the to_pub guard. */
     @Query("SELECT envelope_id FROM mailbox_stored WHERE to_pub = :toPub")
     suspend fun envelopeIdsForRecipient(toPub: ByteArray): List<ByteArray>

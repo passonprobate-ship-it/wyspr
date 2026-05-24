@@ -86,45 +86,76 @@ class PeerVersionChecker @Inject constructor(
     }
 
     /**
+     * Exponential backoff state. On consecutive failures the delay
+     * between allowed refreshes doubles, starting at [BASE_BACKOFF_MS]
+     * and capping at [MAX_BACKOFF_MS]. A successful refresh resets the
+     * counter immediately.
+     */
+    @Volatile private var consecutiveFailures = 0
+    @Volatile private var nextAllowedRefreshMs = 0L
+
+    /**
      * Poll every paired peer's `/version.json`. Slow (sequential
      * SOCKS5 dials over Tor; expect 1-5 s each), so call this on a
      * background scope with a generous interval. The result replaces
      * the cache atomically.
+     *
+     * Applies exponential backoff on failure — if the previous round
+     * failed, the next call is skipped until the backoff window elapses.
      */
     suspend fun refresh() {
         if (!database.isOpen) return
+        val now = System.currentTimeMillis()
+        if (now < nextAllowedRefreshMs) return
         val socksPort = torBackend.socksPort.value ?: return
-        val edges = withContext(Dispatchers.IO) {
-            runCatching { database.trustEdgeDao.all() }.getOrDefault(emptyList())
-        }
-        val onions = edges
-            .mapNotNull { it.peerOnion?.takeIf { o -> o.length == 56 } to it }
-            .filter { (onion, _) -> onion != null }
-            .map { (onion, edge) -> onion!! to edge }
-        if (onions.isEmpty()) {
-            _available.value = emptyList()
-            return
-        }
-        val results = mutableListOf<PeerUpdate>()
-        for ((onion, edge) in onions) {
-            val ownPub = keystore.loadOrCreateIdentityKey().publicKey
-            val peerPub = if (edge.fromPub.contentEquals(ownPub)) edge.toPub else edge.fromPub
-            if (peerPub.toList() in dismissed) continue
-            val info = probeOnce(socksPort, onion) ?: continue
-            if (info.versionCode > BuildConfig.VERSION_CODE) {
-                results.add(
-                    PeerUpdate(
-                        peerPub = peerPub,
-                        peerOnion = onion,
-                        peerVersionCode = info.versionCode,
-                        peerVersionName = info.versionName,
-                        apkSha256 = info.apkSha256,
-                        apkSizeBytes = info.apkSizeBytes,
-                    ),
-                )
+        var anySuccess = false
+        try {
+            val edges = withContext(Dispatchers.IO) {
+                runCatching { database.trustEdgeDao.all() }.getOrDefault(emptyList())
+            }
+            val onions = edges
+                .mapNotNull { it.peerOnion?.takeIf { o -> o.length == 56 } to it }
+                .filter { (onion, _) -> onion != null }
+                .map { (onion, edge) -> onion!! to edge }
+            if (onions.isEmpty()) {
+                _available.value = emptyList()
+                anySuccess = true
+                return
+            }
+            val results = mutableListOf<PeerUpdate>()
+            for ((onion, edge) in onions) {
+                val ownPub = keystore.loadOrCreateIdentityKey().publicKey
+                val peerPub = if (edge.fromPub.contentEquals(ownPub)) edge.toPub else edge.fromPub
+                if (peerPub.toList() in dismissed) continue
+                val info = probeOnce(socksPort, onion)
+                if (info != null) anySuccess = true
+                if (info == null) continue
+                if (info.versionCode > BuildConfig.VERSION_CODE) {
+                    results.add(
+                        PeerUpdate(
+                            peerPub = peerPub,
+                            peerOnion = onion,
+                            peerVersionCode = info.versionCode,
+                            peerVersionName = info.versionName,
+                            apkSha256 = info.apkSha256,
+                            apkSizeBytes = info.apkSizeBytes,
+                        ),
+                    )
+                }
+            }
+            _available.value = results
+        } finally {
+            if (anySuccess) {
+                consecutiveFailures = 0
+                nextAllowedRefreshMs = 0L
+            } else {
+                consecutiveFailures++
+                val delayMs = (BASE_BACKOFF_MS shl (consecutiveFailures - 1).coerceAtMost(MAX_SHIFT))
+                    .coerceAtMost(MAX_BACKOFF_MS)
+                nextAllowedRefreshMs = System.currentTimeMillis() + delayMs
+                Log.d(TAG, "refresh failed (consecutive=$consecutiveFailures); backoff ${delayMs / 1000}s")
             }
         }
-        _available.value = results
     }
 
     private suspend fun probeOnce(socksPort: Int, onion: String): VersionInfo? =
@@ -202,5 +233,11 @@ class PeerVersionChecker @Inject constructor(
         private const val TAG = "PeerVersionCheck"
         /** Tor circuits are slow on cold start; allow a generous budget. */
         private const val PROBE_TIMEOUT_MS = 30_000
+        /** Initial backoff after first failure (15 minutes). */
+        private const val BASE_BACKOFF_MS = 15 * 60 * 1000L
+        /** Maximum backoff cap (4 hours). */
+        private const val MAX_BACKOFF_MS = 4 * 60 * 60 * 1000L
+        /** Max bit-shift for the doubling (prevents overflow). */
+        private const val MAX_SHIFT = 4 // 15m -> 30m -> 1h -> 2h -> 4h
     }
 }

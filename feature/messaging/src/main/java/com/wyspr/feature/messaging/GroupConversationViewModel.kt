@@ -165,6 +165,15 @@ class GroupConversationViewModel @Inject constructor(
                 if (!database.isOpen) database.open()
                 database.groupDao.setNickname(gid.bytes, trimmed)
             }
+            // Re-query to pick up the new name and update the UI state.
+            val group = withContext(Dispatchers.IO) { groupStore.groupById(gid) }
+            if (group != null) {
+                val newName = group.localNickname?.takeIf { it.isNotBlank() } ?: group.name
+                val cur = _state.value
+                if (cur is UiState.Ready) {
+                    _state.value = cur.copy(groupName = newName)
+                }
+            }
         }
     }
 

@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -29,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -78,6 +80,7 @@ fun AppSettingsScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var sharePreparing by remember { mutableStateOf(false) }
+    var showResetConfirm by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -193,15 +196,41 @@ fun AppSettingsScreen(
                 icon = Icons.Filled.Refresh,
                 title = "Reset identity",
                 subtitle = "Wipes every key + every paired peer. Cannot be undone.",
-                onClick = {
-                    scope.launch {
-                        if (biometricPrompt()) onIdentityReset()
-                    }
-                },
+                onClick = { showResetConfirm = true },
             )
 
             Spacer(modifier = Modifier.size(32.dp))
         }
+    }
+
+    if (showResetConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirm = false },
+            title = { Text("Reset identity?") },
+            text = {
+                Text(
+                    "This will permanently destroy your identity key, all paired " +
+                        "peers, and all message history. This cannot be undone.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showResetConfirm = false
+                        scope.launch {
+                            if (biometricPrompt()) onIdentityReset()
+                        }
+                    },
+                ) {
+                    Text("Reset", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetConfirm = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 

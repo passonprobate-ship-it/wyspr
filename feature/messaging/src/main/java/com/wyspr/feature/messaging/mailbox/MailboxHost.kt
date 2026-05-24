@@ -117,6 +117,19 @@ class MailboxHost @Inject constructor(
         }
 
         ensureOpen()
+
+        // Per-recipient quota: prevent a single recipient from
+        // monopolising storage. A malicious sender (or a flood of
+        // legitimate senders) could fill the entire cap with mail
+        // for one address; the eviction loop would then drop
+        // everyone else's envelopes to make room. 1 000 envelopes
+        // per recipient is generous — at 16 KB each that's ~16 MB.
+        val recipientCount = database.mailboxStoredDao
+            .countForRecipient(envelope.toPub.bytes)
+        if (recipientCount >= MAX_ENVELOPES_PER_RECIPIENT) {
+            Log.w(TAG, "push: recipient ${envelope.toPub.shortHex()} quota exceeded ($recipientCount envelopes)")
+            return@withContext PushOutcome.QuotaExceeded
+        }
         val cap = settings.storageCapBytes.value
         val incomingSize = envelope.ciphertext.size
         if (incomingSize > cap) {
@@ -289,10 +302,14 @@ class MailboxHost @Inject constructor(
         data object Rejected : PushOutcome
         /** Host has the toggle off. Sender should pick a different mailbox. */
         data object NotHosting : PushOutcome
+        /** Per-recipient envelope limit exceeded. */
+        data object QuotaExceeded : PushOutcome
     }
 
     private companion object {
         const val TAG = "MailboxHost"
+        /** Maximum envelopes stored for a single recipient. */
+        const val MAX_ENVELOPES_PER_RECIPIENT: Int = 1_000
         /** How far in the past the sender's clock may be vs ours. */
         const val CREATED_AT_MAX_PAST_SECONDS: Long = 365L * 24 * 60 * 60
         /** How far in the future the sender's clock may be vs ours. */

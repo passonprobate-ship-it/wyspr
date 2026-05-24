@@ -81,8 +81,8 @@ object Socks5 {
                 // VER=5, NMETHODS=1, METHODS=[NO_AUTH]
                 out.write(byteArrayOf(0x05, 0x01, 0x00))
                 out.flush()
-                val mver = ins.read()
-                val mmethod = ins.read()
+                val mver = readByte(ins, "method VER")
+                val mmethod = readByte(ins, "method METHOD")
                 if (mver != 0x05 || mmethod != 0x00) {
                     throw IOException("SOCKS5: method negotiation failed (ver=$mver method=$mmethod)")
                 }
@@ -90,8 +90,8 @@ object Socks5 {
                 // VER=5, NMETHODS=1, METHODS=[USERPASS]
                 out.write(byteArrayOf(0x05, 0x01, 0x02))
                 out.flush()
-                val mver = ins.read()
-                val mmethod = ins.read()
+                val mver = readByte(ins, "method VER")
+                val mmethod = readByte(ins, "method METHOD")
                 if (mver != 0x05 || mmethod != 0x02) {
                     throw IOException("SOCKS5: server refused USERPASS auth (ver=$mver method=$mmethod)")
                 }
@@ -106,8 +106,8 @@ object Socks5 {
                 out.write(0x01)                  // PLEN=1
                 out.write(0x00)                  // PWD=0x00
                 out.flush()
-                val aver = ins.read()
-                val astatus = ins.read()
+                val aver = readByte(ins, "USERPASS VER")
+                val astatus = readByte(ins, "USERPASS STATUS")
                 if (aver != 0x01 || astatus != 0x00) {
                     throw IOException("SOCKS5 USERPASS auth failed (ver=$aver status=$astatus)")
                 }
@@ -126,10 +126,10 @@ object Socks5 {
             out.flush()
 
             // ---- CONNECT reply (RFC 1928 §6) ----
-            val rver = ins.read()
-            val rep = ins.read()
-            val rsv = ins.read()
-            val atyp = ins.read()
+            val rver = readByte(ins, "reply VER")
+            val rep = readByte(ins, "reply REP")
+            val rsv = readByte(ins, "reply RSV")
+            val atyp = readByte(ins, "reply ATYP")
             if (rver != 0x05 || rsv != 0x00) {
                 throw IOException("SOCKS5: bad reply header ver=$rver rsv=$rsv")
             }
@@ -144,8 +144,7 @@ object Socks5 {
                     val buf = ByteArray(4); readFully(ins, buf, "BND IPv4")
                 }
                 0x03 -> { // DOMAINNAME
-                    val len = ins.read()
-                    if (len < 0) throw IOException("SOCKS5: truncated BND domain length")
+                    val len = readByte(ins, "BND domain length")
                     val buf = ByteArray(len); readFully(ins, buf, "BND domain")
                 }
                 0x04 -> { // IPv6
@@ -166,6 +165,13 @@ object Socks5 {
             runCatching { socket.close() }
             throw t
         }
+    }
+
+    /** Read a single byte, throwing on EOF instead of returning -1. */
+    private fun readByte(input: InputStream, label: String): Int {
+        val b = input.read()
+        if (b == -1) throw IOException("SOCKS5: connection closed by proxy (reading $label)")
+        return b
     }
 
     private fun readFully(input: InputStream, buf: ByteArray, label: String) {

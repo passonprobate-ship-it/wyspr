@@ -97,6 +97,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.wyspr.feature.messaging.location.LocationPayload
 import java.text.DateFormat
 import java.util.Date
@@ -155,7 +157,9 @@ fun ConversationScreen(
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 17.sp,
                         maxLines = 1,
-                        modifier = Modifier.clickable { viewModel.openPeerDetails() },
+                        modifier = Modifier
+                            .clickable { viewModel.openPeerDetails() }
+                            .semantics { contentDescription = "Open details for $name" },
                     )
                 },
                 navigationIcon = {
@@ -251,7 +255,7 @@ fun ConversationScreen(
                                         onRetractReaction = { viewModel.retractReaction(msg) },
                                         onScrollToQuoted = { id ->
                                             val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
-                                            if (idx >= 0) {
+                                            if (idx >= 0 && idx in s.messages.indices) {
                                                 scope.launch { listState.animateScrollToItem(idx) }
                                             }
                                         },
@@ -866,7 +870,8 @@ private fun MessageBubble(
                                         menuOpen = false
                                         onReact(emoji)
                                     }
-                                    .padding(6.dp),
+                                    .padding(6.dp)
+                                    .semantics { contentDescription = "React with $emoji" },
                             )
                         }
                     }
@@ -926,6 +931,10 @@ private fun MessageBubble(
                             )
                             .clickable {
                                 if (isMine) onRetractReaction() else onReact(emoji)
+                            }
+                            .semantics {
+                                contentDescription = if (isMine) "Remove your $emoji reaction"
+                                    else "React with $emoji"
                             },
                     ) {
                         Row(

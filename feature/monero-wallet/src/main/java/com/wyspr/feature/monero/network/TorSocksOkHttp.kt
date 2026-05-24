@@ -31,6 +31,15 @@ object TorSocksOkHttp {
      */
     fun build(torBackend: TorBackend): OkHttpClient = OkHttpClient.Builder()
         .proxySelector(TorProxySelector(torBackend))
+        // Prevent DNS leaks — the SOCKS proxy resolves hostnames
+        // inside Tor. If OkHttp ever bypasses the proxy selector
+        // for DNS, this throws instead of leaking the query to the
+        // system resolver.
+        .dns(object : okhttp3.Dns {
+            override fun lookup(hostname: String): List<java.net.InetAddress> {
+                throw java.net.UnknownHostException("DNS disabled; SOCKS proxy resolves")
+            }
+        })
         // Modest read timeout — Tor circuits can be slow but the
         // Monero RPC is mostly small JSON. A 60s ceiling catches
         // wedged circuits without prematurely killing a real-but-

@@ -16,20 +16,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.wyspr.core.identity.Identity
 import com.wyspr.core.trust.HandshakeQr
+import com.wyspr.core.trust.HandshakeQrCodec
 import com.wyspr.core.ui.QrRenderer
 
 /**
@@ -112,6 +118,64 @@ fun PairScreen(
             textAlign = TextAlign.Center,
         )
 
+        // ---- Remote pairing: copy / paste codes ----
+        val context = LocalContext.current
+        var pasteMode by remember { mutableStateOf(false) }
+        var pasteText by remember { mutableStateOf("") }
+        var pasteError by remember { mutableStateOf<String?>(null) }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(
+                onClick = {
+                    val clip = android.content.ClipData.newPlainText("wyspr-qr", qrBase32)
+                    if (android.os.Build.VERSION.SDK_INT >= 33) {
+                        clip.description.extras = android.os.PersistableBundle().apply {
+                            putBoolean("android.content.extra.IS_SENSITIVE", true)
+                        }
+                    }
+                    val clipMgr = context.getSystemService(android.content.ClipboardManager::class.java)
+                    clipMgr.setPrimaryClip(clip)
+                },
+                modifier = Modifier.weight(1f),
+            ) { Text("Copy my code") }
+            OutlinedButton(
+                onClick = { pasteMode = !pasteMode },
+                modifier = Modifier.weight(1f),
+            ) { Text(if (pasteMode) "Use camera" else "Paste peer code") }
+        }
+
+        if (pasteMode && !scanned) {
+            OutlinedTextField(
+                value = pasteText,
+                onValueChange = { pasteText = it; pasteError = null },
+                placeholder = { Text("Paste their code here…") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = false,
+                maxLines = 4,
+                isError = pasteError != null,
+                supportingText = pasteError?.let { err -> { Text(err) } },
+            )
+            androidx.compose.material3.Button(
+                onClick = {
+                    val qr = runCatching {
+                        val bytes = HandshakeQrCodec.fromBase32(pasteText.trim())
+                        HandshakeQrCodec.decode(bytes)
+                    }.getOrNull()
+                    if (qr != null) {
+                        pasteError = null
+                        onPeerScanned(qr)
+                    } else {
+                        pasteError = "Invalid code — ask them to copy it again."
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = pasteText.isNotBlank(),
+            ) { Text("Use this code") }
+        }
+
         if (scanned) {
             // Camera intentionally removed from the composition — its
             // DisposableEffect tears down CameraX so we don't keep a
@@ -122,7 +186,7 @@ fun PairScreen(
                 color = MaterialTheme.colorScheme.primary,
                 textAlign = TextAlign.Center,
             )
-        } else {
+        } else if (!pasteMode) {
             // ---- Their QR (camera) ----
             Surface(
                 color = Color.Black,

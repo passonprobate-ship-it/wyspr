@@ -27,13 +27,12 @@ import java.net.Socket
  * one length-prefixed frame to the wire, and [incoming] emits one
  * [ByteArray] per frame that arrives.
  *
- *     [ frame_len: u16 big-endian ][ payload: bytes ]   (max 16384)
+ *     [ frame_len: u32 big-endian ][ payload: bytes ]   (max 262144)
  *
- * The u16 length matches BleLink so a Noise session can be carried
- * over either transport without re-framing. Anything above 65535
- * would be rejected by the wire format anyway; we cap at 16384 (same
- * as BleLink's `MAX_FRAME_BYTES`) so a misbehaving peer can't pin a
- * 64 KiB buffer per frame.
+ * The u32 length header allows frames up to 256 KiB (MAX_FRAME_BYTES
+ * = 262 144). Noise sessions can be carried over either BLE or Tor
+ * without re-framing — the framing layout is identical, only the
+ * maximum payload size differs.
  *
  * Lifecycle: the link owns the [socket] and an internal read coroutine.
  * [close] is idempotent and disposes both. The socket-read coroutine

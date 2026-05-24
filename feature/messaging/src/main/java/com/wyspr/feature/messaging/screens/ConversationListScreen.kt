@@ -426,6 +426,7 @@ private fun GroupRowView(
     onRename: (String?) -> Unit = {},
     onLeave: () -> Unit = {},
 ) {
+    val fmt = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
     var menuOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var confirmLeave by remember { mutableStateOf(false) }
@@ -524,7 +525,7 @@ private fun GroupRowView(
                     )
                     row.lastAt?.let {
                         Text(
-                            DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it * 1000)),
+                            fmt.format(Date(it * 1000)),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -624,6 +625,7 @@ private fun SearchResultRow(
     hit: ConversationListViewModel.SearchHit,
     onClick: () -> Unit,
 ) {
+    val fmt = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
@@ -659,7 +661,7 @@ private fun SearchResultRow(
                         maxLines = 1,
                     )
                     Text(
-                        DateFormat.getTimeInstance(DateFormat.SHORT).format(
+                        fmt.format(
                             Date(hit.message.createdAt * 1000),
                         ),
                         style = MaterialTheme.typography.labelSmall,
@@ -683,6 +685,7 @@ private fun ThreadRowView(
     row: ConversationListViewModel.ThreadRow,
     onClick: () -> Unit,
 ) {
+    val fmt = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
@@ -722,7 +725,7 @@ private fun ThreadRowView(
                     }
                     row.lastAt?.let {
                         Text(
-                            DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it * 1000)),
+                            fmt.format(Date(it * 1000)),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

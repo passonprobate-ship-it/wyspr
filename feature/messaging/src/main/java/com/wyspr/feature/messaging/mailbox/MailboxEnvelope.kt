@@ -184,11 +184,15 @@ data class MailboxEnvelope(
                     recipientX25519Sec,
                 ),
             ) { "crypto_box_seal_open failed (corrupt or wrong recipient)" }
-            val inner = MessageEnvelope.fromWire(plaintext)
-            require(inner.toPub.bytes.contentEquals(envelope.toPub.bytes)) {
-                "inner.toPub does not match outer envelope.toPub"
+            try {
+                val inner = MessageEnvelope.fromWire(plaintext)
+                require(inner.toPub.bytes.contentEquals(envelope.toPub.bytes)) {
+                    "inner.toPub does not match outer envelope.toPub"
+                }
+                return inner
+            } finally {
+                plaintext.fill(0)
             }
-            return inner
         }
 
         fun fromWire(blob: ByteArray): MailboxEnvelope = Cbor.decode(blob) {

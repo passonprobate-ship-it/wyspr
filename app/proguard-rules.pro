@@ -32,8 +32,12 @@
 -keepclasseswithmembers class * { @com.sun.jna.* <methods>; }
 
 # Room — generated DAO impls reflect on the entity constructors.
--keep class com.keystone.core.database.entities.** { *; }
--keepclassmembers class com.keystone.core.database.entities.** { <init>(...); }
+-keep class com.wyspr.core.database.entities.** { *; }
+-keepclassmembers class com.wyspr.core.database.entities.** { <init>(...); }
+
+# Molly Monero SDK — JNI + reflection-heavy native bridge.
+-keep class im.molly.monero.** { *; }
+-keep class im.molly.** { *; }
 
 # Hilt-generated entry points have predictable names; keep them.
 -keep,allowobfuscation class * extends androidx.lifecycle.ViewModel
