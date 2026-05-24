@@ -5,6 +5,8 @@ import com.wyspr.app.transport.EmbeddedTorBackend
 import com.wyspr.app.transport.TorHiddenServiceTransport
 import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.transport.TorBackend
+import com.wyspr.core.transport.TorTransport
+import com.wyspr.core.transport.Transport
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -39,4 +41,11 @@ object TorBackendModule {
     fun provideTorHiddenServiceTransport(
         torBackend: TorBackend,
     ): TorHiddenServiceTransport = TorHiddenServiceTransport(torBackend)
+
+    @Provides
+    @Singleton
+    @TorTransport
+    fun provideTorTransport(
+        impl: TorHiddenServiceTransport,
+    ): Transport = impl
 }
