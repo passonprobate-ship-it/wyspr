@@ -1,15 +1,20 @@
-Keystone is a private network for small groups — families, co-ops, congregations, mutual-aid circles — built on the assumption that the platform layer (Google, your ISP, the underlying OS vendor) is not a friend.
+Wyspr is private messaging for people who don't trust the platform layer — no server, no account, no phone number.
 
-Membership is by face-to-face invitation only. A new member is added by an existing member scanning their QR code and running a Noise XX handshake over Bluetooth. There is no central server, no account, no phone number, and no email to register.
+Pair in person by scanning QR codes. A Noise XX handshake over Bluetooth establishes a trust edge backed by hardware-keystore identity keys (StrongBox where available, TEE everywhere else). Software-only keys are refused.
 
-Messages are encrypted end-to-end with the Noise protocol (XX pattern, X25519 + ChaCha20-Poly1305 + BLAKE2s). Identity keys are sealed in the Android hardware keystore — StrongBox where available, TEE everywhere else. Software-only keys are refused.
+Messages are encrypted end-to-end with Noise (X25519 + ChaCha20-Poly1305 + BLAKE2s). Devices reach each other over Bluetooth LE when in range, and over an embedded Tor hidden service across the internet. Each device derives its own stable .onion address from the keystore identity — peers exchange onions during the handshake and can reach each other anywhere afterwards.
 
-Devices reach each other over Bluetooth Low Energy when in range, and over an embedded Tor hidden service across the internet. Each device publishes its own Tor v3 onion address — derived deterministically from the keystore identity, so it survives reinstalls. Peers exchange onions during the handshake and can reach each other anywhere afterwards. No third-party transport. No metadata logged.
+Trust is web-of-trust: every authorization decision is evaluated against k-independent paths through signed invitation certificates. A single compromised device cannot impersonate anyone else, and a revoked device is locked out by the next sync round.
 
-Trust is web-of-trust by construction: every authorization decision (who can invite, who has been revoked) is evaluated against k-independent paths through signed invitation certificates. A single compromised device cannot impersonate anyone else, and a revoked device is locked out by the next sync round.
+Features:
+• Encrypted 1:1 and group messaging with read receipts
+• Image, voice note, and file sharing
+• Reply quoting and emoji reactions
+• Disappearing messages (per-conversation timer)
+• Message search
+• Async mailbox delivery (community members volunteer to hold sealed-box-encrypted envelopes while you're offline)
+• Peer-to-peer APK distribution (no app store required)
+• Personal .onion profile page (pure HTML, no JS, no tracking)
+• Tor bootstrap watchdog (auto-recovers stuck connections)
 
-Today: encrypted messaging with read receipts, peer-to-peer APK distribution (no app store required), and trust-graph visualization.
-
-Coming: encrypted personal-records vault, member directory, coordination (events / voting), Monero wallet via embedded Tor, and reproducible builds.
-
-This is anti-platform software. The integrity of the private network beats every other concern.
+No telemetry. No analytics. No ads. No metadata logged.

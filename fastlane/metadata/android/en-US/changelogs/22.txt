@@ -1,0 +1,40 @@
+v0.9.1 — 68 bug fixes + Tor-only messaging verified on hardware.
+
+Security:
+• Noise protocol chunking for payloads >65KB (was crashing)
+• Revocations now require Full trust level (Provisional members
+  can no longer revoke anyone, Roots only revoked by Roots)
+• HandshakeState key material zeroed after Noise XX split
+• WAL checkpoint after disappearing message deletion
+• SQLCipher cipher_memory_security enabled
+• ProGuard rules fixed for correct package name
+• Monero DNS leak closed (OkHttp resolver override)
+• MailboxEnvelope plaintext zeroed after unseal
+• Clipboard privacy for QR codes on Android 13+
+
+Messaging:
+• Group messages now reach ALL members (per-recipient delivery
+  tracking via new group_message_delivery table)
+• MessageDao upsert changed to IGNORE (prevents read-status reset)
+• Mailbox per-recipient quota (1000 envelopes max)
+• Faster conversation rendering (reactions load async)
+• Paired contacts visible on Chats tab immediately
+
+Tor:
+• Bootstrap watchdog — auto-restart if stalled >120s
+• RuntimeEvent.READY race condition fixed
+• TorLink close() thread-safe with Mutex
+• Cached session eviction now closes the socket
+• Framing docs corrected (u32, not u16)
+
+Transport:
+• BLE negative frame length check
+• drainAccepted cleans up acceptedLinks map
+• SOCKS5 EOF detection with clear error messages
+
+UX:
+• "Add a contact" replaces "Pair a peer"
+• Auto-scroll only when near bottom of conversation
+• Identity reset confirmation dialog
+• Camera permission denial is now tappable
+• Accessibility labels on reactions and title

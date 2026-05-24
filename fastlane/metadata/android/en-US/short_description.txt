@@ -1,1 +1,1 @@
-Private messaging and shared records for small groups that distrust the platform layer.
+Private, censorship-resistant messaging over Bluetooth and Tor.
