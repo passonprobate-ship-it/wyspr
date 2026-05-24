@@ -257,7 +257,7 @@ class GroupConversationViewModel @Inject constructor(
 
     private companion object {
         const val INITIAL_SYNC_DELAY_MS = 1_500L
-        const val AUTO_SYNC_TIMEOUT_MS = 12_000L
+        const val AUTO_SYNC_TIMEOUT_MS = 30_000L
         const val AUTO_SYNC_INTERVAL_MS = 8_000L
     }
 }

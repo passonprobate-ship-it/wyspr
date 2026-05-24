@@ -103,6 +103,14 @@ import com.wyspr.feature.messaging.location.LocationPayload
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.launch
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.runtime.derivedStateOf
 
 private val bubbleTimeFormatter: ThreadLocal<DateFormat> =
     ThreadLocal.withInitial { DateFormat.getTimeInstance(DateFormat.SHORT) }
@@ -224,42 +232,60 @@ fun ConversationScreen(
                                     com.wyspr.core.identity.PeerKey(it.id)
                                 }
                             }
-                            LazyColumn(
-                                state = listState,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 16.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
-                                contentPadding = PaddingValues(vertical = 8.dp),
-                            ) {
-                                items(s.messages, key = { it.id.toList() }) { msg ->
-                                    if (ReactionPayload.isReaction(msg.body)) return@items
-                                    if (DisappearPayload.isDisappear(msg.body)) return@items
-                                    val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)
-                                    val quoted = decoded?.replyToId?.let { id ->
-                                        byId[PeerKey(id)]
+                            val showScrollFab = remember {
+                                derivedStateOf { listState.firstVisibleItemIndex < s.messages.size - 5 }
+                            }
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                LazyColumn(
+                                    state = listState,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(horizontal = 16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    contentPadding = PaddingValues(vertical = 8.dp),
+                                ) {
+                                    items(s.messages, key = { it.id.toList() }) { msg ->
+                                        if (ReactionPayload.isReaction(msg.body)) return@items
+                                        if (DisappearPayload.isDisappear(msg.body)) return@items
+                                        val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)
+                                        val quoted = decoded?.replyToId?.let { id ->
+                                            byId[PeerKey(id)]
+                                        }
+                                        val ownBytesNN = ownBytes
+                                        val msgReactions = s.reactions[PeerKey(msg.id)].orEmpty()
+                                        MessageBubble(
+                                            msg = msg,
+                                            fromSelf = ownBytesNN?.contentEquals(msg.fromPub) == true,
+                                            quoted = quoted,
+                                            quotedFromSelf = quoted != null
+                                                && ownBytesNN != null
+                                                && quoted.fromPub.contentEquals(ownBytesNN),
+                                            reactions = msgReactions,
+                                            ownPub = ownBytesNN,
+                                            onReply = { viewModel.pickReply(msg) },
+                                            onReact = { emoji -> viewModel.sendReaction(msg, emoji) },
+                                            onRetractReaction = { viewModel.retractReaction(msg) },
+                                            onScrollToQuoted = { id ->
+                                                val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
+                                                if (idx >= 0 && idx in s.messages.indices) {
+                                                    scope.launch { listState.animateScrollToItem(idx) }
+                                                }
+                                            },
+                                        )
                                     }
-                                    val ownBytesNN = ownBytes
-                                    val msgReactions = s.reactions[PeerKey(msg.id)].orEmpty()
-                                    MessageBubble(
-                                        msg = msg,
-                                        fromSelf = ownBytesNN?.contentEquals(msg.fromPub) == true,
-                                        quoted = quoted,
-                                        quotedFromSelf = quoted != null
-                                            && ownBytesNN != null
-                                            && quoted.fromPub.contentEquals(ownBytesNN),
-                                        reactions = msgReactions,
-                                        ownPub = ownBytesNN,
-                                        onReply = { viewModel.pickReply(msg) },
-                                        onReact = { emoji -> viewModel.sendReaction(msg, emoji) },
-                                        onRetractReaction = { viewModel.retractReaction(msg) },
-                                        onScrollToQuoted = { id ->
-                                            val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
-                                            if (idx >= 0 && idx in s.messages.indices) {
-                                                scope.launch { listState.animateScrollToItem(idx) }
-                                            }
-                                        },
-                                    )
+                                }
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = showScrollFab.value && s.messages.size > 5,
+                                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                                    enter = fadeIn() + scaleIn(),
+                                    exit = fadeOut() + scaleOut(),
+                                ) {
+                                    SmallFloatingActionButton(
+                                        onClick = { scope.launch { listState.animateScrollToItem(s.messages.lastIndex) } },
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    ) {
+                                        Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Scroll to bottom")
+                                    }
                                 }
                             }
                         }

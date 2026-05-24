@@ -455,8 +455,8 @@ class ConversationViewModel @Inject constructor(
     private companion object {
         /** Wait before the first auto-sync so the UI settles. */
         const val INITIAL_SYNC_DELAY_MS = 1_500L
-        /** Per-attempt BLE budget — tight enough to retry quickly. */
-        const val AUTO_SYNC_TIMEOUT_MS = 12_000L
+        /** Per-attempt budget — generous enough for a large Push frame over BLE/Tor. */
+        const val AUTO_SYNC_TIMEOUT_MS = 30_000L
         /** Idle time between attempts. */
         const val AUTO_SYNC_INTERVAL_MS = 8_000L
 

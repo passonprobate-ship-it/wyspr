@@ -10,12 +10,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -53,8 +56,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -62,7 +67,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.wyspr.core.identity.GroupId
 import com.wyspr.core.identity.PublicKey
 import com.wyspr.feature.messaging.ConversationListViewModel
-import java.text.DateFormat
 import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -314,7 +318,7 @@ private fun SheetAction(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.size(16.dp))
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Text(
@@ -391,33 +395,25 @@ private fun shortFingerprint(fp: String): String {
     return raw.take(4) + "⋯" + raw.takeLast(4)
 }
 
-@Composable
-private fun FingerprintChip(fingerprint: String) {
-    val raw = fingerprint.filter { it.isLetterOrDigit() }
-    val mark = raw.take(2).uppercase()
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .background(
-                MaterialTheme.colorScheme.primaryContainer,
-                RoundedCornerShape(8.dp),
-            )
-            .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outline,
-                shape = RoundedCornerShape(8.dp),
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            mark,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-        )
+private fun formatRelativeTime(epochSeconds: Long): String {
+    val now = System.currentTimeMillis() / 1000
+    val diff = now - epochSeconds
+    return when {
+        diff < 60 -> "now"
+        diff < 3600 -> "${diff / 60}m"
+        diff < 86400 -> "${diff / 3600}h"
+        diff < 604800 -> "${diff / 86400}d"
+        else -> {
+            java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT)
+                .format(Date(epochSeconds * 1000))
+        }
     }
 }
+
+private val avatarColors = listOf(
+    Color(0xFF80E0C0), Color(0xFF6384E0), Color(0xFFE06384),
+    Color(0xFFE0C080), Color(0xFF84E063), Color(0xFFC080E0),
+)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -427,7 +423,6 @@ private fun GroupRowView(
     onRename: (String?) -> Unit = {},
     onLeave: () -> Unit = {},
 ) {
-    val fmt = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
     var menuOpen by remember { mutableStateOf(false) }
     var renameOpen by remember { mutableStateOf(false) }
     var confirmLeave by remember { mutableStateOf(false) }
@@ -526,7 +521,7 @@ private fun GroupRowView(
                     )
                     row.lastAt?.let {
                         Text(
-                            fmt.format(Date(it * 1000)),
+                            formatRelativeTime(it),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -626,7 +621,10 @@ private fun SearchResultRow(
     hit: ConversationListViewModel.SearchHit,
     onClick: () -> Unit,
 ) {
-    val fmt = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
+    val fpString = PublicKey(hit.message.threadPub).fingerprint.toString()
+    val initial = (hit.peerDisplayName?.firstOrNull() ?: fpString.firstOrNull() ?: '?').uppercaseChar()
+    val avatarColor = avatarColors[fpString.hashCode().ushr(1) % avatarColors.size]
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
@@ -637,11 +635,20 @@ private fun SearchResultRow(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            FingerprintChip(
-                hit.message.threadPub.let { pub ->
-                    PublicKey(pub).fingerprint.toString()
-                },
-            )
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(avatarColor, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    initial.toString(),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.surface,
+                    textAlign = TextAlign.Center,
+                )
+            }
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -651,20 +658,18 @@ private fun SearchResultRow(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val name = hit.peerDisplayName ?: shortFingerprint(
-                        PublicKey(hit.message.threadPub).fingerprint.toString(),
-                    )
+                    val name = hit.peerDisplayName ?: shortFingerprint(fpString)
                     Text(
                         name,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 15.sp,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        fmt.format(
-                            Date(hit.message.createdAt * 1000),
-                        ),
+                        formatRelativeTime(hit.message.createdAt),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -686,7 +691,10 @@ private fun ThreadRowView(
     row: ConversationListViewModel.ThreadRow,
     onClick: () -> Unit,
 ) {
-    val fmt = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
+    val fpString = row.fingerprint.toString()
+    val initial = (row.displayName?.firstOrNull() ?: fpString.firstOrNull() ?: '?').uppercaseChar()
+    val avatarColor = avatarColors[row.fingerprint.hashCode().ushr(1) % avatarColors.size]
+
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(12.dp),
@@ -697,7 +705,20 @@ private fun ThreadRowView(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            FingerprintChip(row.fingerprint.toString())
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(avatarColor, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    initial.toString(),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 18.sp,
+                    color = MaterialTheme.colorScheme.surface,
+                    textAlign = TextAlign.Center,
+                )
+            }
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -714,19 +735,22 @@ private fun ThreadRowView(
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 16.sp,
                             color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f, fill = false),
                         )
                     } else {
                         Text(
-                            shortFingerprint(row.fingerprint.toString()),
+                            shortFingerprint(fpString),
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 14.sp,
                             color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f, fill = false),
                         )
                     }
                     row.lastAt?.let {
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            fmt.format(Date(it * 1000)),
+                            formatRelativeTime(it),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

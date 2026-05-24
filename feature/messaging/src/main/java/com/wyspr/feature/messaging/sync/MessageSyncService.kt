@@ -794,8 +794,12 @@ class MessageSyncService @Inject constructor(
          * round AFTER a Link has been acquired. Caps the time a stuck Link
          * (peer didn't actually respond) can hold the round mutex. The
          * caller's `withTimeoutOrNull(timeoutMs)` only covers Link acquisition.
+         *
+         * Must be generous enough for a large Push frame (139KB+ over BLE
+         * chunks at ~500B/write with ack round-trips) plus Noise XX (3
+         * messages) plus read receipts plus mailbox phases plus End.
          */
-        const val SESSION_TIMEOUT_MS: Long = 20_000L
+        const val SESSION_TIMEOUT_MS: Long = 45_000L
         const val NOTIFICATION_PREVIEW_CHARS = 120
         private val PROLOGUE_PREFIX = "WYSPR/v1/sync".encodeToByteArray()
         private const val TAG_SYNC = "MessageSync"
