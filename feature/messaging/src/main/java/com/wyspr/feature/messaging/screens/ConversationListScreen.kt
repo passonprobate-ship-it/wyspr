@@ -291,7 +291,7 @@ private fun NewConversationSheet(
             )
             SheetAction(
                 icon = Icons.Filled.Bluetooth,
-                title = "Pair a new peer",
+                title = "Add a contact",
                 subtitle = "Scan QR codes in person to start a trusted chat",
                 onClick = onFindPeers,
             )
@@ -364,15 +364,15 @@ private fun EmptyPanel(onOpenFindPeers: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                "Wyspr messages only flow between two devices that have " +
-                    "shaken hands in person. Pair with a peer to get started.",
+                "Wyspr messages flow between devices that have met in " +
+                    "person. Add a contact to get started.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             ExtendedFloatingActionButton(
                 onClick = onOpenFindPeers,
                 icon = { Icon(Icons.Filled.Bluetooth, contentDescription = null) },
-                text = { Text("Pair a peer") },
+                text = { Text("Add a contact") },
                 containerColor = MaterialTheme.colorScheme.primary,
             )
         }

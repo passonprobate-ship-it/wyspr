@@ -22,8 +22,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -195,27 +193,25 @@ class ConversationViewModel @Inject constructor(
                         row?.disappearAfter,
                     )
                 }
-                .flatMapLatest { info ->
-                    val ids = info.messages.map { it.id }
-                    val reactionsFlow = if (ids.isEmpty()) flowOf(emptyMap())
-                    else messageStore.reactionsForMessages(ids).map { list ->
-                        list.groupBy { com.wyspr.core.identity.PeerKey(it.msgId) }
-                    }
-                    reactionsFlow.map { reactions ->
-                        ThreadData(info.messages, info.displayName, info.notes, reactions, info.disappearAfter)
-                    }
-                }
-                .collectLatest { data ->
+                .collectLatest { info ->
                     _state.value = UiState.Ready(
                         own = ownPub?.let { PublicKey(it) },
                         peer = peer,
-                        displayName = data.displayName,
-                        notes = data.notes,
-                        messages = data.messages,
-                        reactions = data.reactions,
-                        disappearAfter = data.disappearAfter,
+                        displayName = info.displayName,
+                        notes = info.notes,
+                        messages = info.messages,
+                        reactions = (_state.value as? UiState.Ready)?.reactions ?: emptyMap(),
+                        disappearAfter = info.disappearAfter,
                     )
-                    val hasUnviewed = data.messages.any { m ->
+                    val ids = info.messages.map { it.id }
+                    if (ids.isNotEmpty()) {
+                        messageStore.reactionsForMessages(ids).collect { list ->
+                            val reactions = list.groupBy { com.wyspr.core.identity.PeerKey(it.msgId) }
+                            val cur = _state.value as? UiState.Ready ?: return@collect
+                            _state.value = cur.copy(reactions = reactions)
+                        }
+                    }
+                    val hasUnviewed = info.messages.any { m ->
                         m.status == MessageStore.STATUS_RECEIVED &&
                             m.fromPub.contentEquals(peer.bytes)
                     }
@@ -455,13 +451,6 @@ class ConversationViewModel @Inject constructor(
         ) : UiState
     }
 
-    private data class ThreadData(
-        val messages: List<MessageEntity>,
-        val displayName: String?,
-        val notes: String?,
-        val reactions: Map<com.wyspr.core.identity.PeerKey, List<ReactionEntity>>,
-        val disappearAfter: Long?,
-    )
 
     private companion object {
         /** Wait before the first auto-sync so the UI settles. */

@@ -234,7 +234,6 @@ class ConversationListViewModel @Inject constructor(
         }.sortedByDescending { it.lastAt ?: 0L }
 
         if (peers.isEmpty() && groupRows.isEmpty()) return UiState.NoPeers
-        if (threadRows.all { it.lastAt == null } && groupRows.all { it.lastAt == null }) return UiState.Empty
         return UiState.Ready(threadRows, groupRows)
     }
 
