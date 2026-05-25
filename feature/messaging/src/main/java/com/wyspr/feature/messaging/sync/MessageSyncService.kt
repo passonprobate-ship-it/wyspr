@@ -112,6 +112,7 @@ class MessageSyncService @Inject constructor(
      */
     private val raceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var consecutiveFailures = 0
+    @Volatile private var lastOwnPub: ByteArray? = null
 
     // === Sprint 1: cached Noise sessions over Tor ==========================
     //
@@ -183,6 +184,17 @@ class MessageSyncService @Inject constructor(
             }
         val ownPub = PublicKey(ownIdentity.publicKey)
 
+        val prevPub = lastOwnPub
+        if (prevPub != null && !prevPub.contentEquals(ownPub.bytes)) {
+            Log.d(TAG_SYNC, "runOnce: identity changed, clearing cached sessions")
+            for ((_, session) in cachedSessions) {
+                runCatching { session.noise.close() }
+                runCatching { session.link.close() }
+            }
+            cachedSessions.clear()
+        }
+        lastOwnPub = ownPub.bytes.copyOf()
+
         val membership = database.communityMembershipDao.firstOrNull()
             ?: run {
                 Log.w(TAG_SYNC, "runOnce: no community membership")
@@ -238,91 +250,80 @@ class MessageSyncService @Inject constructor(
             transports.startAll(communityId)
             try {
                 Log.d(TAG_SYNC, "runOnce: transports started, waiting for first link (timeout ${timeoutMs}ms)")
-                val outcome = withTimeoutOrNull(timeoutMs) { firstAvailableLink(ownPub.bytes, preferInitiator) }
-                    ?: run {
-                        Log.w(TAG_SYNC, "runOnce: timed out waiting for a link")
-                        consecutiveFailures++
-                        return Result(0, 0, 0, errorReason = "No peer in range")
-                    }
-                val link = outcome.link
-                val role = outcome.role
-                Log.d(TAG_SYNC, "runOnce: got link via $role")
-                // Whether this round staged its (link, noise) into the
-                // cache. When true, both the link and the noise are
-                // owned by the cache; the finally blocks below MUST
-                // NOT close them.
+
+                // Retry loop: stale Tor inbounds can clog the accept
+                // channel. Each stale link is detected by the 5s Noise
+                // m1 timeout in openSessionAndSync. We retry up to
+                // MAX_LINK_RETRIES times within the round's overall
+                // timeout so that stale links are consumed quickly and
+                // a real connection (BLE or fresh Tor) can get through.
+                var lastError: String? = null
+                var sessionResult: SessionResult? = null
                 var keepLinkAlive = false
-                try {
-                    // Wrap the Noise XX handshake + message exchange in
-                    // a timeout. Without this, a half-dead Link (e.g. a
-                    // Tor circuit that completed on the responder side
-                    // but failed on the initiator side, leaving the
-                    // responder reading m1 from an initiator that won't
-                    // send) would hang here forever — holding the round
-                    // mutex and blocking every subsequent runOnce call.
-                    // The auto-sync loop then goes silent. The timeout
-                    // releases the lock and lets the next round retry.
-                    //
-                    // Outer null = timed out; inner null = channel
-                    // binding rejected the peer. Distinguish them so the
-                    // user-facing error is accurate.
-                    val sessionOutcome: SessionOutcome = withTimeoutOrNull(SESSION_TIMEOUT_MS) {
-                        val r = openSessionAndSync(
-                            role = role,
-                            link = link,
-                            communityId = communityId,
-                            ownPub = ownPub,
-                            peerLookup = peerLookup,
-                        )
-                        if (r == null) SessionOutcome.NotRecognised else SessionOutcome.Ok(r)
-                    } ?: SessionOutcome.TimedOut
-                    val sessionResult = when (sessionOutcome) {
-                        is SessionOutcome.Ok -> sessionOutcome.result
-                        SessionOutcome.NotRecognised -> {
-                            Log.w(TAG_SYNC, "runOnce: peer not recognised (channel-binding failed)")
-                            return Result(
-                                attemptedPeers = 1,
-                                pushedMessages = 0,
-                                receivedMessages = 0,
-                                errorReason = "Peer not recognised (channel-binding failed)",
+                var winningLink: Link? = null
+
+                var attempt = 0
+                while (attempt < MAX_LINK_RETRIES && sessionResult == null) {
+                    attempt++
+                    val outcome = withTimeoutOrNull(timeoutMs) { firstAvailableLink(ownPub.bytes, preferInitiator) }
+                    if (outcome == null) {
+                        Log.w(TAG_SYNC, "runOnce: timed out waiting for a link (attempt $attempt)")
+                        lastError = "No peer in range"
+                        break
+                    }
+                    val link = outcome.link
+                    val role = outcome.role
+                    Log.d(TAG_SYNC, "runOnce: got link via $role (attempt $attempt)")
+
+                    val sessionOutcome: SessionOutcome = try {
+                        withTimeoutOrNull(SESSION_TIMEOUT_MS) {
+                            val r = openSessionAndSync(
+                                role = role,
+                                link = link,
+                                communityId = communityId,
+                                ownPub = ownPub,
+                                peerLookup = peerLookup,
                             )
+                            if (r == null) SessionOutcome.NotRecognised else SessionOutcome.Ok(r)
+                        } ?: SessionOutcome.TimedOut
+                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                        throw ce
+                    } catch (t: Throwable) {
+                        Log.w(TAG_SYNC, "runOnce: link failed on attempt $attempt (${t.javaClass.simpleName}: ${t.message})")
+                        SessionOutcome.TimedOut
+                    }
+
+                    when (sessionOutcome) {
+                        is SessionOutcome.Ok -> {
+                            sessionResult = sessionOutcome.result
+                            winningLink = link
+                        }
+                        SessionOutcome.NotRecognised -> {
+                            Log.w(TAG_SYNC, "runOnce: peer not recognised on attempt $attempt, retrying")
+                            runCatching { link.close() }
+                            lastError = "Peer not recognised (channel-binding failed)"
                         }
                         SessionOutcome.TimedOut -> {
-                            Log.w(TAG_SYNC, "runOnce: session timed out (${SESSION_TIMEOUT_MS}ms — peer didn't complete Noise XX)")
-                            consecutiveFailures++
-                            return Result(
-                                attemptedPeers = 1,
-                                pushedMessages = 0,
-                                receivedMessages = 0,
-                                errorReason = "Peer didn't respond in time",
-                            )
+                            Log.w(TAG_SYNC, "runOnce: stale link on attempt $attempt (Noise m1 timeout), retrying")
+                            runCatching { link.close() }
+                            lastError = "Peer didn't respond in time"
                         }
                     }
-                    Log.d(TAG_SYNC, "runOnce: session opened, pushed=${sessionResult.engineResult.pushedCount} received=${sessionResult.engineResult.receivedCount}")
-                    // From here on the caller owns sessionResult.noise.
-                    // Either we cache it together with the link, or we
-                    // close it. A cancellation during the work below
-                    // would otherwise leak the noise object's keystore-
-                    // derived secret.
-                    var noiseRetained = false
-                    try {
-                        if (sessionResult.engineResult.receivedCount > 0) {
-                            postInboundNotification(sessionResult.peerPub)
-                        }
-                        // Piggyback a revocation anti-entropy round on
-                        // the same Noise transport. Both peers are
-                        // mutually authenticated; revocations they hold
-                        // get exchanged before the link is cached or
-                        // closed.
-                        //
-                        // Failures here are non-fatal — the messaging
-                        // exchange already succeeded and the user has
-                        // already seen their messages. We just don't
-                        // carry the revocation count forward.
-                        // CancellationException is rethrown so the
-                        // parent scope's cancellation contract is
-                        // preserved.
-                        val revocationsReceived = try {
+                }
+
+                if (sessionResult == null || winningLink == null) {
+                    consecutiveFailures++
+                    return Result(0, 0, 0, errorReason = lastError ?: "No peer in range")
+                }
+                val link = winningLink
+                Log.d(TAG_SYNC, "runOnce: session opened, pushed=${sessionResult.engineResult.pushedCount} received=${sessionResult.engineResult.receivedCount}")
+                var noiseRetained = false
+                try {
+                    if (sessionResult.engineResult.receivedCount > 0) {
+                        postInboundNotification(sessionResult.peerPub)
+                    }
+                    val revocationsReceived = try {
+                        withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
                             val graph = trustGraphService.snapshot()
                             runRevocationSyncRound(
                                 link = link,
@@ -331,17 +332,19 @@ class MessageSyncService @Inject constructor(
                                 trustGraph = graph,
                                 sodium = sodium,
                             )
-                        } catch (ce: kotlinx.coroutines.CancellationException) {
-                            throw ce
-                        } catch (t: Throwable) {
-                            android.util.Log.w(
-                                "MessageSyncService",
-                                "Revocation round failed after messaging succeeded: " +
-                                    "${t.javaClass.simpleName}",
-                            )
-                            0
-                        }
-                        val rotationsReceived = try {
+                        } ?: 0
+                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                        throw ce
+                    } catch (t: Throwable) {
+                        android.util.Log.w(
+                            "MessageSyncService",
+                            "Revocation round failed after messaging succeeded: " +
+                                "${t.javaClass.simpleName}",
+                        )
+                        0
+                    }
+                    try {
+                        withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
                             val graph = trustGraphService.snapshot()
                             runKeyRotationSyncRound(
                                 link = link,
@@ -350,33 +353,31 @@ class MessageSyncService @Inject constructor(
                                 trustGraph = graph,
                                 sodium = sodium,
                             )
-                        } catch (ce: kotlinx.coroutines.CancellationException) {
-                            throw ce
-                        } catch (_: Throwable) { 0 }
-                        // Sprint 1: stage (link, noise) for next round
-                        // when the link is Tor. BLE returns false and
-                        // we close both as before.
-                        val cachedThisRound = maybeCacheTorSession(
-                            link = link,
-                            noise = sessionResult.noise,
-                            role = role,
-                            peerPub = sessionResult.peerPub,
-                        )
-                        if (cachedThisRound) {
-                            keepLinkAlive = true
-                            noiseRetained = true
                         }
-                        consecutiveFailures = 0
-                        return Result(
-                            attemptedPeers = 1,
-                            pushedMessages = sessionResult.engineResult.pushedCount,
-                            receivedMessages = sessionResult.engineResult.receivedCount,
-                            revocationsReceived = revocationsReceived,
-                        )
-                    } finally {
-                        if (!noiseRetained) runCatching { sessionResult.noise.close() }
+                    } catch (ce: kotlinx.coroutines.CancellationException) {
+                        throw ce
+                    } catch (_: Throwable) { }
+                    val winRole = if (preferInitiator) MessageSyncEngine.HandshakeRole.Initiator
+                        else MessageSyncEngine.HandshakeRole.Responder
+                    val cachedThisRound = maybeCacheTorSession(
+                        link = link,
+                        noise = sessionResult.noise,
+                        role = winRole,
+                        peerPub = sessionResult.peerPub,
+                    )
+                    if (cachedThisRound) {
+                        keepLinkAlive = true
+                        noiseRetained = true
                     }
+                    consecutiveFailures = 0
+                    return Result(
+                        attemptedPeers = 1,
+                        pushedMessages = sessionResult.engineResult.pushedCount,
+                        receivedMessages = sessionResult.engineResult.receivedCount,
+                        revocationsReceived = revocationsReceived,
+                    )
                 } finally {
+                    if (!noiseRetained) runCatching { sessionResult.noise.close() }
                     if (!keepLinkAlive) runCatching { link.close() }
                 }
             } finally {
@@ -423,9 +424,12 @@ class MessageSyncService @Inject constructor(
         // But that's actually a feature — a failed round just times
         // out cleanly and the auto-sync loop retries 8s later. No
         // silent role flip.
-        val outcome: LinkOutcome = run {
-            Log.d(TAG_SYNC, "firstAvailableLink: racing dial+accept")
-            raceBoth(ownPubBytes)
+        val outcome: LinkOutcome = if (preferInitiator) {
+            Log.d(TAG_SYNC, "firstAvailableLink: dialOnly (hard bias)")
+            dialOnly(ownPubBytes)
+        } else {
+            Log.d(TAG_SYNC, "firstAvailableLink: acceptOnly (hard bias)")
+            acceptOnly()
         }
         Log.d(TAG_SYNC, "firstAvailableLink: returning (role=${outcome.role})")
         return outcome
@@ -481,6 +485,8 @@ class MessageSyncService @Inject constructor(
      * Noise XX read hangs forever.
      */
     private suspend fun acceptOnly(): LinkOutcome {
+        transports.drainStaleAccepted()
+        delay(300)
         transports.drainStaleAccepted()
         Log.d(TAG_SYNC, "accept deferred: subscribing to acceptedLinks")
         val link = transports.acceptedLinks().first()
@@ -586,7 +592,8 @@ class MessageSyncService @Inject constructor(
                 }
                 NoiseSession.Role.Responder -> {
                     Log.d(TAG_SYNC, "noise(Responder): waiting for m1")
-                    val m1 = link.incoming().first()
+                    val m1 = withTimeoutOrNull(NOISE_M1_TIMEOUT_MS) { link.incoming().first() }
+                        ?: throw java.io.IOException("No Noise m1 within ${NOISE_M1_TIMEOUT_MS}ms — stale link")
                     Log.d(TAG_SYNC, "noise(Responder): m1 received (${m1.size} bytes)")
                     noise.readHandshakeMessage(m1)
                     val m2 = noise.writeHandshakeMessage()
@@ -602,21 +609,54 @@ class MessageSyncService @Inject constructor(
             check(noise.state == NoiseSession.State.Transport) {
                 "Noise XX did not reach transport state (got ${noise.state})"
             }
+
+            // Run rotation + revocation sync BEFORE channel binding.
+            // Both sides execute this at the same point (right after
+            // handshake), so the symmetric send/receive pattern stays
+            // aligned. This allows a rotated peer's cert to propagate
+            // before we check whether we recognise their X25519 key.
+            Log.d(TAG_SYNC, "openSessionAndSync: starting pre-engine revocation sync")
+            val revResult = runCatching {
+                val graph = trustGraphService.snapshot()
+                runRevocationSyncRound(
+                    link = link,
+                    database = database,
+                    communityId = communityId.bytes,
+                    trustGraph = graph,
+                    sodium = sodium,
+                )
+            }
+            revResult.onSuccess { count ->
+                Log.d(TAG_SYNC, "openSessionAndSync: pre-engine revocation sync OK (accepted=$count)")
+            }.onFailure { t ->
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                Log.w(TAG_SYNC, "openSessionAndSync: pre-engine revocation sync failed: ${t.javaClass.simpleName}: ${t.message}")
+            }
+            Log.d(TAG_SYNC, "openSessionAndSync: starting pre-engine rotation sync")
+            val rotResult = runCatching {
+                runKeyRotationSyncRound(
+                    link = link,
+                    database = database,
+                    communityId = communityId.bytes,
+                    trustGraph = null,
+                    sodium = sodium,
+                )
+            }
+            rotResult.onSuccess { count ->
+                Log.d(TAG_SYNC, "openSessionAndSync: pre-engine rotation sync OK (accepted=$count)")
+            }.onFailure { t ->
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                Log.w(TAG_SYNC, "openSessionAndSync: pre-engine rotation sync failed: ${t.javaClass.simpleName}: ${t.message}")
+            }
+
             // Channel binding: who did we actually talk to?
+            // Rebuild peer lookup — rotation sync may have rekeyed edges.
+            val freshPeerLookup = buildPeerLookup(ownPub)
+            Log.d(TAG_SYNC, "openSessionAndSync: freshPeerLookup has ${freshPeerLookup.size} peer(s)")
             val peerX25519 = noise.remoteStaticPublicKey
-            val peerPub = peerLookup[com.wyspr.core.identity.PeerKey(peerX25519)]
+            val peerPub = freshPeerLookup[com.wyspr.core.identity.PeerKey(peerX25519)]
             if (peerPub == null) {
-                Log.w(TAG_SYNC, "openSessionAndSync: unknown peer X25519, running rotation sync before rejecting")
-                runCatching {
-                    val graph = trustGraphService.snapshot()
-                    runKeyRotationSyncRound(
-                        link = link,
-                        database = database,
-                        communityId = communityId.bytes,
-                        trustGraph = graph,
-                        sodium = sodium,
-                    )
-                }
+                Log.w(TAG_SYNC, "openSessionAndSync: unknown peer X25519 even after rotation sync (lookup=${freshPeerLookup.values.map { shortHex(it.bytes) }})")
                 return null
             }
 
@@ -743,14 +783,16 @@ class MessageSyncService @Inject constructor(
                 postInboundNotification(cached.peerPub)
             }
             val revocationsReceived = try {
-                val graph = trustGraphService.snapshot()
-                runRevocationSyncRound(
-                    link = cached.link,
-                    database = database,
-                    communityId = communityId.bytes,
-                    trustGraph = graph,
-                    sodium = sodium,
-                )
+                withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
+                    val graph = trustGraphService.snapshot()
+                    runRevocationSyncRound(
+                        link = cached.link,
+                        database = database,
+                        communityId = communityId.bytes,
+                        trustGraph = graph,
+                        sodium = sodium,
+                    )
+                } ?: 0
             } catch (ce: kotlinx.coroutines.CancellationException) {
                 throw ce
             } catch (t: Throwable) {
@@ -762,14 +804,16 @@ class MessageSyncService @Inject constructor(
                 0
             }
             try {
-                val graph = trustGraphService.snapshot()
-                runKeyRotationSyncRound(
-                    link = cached.link,
-                    database = database,
-                    communityId = communityId.bytes,
-                    trustGraph = graph,
-                    sodium = sodium,
-                )
+                withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
+                    val graph = trustGraphService.snapshot()
+                    runKeyRotationSyncRound(
+                        link = cached.link,
+                        database = database,
+                        communityId = communityId.bytes,
+                        trustGraph = graph,
+                        sodium = sodium,
+                    )
+                }
             } catch (ce: kotlinx.coroutines.CancellationException) {
                 throw ce
             } catch (_: Throwable) { }
@@ -886,5 +930,8 @@ class MessageSyncService @Inject constructor(
         // see our advert and dial first, without slowing the typical
         // one-peer-passive case noticeably.
         private const val DIAL_JITTER_MS: Long = 1500
+        private const val NOISE_M1_TIMEOUT_MS: Long = 5_000
+        private const val POST_ENGINE_SYNC_TIMEOUT_MS: Long = 15_000
+        private const val MAX_LINK_RETRIES = 4
     }
 }

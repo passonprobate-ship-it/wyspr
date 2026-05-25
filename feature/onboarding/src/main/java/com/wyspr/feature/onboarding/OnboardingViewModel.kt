@@ -206,26 +206,11 @@ class OnboardingViewModel @Inject constructor(
             // First-launch pairing: both devices auto-mint random
             // communityIds in generateIdentity(). To converge, the
             // Invitee adopts the Inviter's community and re-mints its
-            // local QR; the Inviter cannot adopt because doing so
-            // would orphan any pre-existing trust edges (founder
-            // semantics in SECURITY-MODEL.md §3.1).
-            //
-            // For the Inviter, surface an explicit Aborted result so
-            // the user knows their counterpart hasn't adopted yet —
-            // tapping Retry from the Result screen returns to Pair
-            // and the Inviter can wait for the Invitee's re-minted QR.
-            when (_role.value) {
-                Role.Invitee -> adoptPeerCommunityAndAdvance(s, peerQr)
-                Role.Inviter, null -> {
-                    _state.value = UiState.Result(
-                        identity = s.identity, backing = s.backing,
-                        localQr = s.qr, localQrBase32 = s.base32,
-                        outcome = HandshakeSession.Outcome.Aborted(
-                            HandshakeSession.AbortReason.TransportFailed,
-                        ),
-                    )
-                }
-            }
+            // local QR; the Inviter ignores the stale QR and keeps
+            // scanning — the Invitee will re-mint with the matching
+            // community and the camera will pick it up.
+            Log.d(TAG, "onPeerQrScanned: community mismatch (role=${_role.value}), adopting peer community")
+            adoptPeerCommunityAndAdvance(s, peerQr)
             return
         }
         val now = System.currentTimeMillis() / 1000
@@ -440,13 +425,8 @@ class OnboardingViewModel @Inject constructor(
     ): Link {
         Log.d(TAG, "openLinkFor: role=$role community=${communityId.bytes.take(4).joinToString("") { "%02x".format(it) }}…")
 
-        val peerOnion = peerQr.onionAddress
-        if (peerOnion != null && torBackend.state.value is TorBackend.State.Ready) {
-            Log.d(TAG, "openLinkFor: peer has .onion, attempting Tor handshake")
-            return openLinkOverTor(communityId, peerOnion, role)
-        }
-
         bleTransport.start(communityId)
+        Log.d(TAG, "openLinkFor: using BLE (pairing is always proximity)")
         return withTimeout(LINK_TIMEOUT_MS) {
             when (role) {
                 HandshakeProtocol.Role.Inviter -> {

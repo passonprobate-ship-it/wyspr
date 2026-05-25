@@ -100,7 +100,7 @@ class ConversationViewModel @Inject constructor(
     fun closeDisappearPicker() { _disappearPickerOpen.value = false }
 
     fun setDisappearTimer(seconds: Long?) {
-        val peer = peerPub ?: return
+        val peer = effectivePeerPub ?: peerPub ?: return
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 if (!database.isOpen) database.open()
@@ -122,7 +122,7 @@ class ConversationViewModel @Inject constructor(
 
     /** Persist the user's free-form notes for the bound peer. */
     fun saveNotes(text: String) {
-        val peer = peerPub ?: return
+        val peer = effectivePeerPub ?: peerPub ?: return
         val trimmed = text.trim().takeIf { it.isNotBlank() }
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
@@ -142,6 +142,7 @@ class ConversationViewModel @Inject constructor(
 
     @Volatile private var ownPub: ByteArray? = null
     @Volatile private var peerPub: ByteArray? = null
+    @Volatile private var effectivePeerPub: ByteArray? = null
     @Volatile private var autoSyncJob: Job? = null
 
     /**
@@ -155,33 +156,26 @@ class ConversationViewModel @Inject constructor(
 
     fun bind(peer: PublicKey) {
         peerPub = peer.bytes
-        // The user is now actively looking at this peer's thread —
-        // clear the system notification for them so the badge
-        // doesn't stay stale, and start the periodic auto-sync
-        // loop that runs while this VM is bound. The loop ends
-        // when the VM is cleared (screen leaves the back stack)
-        // or when bind() is called with a different peer.
         notifier.clearForPeer(peer.bytes)
-        // Suppress notifications for this peer while the user is in
-        // the chat — the message lands in the DB and on screen; an
-        // OS notification on top is just noise.
         notifier.setActivePeer(peer.bytes)
         startAutoSync()
         startMailboxNotify()
 
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
+            val resolved = withContext(Dispatchers.IO) {
                 if (!database.isOpen) database.open()
                 ownPub = keystore.loadOrCreateIdentityKey().publicKey
-                // Flip every fresh inbound from this peer to
-                // "viewed" so the next sync round picks them up
-                // as read-receipts to push back.
-                messageStore.markInboundViewed(peer)
+                resolveLatestPub(peer.bytes)
+            }
+            val activePeer = PublicKey(resolved)
+            effectivePeerPub = resolved
+            withContext(Dispatchers.IO) {
+                messageStore.markInboundViewed(activePeer)
             }
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-            messageStore.threadFlow(peer)
+            messageStore.threadFlow(activePeer)
                 .combine(database.contactDao.allFlow()) { messages, contacts ->
-                    val row = contacts.firstOrNull { it.peerPub.contentEquals(peer.bytes) }
+                    val row = contacts.firstOrNull { it.peerPub.contentEquals(resolved) }
                     data class ContactInfo(
                         val messages: List<MessageEntity>,
                         val displayName: String?,
@@ -209,7 +203,7 @@ class ConversationViewModel @Inject constructor(
                 .collectLatest { (info, reactions) ->
                     _state.value = UiState.Ready(
                         own = ownPub?.let { PublicKey(it) },
-                        peer = peer,
+                        peer = activePeer,
                         displayName = info.displayName,
                         notes = info.notes,
                         messages = info.messages,
@@ -218,11 +212,11 @@ class ConversationViewModel @Inject constructor(
                     )
                     val hasUnviewed = info.messages.any { m ->
                         m.status == MessageStore.STATUS_RECEIVED &&
-                            m.fromPub.contentEquals(peer.bytes)
+                            m.fromPub.contentEquals(resolved)
                     }
                     if (hasUnviewed) {
                         withContext(Dispatchers.IO) {
-                            messageStore.markInboundViewed(peer)
+                            messageStore.markInboundViewed(activePeer)
                         }
                     }
                 }
@@ -235,7 +229,7 @@ class ConversationViewModel @Inject constructor(
      * back to the raw fingerprint.
      */
     fun renameContact(name: String) {
-        val peer = peerPub ?: return
+        val peer = effectivePeerPub ?: peerPub ?: return
         val trimmed = name.trim()
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
@@ -259,7 +253,7 @@ class ConversationViewModel @Inject constructor(
     }
 
     fun revokePeer(onResult: (Boolean) -> Unit) {
-        val peer = peerPub ?: run { onResult(false); return }
+        val peer = effectivePeerPub ?: peerPub ?: run { onResult(false); return }
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
                 trustGraphService.revokePeer(
@@ -365,7 +359,7 @@ class ConversationViewModel @Inject constructor(
     }
 
     fun send(body: String) {
-        val peer = peerPub ?: return
+        val peer = effectivePeerPub ?: peerPub ?: return
         val trimmed = body.trim()
         if (trimmed.isEmpty()) return
         // If the user picked a message to reply to, wrap the body in
@@ -427,7 +421,7 @@ class ConversationViewModel @Inject constructor(
     }
 
     fun sendReaction(targetMsg: MessageEntity, emoji: String) {
-        val peer = peerPub ?: return
+        val peer = effectivePeerPub ?: peerPub ?: return
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -442,7 +436,7 @@ class ConversationViewModel @Inject constructor(
     }
 
     fun retractReaction(targetMsg: MessageEntity) {
-        val peer = peerPub ?: return
+        val peer = effectivePeerPub ?: peerPub ?: return
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 runCatching {
@@ -469,6 +463,18 @@ class ConversationViewModel @Inject constructor(
         ) : UiState
     }
 
+
+    private suspend fun resolveLatestPub(pub: ByteArray): ByteArray {
+        var current = pub
+        var depth = 0
+        while (depth < 10) {
+            val certs = database.keyRotationDao.byOldPub(current)
+            if (certs.isEmpty()) return current
+            current = certs.first().newPub
+            depth++
+        }
+        return current
+    }
 
     private companion object {
         /** Wait before the first auto-sync so the UI settles. */

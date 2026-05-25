@@ -135,12 +135,14 @@ object CryptoModule {
         database: WysprDatabase,
         sodium: LazySodiumAndroid,
         rotationSettings: KeyRotationSettings,
+        torBackend: com.wyspr.core.transport.TorBackend,
     ): KeyRotationService = KeyRotationService(
         context = context,
         keystore = keystore,
         database = database,
         sodium = sodium,
         rotationSettings = rotationSettings,
+        torBackend = torBackend,
     )
 
     @Provides

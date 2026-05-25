@@ -169,11 +169,10 @@ fun GroupConversationScreen(
                     }
                     is GroupConversationViewModel.UiState.Ready -> {
                         val listState = rememberLazyListState()
-                        val reversed = remember(s.messages) { s.messages.asReversed() }
                         LaunchedEffect(s.messages.size) {
                             if (s.messages.isNotEmpty()) {
                                 kotlinx.coroutines.delay(50)
-                                listState.animateScrollToItem(0)
+                                listState.animateScrollToItem(s.messages.lastIndex)
                             }
                         }
                         if (s.messages.isEmpty()) {
@@ -187,14 +186,13 @@ fun GroupConversationScreen(
                             }
                             LazyColumn(
                                 state = listState,
-                                reverseLayout = true,
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(horizontal = 16.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
                                 contentPadding = PaddingValues(vertical = 8.dp),
                             ) {
-                                items(reversed, key = { it.id.toList() }) { msg ->
+                                items(s.messages, key = { it.id.toList() }) { msg ->
                                     val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)
                                     val quoted = decoded?.replyToId?.let { id ->
                                         byId[com.wyspr.core.identity.PeerKey(id)]
@@ -211,7 +209,7 @@ fun GroupConversationScreen(
                                             quoted.fromPub.contentEquals(ownBytes),
                                         onReply = { viewModel.pickReply(msg) },
                                         onScrollToQuoted = { id ->
-                                            val idx = reversed.indexOfFirst { it.id.contentEquals(id) }
+                                            val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
                                             if (idx >= 0) {
                                                 scope.launch { listState.animateScrollToItem(idx) }
                                             }

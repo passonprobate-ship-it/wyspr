@@ -3,12 +3,14 @@ package com.wyspr.app
 import android.content.Context
 import com.goterl.lazysodium.LazySodiumAndroid
 import com.goterl.lazysodium.interfaces.Sign
+import android.util.Log
 import com.wyspr.app.transport.TorHsKey
 import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.KeyRotationEntity
 import com.wyspr.core.identity.CommunityId
 import com.wyspr.core.identity.PublicKey
+import com.wyspr.core.transport.TorBackend
 import com.wyspr.core.trust.KeyRotationCertificate
 import com.wyspr.core.ui.settings.KeyRotationSettings
 import java.io.File
@@ -22,6 +24,7 @@ class KeyRotationService(
     private val database: WysprDatabase,
     private val sodium: LazySodiumAndroid,
     private val rotationSettings: KeyRotationSettings,
+    private val torBackend: TorBackend,
 ) {
 
     fun isDue(): Boolean = rotationSettings.isDueForRotation()
@@ -123,12 +126,41 @@ class KeyRotationService(
                 ),
             )
 
+            rekeyLocal(oldPub.bytes, newPub.bytes)
+
             pendingFile.delete()
             rotationSettings.recordRotation()
+
+            Log.d(TAG, "rotate: restarting Tor with new HS key")
+            runCatching { torBackend.stop() }
+            runCatching { torBackend.start() }
+
             return true
         } finally {
             newSeed.fill(0)
         }
+    }
+
+    private suspend fun rekeyLocal(oldBytes: ByteArray, newBytes: ByteArray) {
+        val edges = database.trustEdgeDao.all()
+        for (edge in edges) {
+            val fromMatch = edge.fromPub.contentEquals(oldBytes)
+            val toMatch = edge.toPub.contentEquals(oldBytes)
+            val signerMatch = edge.certSigner.contentEquals(oldBytes)
+            if (!fromMatch && !toMatch && !signerMatch) continue
+
+            database.trustEdgeDao.delete(edge.fromPub, edge.toPub)
+            database.trustEdgeDao.upsert(
+                edge.copy(
+                    fromPub = if (fromMatch) newBytes else edge.fromPub,
+                    toPub = if (toMatch) newBytes else edge.toPub,
+                    certSigner = if (signerMatch) newBytes else edge.certSigner,
+                ),
+            )
+        }
+
+        database.messageDao.rekeyFromPub(oldBytes, newBytes)
+        database.messageDao.rekeyToPub(oldBytes, newBytes)
     }
 
     private fun hkdfDeriveSubkey(seed: ByteArray, info: ByteArray): ByteArray {
@@ -169,6 +201,7 @@ class KeyRotationService(
     }
 
     private companion object {
+        const val TAG = "KeyRotation"
         const val SEED_BYTES = 32
         const val PENDING_ROTATION_FILE = "pending_rotation.cbor"
         val HKDF_SALT = "WYSPR/v1/HKDF-SALT".encodeToByteArray()

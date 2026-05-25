@@ -210,11 +210,10 @@ fun ConversationScreen(
                     ConversationViewModel.UiState.Loading -> LoadingPanel()
                     is ConversationViewModel.UiState.Ready -> {
                         val listState = rememberLazyListState()
-                        val reversed = remember(s.messages) { s.messages.asReversed() }
                         LaunchedEffect(s.messages.size) {
                             if (s.messages.isNotEmpty()) {
                                 kotlinx.coroutines.delay(50)
-                                listState.animateScrollToItem(0)
+                                listState.animateScrollToItem(s.messages.lastIndex)
                             }
                         }
                         if (s.messages.isEmpty()) {
@@ -227,19 +226,18 @@ fun ConversationScreen(
                                 }
                             }
                             val showScrollFab = remember {
-                                derivedStateOf { listState.firstVisibleItemIndex > 5 }
+                                derivedStateOf { listState.firstVisibleItemIndex < s.messages.size - 5 }
                             }
                             Box(modifier = Modifier.fillMaxSize()) {
                                 LazyColumn(
                                     state = listState,
-                                    reverseLayout = true,
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .padding(horizontal = 16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.Bottom),
                                     contentPadding = PaddingValues(vertical = 8.dp),
                                 ) {
-                                    items(reversed, key = { it.id.toList() }) { msg ->
+                                    items(s.messages, key = { it.id.toList() }) { msg ->
                                         if (ReactionPayload.isReaction(msg.body)) return@items
                                         if (DisappearPayload.isDisappear(msg.body)) return@items
                                         val decoded = com.wyspr.feature.messaging.reply.ReplyPayload.decode(msg.body)
@@ -261,8 +259,8 @@ fun ConversationScreen(
                                             onReact = { emoji -> viewModel.sendReaction(msg, emoji) },
                                             onRetractReaction = { viewModel.retractReaction(msg) },
                                             onScrollToQuoted = { id ->
-                                                val idx = reversed.indexOfFirst { it.id.contentEquals(id) }
-                                                if (idx >= 0 && idx in reversed.indices) {
+                                                val idx = s.messages.indexOfFirst { it.id.contentEquals(id) }
+                                                if (idx >= 0 && idx in s.messages.indices) {
                                                     scope.launch { listState.animateScrollToItem(idx) }
                                                 }
                                             },
@@ -276,7 +274,7 @@ fun ConversationScreen(
                                     exit = fadeOut() + scaleOut(),
                                 ) {
                                     SmallFloatingActionButton(
-                                        onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                                        onClick = { scope.launch { listState.animateScrollToItem(s.messages.lastIndex) } },
                                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
                                     ) {
                                         Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Scroll to bottom")
