@@ -31,9 +31,11 @@ fun MoneroWalletRoot(
     val viewModel: MoneroWalletViewModel = hiltViewModel()
     val state by viewModel.state.collectAsStateWithLifecycle()
     val seedBackupAcknowledged by viewModel.seedBackupAcknowledged.collectAsStateWithLifecycle()
+    val xmrUsdRate by viewModel.xmrUsdRate.collectAsStateWithLifecycle()
     MoneroWalletScreen(
         state = state,
         seedBackupAcknowledged = seedBackupAcknowledged,
+        xmrUsdRate = xmrUsdRate,
         onRetry = { viewModel.retry() },
         onRevealSeed = onRevealSeed,
         onRestoreWallet = onRestoreWallet,

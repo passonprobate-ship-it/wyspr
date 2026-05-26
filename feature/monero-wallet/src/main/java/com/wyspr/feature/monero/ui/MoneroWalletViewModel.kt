@@ -23,6 +23,7 @@ class MoneroWalletViewModel @Inject constructor(
 
     val state: StateFlow<MoneroWalletService.WalletState> = service.walletState
     val seedBackupAcknowledged: StateFlow<Boolean> = walletPrefs.seedBackupAcknowledged
+    val xmrUsdRate: StateFlow<Double?> = service.xmrUsdRate
 
     init {
         viewModelScope.launch { service.bootstrap() }

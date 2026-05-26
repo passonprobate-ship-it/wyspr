@@ -42,6 +42,7 @@ import java.time.ZoneId
 fun MoneroWalletScreen(
     state: WalletState,
     seedBackupAcknowledged: Boolean,
+    xmrUsdRate: Double? = null,
     onRetry: () -> Unit,
     onRevealSeed: () -> Unit,
     onRestoreWallet: () -> Unit,
@@ -79,6 +80,7 @@ fun MoneroWalletScreen(
             WalletState.Binding -> BindingPanel()
             is WalletState.Ready -> ReadyPanel(
                 state = state,
+                xmrUsdRate = xmrUsdRate,
                 onOpenTx = onOpenTx,
                 onShowReceive = onShowReceive,
                 onShowPeerSubaddresses = onShowPeerSubaddresses,
@@ -195,6 +197,7 @@ private fun BindingPanel() {
 @Composable
 private fun ReadyPanel(
     state: WalletState.Ready,
+    xmrUsdRate: Double?,
     onOpenTx: (String) -> Unit,
     onShowReceive: () -> Unit,
     onShowPeerSubaddresses: () -> Unit,
@@ -214,6 +217,13 @@ private fun ReadyPanel(
                 text = "${state.balanceAtomicUnits.atomicUnitsAsXmr()} XMR",
                 style = MaterialTheme.typography.headlineSmall,
             )
+            if (xmrUsdRate != null) {
+                Text(
+                    text = "1 XMR = ${"$%.2f".format(xmrUsdRate)} USD",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (state.pendingAtomicUnits > 0L) {
                 Text(
                     text = "${state.pendingAtomicUnits.atomicUnitsAsXmr()} XMR pending",
