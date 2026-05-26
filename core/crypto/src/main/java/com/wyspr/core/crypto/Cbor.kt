@@ -138,6 +138,16 @@ object Cbor {
             }
         }
 
+        fun uintOrNull(): Long? {
+            val head = peekByte()
+            return if (head == ((MT_PRIMITIVE shl 5) or SIMPLE_NULL)) {
+                pos++
+                null
+            } else {
+                uint()
+            }
+        }
+
         fun arrayHeader(): Int {
             val head = readByte()
             val majorType = (head ushr 5) and 0x7

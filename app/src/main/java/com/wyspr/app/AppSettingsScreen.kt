@@ -16,6 +16,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Person
@@ -73,6 +74,7 @@ fun AppSettingsScreen(
     onOpenMailbox: () -> Unit,
     onOpenMyPage: () -> Unit,
     onOpenWallet: () -> Unit,
+    onOpenEvents: () -> Unit,
     onOpenFindPeers: () -> Unit,
     onOpenShareApp: () -> Unit,
     onIdentityReset: () -> Unit,
@@ -153,6 +155,14 @@ fun AppSettingsScreen(
                 title = "Open wallet",
                 subtitle = "Send, receive, audit. Community switching lives here.",
                 onClick = onOpenWallet,
+            )
+
+            SectionHeader("Coordination")
+            LinkRow(
+                icon = Icons.Filled.DateRange,
+                title = "Events",
+                subtitle = "Create events, RSVP, coordinate with your community",
+                onClick = onOpenEvents,
             )
 
             SectionHeader("Distribute")

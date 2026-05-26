@@ -19,6 +19,8 @@ import com.wyspr.core.database.dao.MailboxStoredDao
 import com.wyspr.core.database.dao.MessageDao
 import com.wyspr.core.database.dao.PeerPaymentAddressDao
 import com.wyspr.core.database.dao.PeerSubAddressMintDao
+import com.wyspr.core.database.dao.CoordinationEventDao
+import com.wyspr.core.database.dao.CoordinationRsvpDao
 import com.wyspr.core.database.dao.KeyRotationDao
 import com.wyspr.core.database.dao.ReactionDao
 import com.wyspr.core.database.dao.RevocationDao
@@ -42,6 +44,8 @@ import com.wyspr.core.database.entities.PeerPaymentAddressEntity
 import com.wyspr.core.database.entities.PeerSubAddressMintEntity
 import com.wyspr.core.database.dao.GroupMessageDeliveryDao
 import com.wyspr.core.database.entities.GroupMessageDeliveryEntity
+import com.wyspr.core.database.entities.CoordinationEventEntity
+import com.wyspr.core.database.entities.CoordinationRsvpEntity
 import com.wyspr.core.database.entities.KeyRotationEntity
 import com.wyspr.core.database.entities.ReactionEntity
 import com.wyspr.core.database.entities.RevocationEntity
@@ -108,8 +112,10 @@ import com.wyspr.core.database.entities.UserProfileEntity
         ReactionEntity::class,
         GroupMessageDeliveryEntity::class,
         KeyRotationEntity::class,
+        CoordinationEventEntity::class,
+        CoordinationRsvpEntity::class,
     ],
-    version = 23,
+    version = 24,
     exportSchema = true,
 )
 abstract class WysprRoomDatabase : RoomDatabase() {
@@ -135,6 +141,8 @@ abstract class WysprRoomDatabase : RoomDatabase() {
     abstract fun reactionDao(): ReactionDao
     abstract fun groupMessageDeliveryDao(): GroupMessageDeliveryDao
     abstract fun keyRotationDao(): KeyRotationDao
+    abstract fun coordinationEventDao(): CoordinationEventDao
+    abstract fun coordinationRsvpDao(): CoordinationRsvpDao
 }
 
 /**
@@ -570,6 +578,48 @@ internal val MIGRATION_22_23 = object : Migration(22, 23) {
         // 3. Index on message(from_pub) for rekey queries
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_message_from_pub` ON `message`(`from_pub`)"
+        )
+    }
+}
+
+internal val MIGRATION_23_24 = object : Migration(23, 24) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `coordination_event` (" +
+                "`id` BLOB NOT NULL, " +
+                "`creatorPub` BLOB NOT NULL, " +
+                "`communityId` BLOB NOT NULL, " +
+                "`title` TEXT NOT NULL, " +
+                "`description` TEXT, " +
+                "`location` TEXT, " +
+                "`startsAt` INTEGER NOT NULL, " +
+                "`endsAt` INTEGER, " +
+                "`createdAt` INTEGER NOT NULL, " +
+                "`status` INTEGER NOT NULL, " +
+                "`signature` BLOB NOT NULL, " +
+                "PRIMARY KEY(`id`))"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_coordination_event_communityId_startsAt` " +
+                "ON `coordination_event`(`communityId`, `startsAt`)"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_coordination_event_creatorPub` " +
+                "ON `coordination_event`(`creatorPub`)"
+        )
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `coordination_rsvp` (" +
+                "`eventId` BLOB NOT NULL, " +
+                "`responderPub` BLOB NOT NULL, " +
+                "`communityId` BLOB NOT NULL, " +
+                "`status` INTEGER NOT NULL, " +
+                "`createdAt` INTEGER NOT NULL, " +
+                "`signature` BLOB NOT NULL, " +
+                "PRIMARY KEY(`eventId`, `responderPub`))"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_coordination_rsvp_eventId` " +
+                "ON `coordination_rsvp`(`eventId`)"
         )
     }
 }

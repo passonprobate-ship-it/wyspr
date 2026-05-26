@@ -26,6 +26,7 @@ dependencies {
     implementation(project(":core:database"))
     implementation(project(":core:transport:api"))
     implementation(project(":core:transport:bluetooth"))
+    implementation(project(":feature:coordination"))
 
     // libsodium for Ed25519 → X25519 conversion in the channel-
     // binding step of the sync handshake. The same primitive

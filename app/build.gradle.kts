@@ -139,6 +139,7 @@ dependencies {
     implementation(project(":feature:marketplace"))
     implementation(project(":feature:messaging"))
     implementation(project(":feature:monero-wallet"))
+    implementation(project(":feature:coordination"))
 
     // ──── Compose / UI ──────────────────────────────────────────────────
     val composeBom = platform("androidx.compose:compose-bom:2024.02.00")

@@ -16,6 +16,8 @@ import com.wyspr.core.database.dao.MessageDao
 import com.wyspr.core.database.dao.PeerPaymentAddressDao
 import com.wyspr.core.database.dao.PeerSubAddressMintDao
 import com.wyspr.core.database.dao.GroupMessageDeliveryDao
+import com.wyspr.core.database.dao.CoordinationEventDao
+import com.wyspr.core.database.dao.CoordinationRsvpDao
 import com.wyspr.core.database.dao.KeyRotationDao
 import com.wyspr.core.database.dao.ReactionDao
 import com.wyspr.core.database.dao.RevocationDao
@@ -101,4 +103,6 @@ interface WysprDatabase {
     val reactionDao: ReactionDao
     val groupMessageDeliveryDao: GroupMessageDeliveryDao
     val keyRotationDao: KeyRotationDao
+    val coordinationEventDao: CoordinationEventDao
+    val coordinationRsvpDao: CoordinationRsvpDao
 }

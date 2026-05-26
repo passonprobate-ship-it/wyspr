@@ -38,6 +38,7 @@ import com.wyspr.feature.onboarding.OnboardingRoot
 import com.wyspr.feature.onboarding.screens.DiscoveryScreen
 import com.wyspr.feature.onboarding.screens.ShareApkScreen
 import com.wyspr.feature.onboarding.screens.UpdateFromPeerScreen
+import com.wyspr.feature.coordination.CoordinationRoot
 
 /**
  * Top-level navigation graph. Post-onboarding lands on [MainShell] —
@@ -121,6 +122,7 @@ fun WysprNavHost(
                 onOpenMailbox = { navController.navigate(Routes.Mailbox) },
                 onOpenMyPage = { navController.navigate(Routes.MyPage) },
                 onOpenWallet = { navController.navigate(Routes.Monero) },
+                onOpenEvents = { navController.navigate(Routes.Events) },
                 onOpenFindPeers = { navController.navigate(Routes.PairPeer) },
                 onOpenShareApp = { navController.navigate(Routes.ShareApp) },
                 onOpenUpdateFromPeer = { navController.navigate(Routes.UpdateFromPeer) },
@@ -191,6 +193,9 @@ fun WysprNavHost(
         }
         composable(Routes.MailboxScan) {
             ScanMailboxQrScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.Events) {
+            CoordinationRoot(onBack = { navController.popBackStack() })
         }
         composable(Routes.ShareApp) {
             ShareApkScreen(
@@ -374,6 +379,7 @@ object Routes {
     const val Conversation = "conversation"
     const val Group = "group"
     const val CreateGroup = "create_group"
+    const val Events = "events"
 }
 
 private fun String.hexToBytesOrNull(): ByteArray? {

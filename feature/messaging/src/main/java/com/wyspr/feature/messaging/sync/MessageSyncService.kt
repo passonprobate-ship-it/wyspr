@@ -16,6 +16,7 @@ import com.wyspr.core.transport.TransportLifecycle
 import com.wyspr.core.trust.TrustGraphService
 import com.wyspr.core.trust.runKeyRotationSyncRound
 import com.wyspr.core.trust.runRevocationSyncRound
+import com.wyspr.feature.coordination.sync.runCoordinationSyncRound
 import com.wyspr.feature.messaging.MessageStore
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -365,6 +366,18 @@ class MessageSyncService @Inject constructor(
                         } catch (ce: kotlinx.coroutines.CancellationException) {
                             throw ce
                         } catch (_: Throwable) { }
+                        try {
+                            withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
+                                runCoordinationSyncRound(
+                                    link = link,
+                                    database = database,
+                                    communityId = communityId.bytes,
+                                    sodium = sodium,
+                                )
+                            }
+                        } catch (ce: kotlinx.coroutines.CancellationException) {
+                            throw ce
+                        } catch (_: Throwable) { }
                         rev
                     }
                     val winRole = if (preferInitiator) MessageSyncEngine.HandshakeRole.Initiator
@@ -675,6 +688,16 @@ class MessageSyncService @Inject constructor(
                 if (t is kotlinx.coroutines.CancellationException) throw t
                 Log.w(TAG_SYNC, "openSessionAndSync: pre-engine rotation sync failed: ${t.javaClass.simpleName}: ${t.message}")
             }
+            runCatching {
+                runCoordinationSyncRound(
+                    link = link,
+                    database = database,
+                    communityId = communityId.bytes,
+                    sodium = sodium,
+                )
+            }.onFailure { t ->
+                if (t is kotlinx.coroutines.CancellationException) throw t
+            }
 
             // Channel binding: who did we actually talk to?
             // Rebuild peer lookup — rotation sync may have rekeyed edges.
@@ -853,6 +876,18 @@ class MessageSyncService @Inject constructor(
                         database = database,
                         communityId = communityId.bytes,
                         trustGraph = graph,
+                        sodium = sodium,
+                    )
+                }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (_: Throwable) { }
+            try {
+                withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
+                    runCoordinationSyncRound(
+                        link = cached.link,
+                        database = database,
+                        communityId = communityId.bytes,
                         sodium = sodium,
                     )
                 }
