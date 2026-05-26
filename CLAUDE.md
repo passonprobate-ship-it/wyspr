@@ -6,7 +6,15 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Wyspr has no server component)
-- **Status**: 2026-05-24 — **v0.9.5 (build 26).** Payment notifications
+- **Status**: 2026-05-25 — **v0.9.6 (build 27).** Monero wallet
+  **hardware-verified** — Molly SDK native library loads, Tor
+  bootstraps in ~2s, wallet opens from encrypted disk, RPC calls
+  flow through Tor SOCKS to Rino community node. XMR/USD price
+  from CoinGecko displayed on wallet balance panel. Node connection
+  status LED (gray/orange/green/red) with node label on wallet
+  screen. Only untested: actual send/receive XMR transaction.
+
+  Earlier (2026-05-24): **v0.9.5 (build 26).** Payment notifications
   ("Received 0.1 XMR from Bob") — `PaymentNotifier` interface +
   `AndroidPaymentNotifier` with dedicated "Payments" channel.
   `MoneroWalletService` diffs tx hashes across ledger emissions;
@@ -648,8 +656,34 @@ Settings with copy-to-clipboard.
 
 New files: `PaymentNotifier.kt`, `AndroidPaymentNotifier.kt`.
 
+### 2026-05-25 — v0.9.6: Monero wallet hardware-verified + wallet UI polish
+
+**Monero wallet hardware-verified.** First real-device confirmation that
+the full Monero stack works: Molly SDK's `libmonero_wallet.so` loads on
+ARM64, `InProcessWalletService` connects, wallet opens from AES-GCM
+encrypted disk (410KB wallet file), and RPC calls flow through the Tor
+SOCKS proxy to the Rino community node (`node.community.rino.io:18081`).
+Tor bootstraps to 100% in ~2 seconds. The wallet enters `Ready` state
+and syncs blocks. Only untested: an actual XMR send/receive transaction.
+
+**XMR/USD price on wallet screen.** The CoinGecko price feed (already
+fetched by `MoneroWalletService.startPriceCollector`) is now surfaced
+in the UI: "1 XMR = $XXX.XX USD" appears below the balance in the
+Balance panel. `xmrUsdRate: StateFlow<Double?>` threaded through
+ViewModel → Root → Screen. Hidden when rate hasn't loaded yet.
+
+**Node connection status LED.** Color-coded dot on the wallet screen:
+gray (Idle), orange (Connecting), green (Connected), red (Disconnected),
+with the node label ("Rino community node") next to it. Composable
+`NodeStatusRow` derives color + label from `WalletState`. Node label
+exposed via `MoneroWalletService.nodeLabel`.
+
 ## What's NOT Built Yet
 
+- **Monero send/receive test** — wallet connects and syncs but no
+  real XMR transaction has been sent or received on-device yet.
+- **Node picker UI** — users cannot switch nodes or add a custom one;
+  hardcoded to first in `MoneroNodeRegistry.defaults`.
 - **Vault** feature (encrypted personal-record store) — empty module.
 - **Marketplace over BLE** — wallet exists but doesn't yet sync over
   a real Link.
@@ -666,11 +700,13 @@ New files: `PaymentNotifier.kt`, `AndroidPaymentNotifier.kt`.
 
 ## Memory / Plan State
 
-v0.9.5 is the current build (2026-05-24, build 26). Payment
-notifications wired up (ready when Monero JNI engine lands).
-13-finding bug sweep landed. Auto key rotation (90-day) with cert
-chaining shipped. Both BLE and Tor-only messaging are hardware-
-verified. Next priorities: hardware-verify key rotation, then CI.
+v0.9.6 is the current build (2026-05-25, build 27). Monero wallet
+hardware-verified — Molly SDK loads, Tor connects, node syncs,
+wallet opens from encrypted disk. XMR/USD price and node status
+LED on wallet screen. Payment notifications wired up and ready.
+Key rotation hardware-verified. Both BLE and Tor-only messaging
+hardware-verified. Next priorities: test a real XMR send/receive
+transaction, then CI, then F-Droid submission.
 
 Auto-memory references:
 - [[wyspr-messaging-works]] — 22-build journey, all fixes
@@ -678,4 +714,4 @@ Auto-memory references:
 - [[wyspr-first-pairing-milestone]] — earlier same-day milestone
 - [[wyspr-sign-padding-bug]] — 5-year-old root cause
 - [[wyspr-feedback-verify-baseline]] — apply same skepticism to
-  remaining unverified layers (Monero, vault).
+  remaining unverified layers (vault, marketplace).
