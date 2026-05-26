@@ -1,5 +1,7 @@
 package com.wyspr.app.biometric
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.biometric.BiometricPrompt
 // BiometricSettings is consumed at the caller site, not here — gate is dumb.
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +25,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 
 /**
  * Gate composable that prompts for biometric/device-credential auth
@@ -49,7 +53,14 @@ fun BiometricGate(
 ) {
     val context = LocalContext.current
     val activity = context as? FragmentActivity
-    val capability = remember(enabled) { BiometricCapability.current(context) }
+    var capability by remember { mutableStateOf(BiometricCapability.current(context)) }
+
+    // Refresh capability when the user returns from system settings
+    // (e.g. after enrolling a biometric). Without this the gate would
+    // stay stuck on NOT_ENROLLED until a process restart.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        capability = BiometricCapability.current(context)
+    }
 
     // Saveable so a configuration change doesn't re-prompt; cleared on
     // process death which re-locks naturally.
@@ -103,6 +114,7 @@ fun BiometricGate(
     }
 
     LockedScreen(
+        gateEnabled = enabled,
         capability = capability,
         lastError = lastError,
         onRetry = {
@@ -111,15 +123,36 @@ fun BiometricGate(
             }
         },
         onSkipForNotEnrolled = { unlocked = true },
+        onOpenBiometricSettings = {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_BIOMETRIC_ENROLL).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    },
+                )
+            }.onFailure {
+                // Fallback for devices that don't support the biometric
+                // enroll action directly.
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_SECURITY_SETTINGS).apply {
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        },
+                    )
+                }
+            }
+        },
     )
 }
 
 @Composable
 private fun LockedScreen(
+    gateEnabled: Boolean,
     capability: BiometricCapability,
     lastError: String?,
     onRetry: () -> Unit,
     onSkipForNotEnrolled: () -> Unit,
+    onOpenBiometricSettings: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -134,7 +167,11 @@ private fun LockedScreen(
                 BiometricCapability.AVAILABLE ->
                     "Authenticate to continue."
                 BiometricCapability.NOT_ENROLLED ->
-                    "No biometric is enrolled on this device. Enroll a fingerprint or set up Face Unlock in system settings, or continue without the gate."
+                    if (gateEnabled) {
+                        "No biometric is enrolled on this device. Enroll a fingerprint or set up Face Unlock in system settings to unlock Wyspr."
+                    } else {
+                        "No biometric is enrolled on this device. Enroll a fingerprint or set up Face Unlock in system settings, or continue without the gate."
+                    }
                 BiometricCapability.UNAVAILABLE ->
                     "Biometric not available on this device. Continuing…"
             },
@@ -151,12 +188,26 @@ private fun LockedScreen(
                     .fillMaxWidth()
                     .padding(top = 16.dp),
             ) { Text("Authenticate") }
-            BiometricCapability.NOT_ENROLLED -> Button(
-                onClick = onSkipForNotEnrolled,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp),
-            ) { Text("Continue without biometric") }
+            BiometricCapability.NOT_ENROLLED -> {
+                if (gateEnabled) {
+                    // Gate is explicitly enabled — don't allow skip;
+                    // direct the user to enroll biometrics.
+                    Button(
+                        onClick = onOpenBiometricSettings,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp),
+                    ) { Text("Open biometric settings") }
+                } else {
+                    // First-run default — allow continuing without.
+                    Button(
+                        onClick = onSkipForNotEnrolled,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp),
+                    ) { Text("Continue without biometric") }
+                }
+            }
             BiometricCapability.UNAVAILABLE -> Unit // bypass handled above
         }
     }

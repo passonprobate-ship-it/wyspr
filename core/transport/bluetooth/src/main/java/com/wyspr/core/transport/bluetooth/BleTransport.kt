@@ -347,6 +347,11 @@ class BleTransport(private val context: Context) : Transport {
                 // ingestInbound call or the first chunk queues with
                 // no consumer.
                 newLink.startInboundDrainer(ioScope)
+                // Capture the GATT server eagerly at link creation
+                // time. If stop() nulls session later, the drainer
+                // still holds a valid reference and won't silently
+                // drop frames.
+                val capturedServer = this@BleTransport.session?.gattServer
                 ioScope.launch {
                     for (frame in sink) {
                         // Late-binding chunker: read the current
@@ -361,14 +366,14 @@ class BleTransport(private val context: Context) : Transport {
                         for (chunk in chunker.chunk(frame)) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 runCatching {
-                                    this@BleTransport.session?.gattServer?.notifyCharacteristicChanged(device, char, false, chunk)
+                                    capturedServer?.notifyCharacteristicChanged(device, char, false, chunk)
                                 }
                             } else {
                                 @Suppress("DEPRECATION")
                                 char.value = chunk
                                 @Suppress("DEPRECATION")
                                 runCatching {
-                                    this@BleTransport.session?.gattServer?.notifyCharacteristicChanged(device, char, false)
+                                    capturedServer?.notifyCharacteristicChanged(device, char, false)
                                 }
                             }
                             // Wait for onNotificationSent — Android's BLE
@@ -666,12 +671,15 @@ class BleTransport(private val context: Context) : Transport {
                 // pre-buffered chunks through the assembler in order.
                 link.startInboundDrainer(ioScope)
                 val drainerJob = ioScope.launch {
-                    val chunker = BleOutboundChunker(
-                        mtuPayload = (clientMtu.get() - 3)
-                            .coerceAtLeast(MIN_MTU_PAYLOAD)
-                            .coerceAtMost(MAX_MTU_PAYLOAD),
-                    )
                     for (frame in outboundSink) {
+                        // Read the current MTU per-frame so a late MTU
+                        // change (rare but possible) is picked up instead
+                        // of using a stale snapshot from link creation time.
+                        val chunker = BleOutboundChunker(
+                            mtuPayload = (clientMtu.get() - 3)
+                                .coerceAtLeast(MIN_MTU_PAYLOAD)
+                                .coerceAtMost(MAX_MTU_PAYLOAD),
+                        )
                         for (chunk in chunker.chunk(frame)) {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 g.writeCharacteristic(

@@ -98,7 +98,6 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:screenOrientation="portrait"
-            android:excludeFromRecents="true"
             android:theme="@style/Theme.Wyspr">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

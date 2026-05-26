@@ -5,6 +5,7 @@ import com.goterl.lazysodium.LazySodiumAndroid
 import com.goterl.lazysodium.interfaces.Sign
 import android.util.Log
 import com.wyspr.app.transport.TorHsKey
+import com.wyspr.core.crypto.Cbor
 import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.KeyRotationEntity
@@ -33,9 +34,37 @@ class KeyRotationService(
         val pendingFile = File(context.filesDir, PENDING_ROTATION_FILE)
         if (!pendingFile.exists()) return
         runCatching {
-            if (!database.isOpen) database.open()
-            val wireBytes = pendingFile.readBytes()
-            val cert = KeyRotationCertificate.fromWire(wireBytes)
+            val pendingData = parsePendingFile(pendingFile.readBytes())
+                ?: run { pendingFile.delete(); return }
+
+            // If the seed was saved, ensure it's planted so the DB can be
+            // opened with the new key.
+            if (pendingData.newSeed != null) {
+                try {
+                    keystore.plantSeed(pendingData.newSeed)
+                } catch (_: Throwable) {
+                    // plantSeed may fail if the seed is already planted
+                    // (partial recovery after keystore.reset succeeded).
+                }
+            }
+
+            // Try to open the DB. If rekey happened but plantSeed didn't,
+            // the DB key derived from the new seed (saved in the pending
+            // file) lets us reopen.
+            if (!database.isOpen) {
+                try {
+                    database.open()
+                } catch (_: Throwable) {
+                    // DB may be keyed with the new passphrase but identity
+                    // key wasn't planted yet — open() derives from keystore
+                    // which may still have the old key or be reset. If
+                    // plantSeed above succeeded, this should work. If not,
+                    // we can't recover.
+                    return
+                }
+            }
+
+            val cert = pendingData.cert
             val onionString = cert.newOnion?.let { String(it, Charsets.US_ASCII) }
             database.keyRotationDao.upsert(
                 KeyRotationEntity(
@@ -87,13 +116,20 @@ class KeyRotationService(
             )
             val wireBytes = cert.wireBytes()
 
-            val pendingFile = File(context.filesDir, PENDING_ROTATION_FILE)
-            pendingFile.writeBytes(wireBytes)
-
             val isFounder = membership.isFounder
             val communityIdBytes = membership.communityId.copyOf()
 
+            // Derive the new DB key BEFORE writing the pending file so we
+            // can include it in the recovery payload.
             val newDbKey = hkdfDeriveSubkey(newSeed, DB_KEY_INFO)
+
+            // Write the pending file with cert + seed + DB key BEFORE any
+            // destructive operations. If the process dies at any point
+            // after this, recoverPendingRotation() can resume.
+            val pendingFile = File(context.filesDir, PENDING_ROTATION_FILE)
+            val pendingPayload = buildPendingFile(wireBytes, newSeed, newDbKey)
+            pendingFile.writeBytes(pendingPayload)
+
             try {
                 database.rekey(newDbKey)
             } finally {
@@ -103,6 +139,8 @@ class KeyRotationService(
             keystore.reset()
 
             keystore.plantSeed(newSeed)
+            // Seed has been copied into the keystore; zero it now.
+            newSeed.fill(0)
 
             database.open()
 
@@ -137,30 +175,76 @@ class KeyRotationService(
 
             return true
         } finally {
+            // Zero only if not already zeroed above (fill is idempotent).
             newSeed.fill(0)
         }
     }
 
     private suspend fun rekeyLocal(oldBytes: ByteArray, newBytes: ByteArray) {
-        val edges = database.trustEdgeDao.all()
-        for (edge in edges) {
-            val fromMatch = edge.fromPub.contentEquals(oldBytes)
-            val toMatch = edge.toPub.contentEquals(oldBytes)
-            val signerMatch = edge.certSigner.contentEquals(oldBytes)
-            if (!fromMatch && !toMatch && !signerMatch) continue
+        database.runInTransaction {
+            val edges = database.trustEdgeDao.all()
+            for (edge in edges) {
+                val fromMatch = edge.fromPub.contentEquals(oldBytes)
+                val toMatch = edge.toPub.contentEquals(oldBytes)
+                val signerMatch = edge.certSigner.contentEquals(oldBytes)
+                if (!fromMatch && !toMatch && !signerMatch) continue
 
-            database.trustEdgeDao.delete(edge.fromPub, edge.toPub)
-            database.trustEdgeDao.upsert(
-                edge.copy(
-                    fromPub = if (fromMatch) newBytes else edge.fromPub,
-                    toPub = if (toMatch) newBytes else edge.toPub,
-                    certSigner = if (signerMatch) newBytes else edge.certSigner,
-                ),
-            )
+                database.trustEdgeDao.delete(edge.fromPub, edge.toPub)
+                database.trustEdgeDao.upsert(
+                    edge.copy(
+                        fromPub = if (fromMatch) newBytes else edge.fromPub,
+                        toPub = if (toMatch) newBytes else edge.toPub,
+                        certSigner = if (signerMatch) newBytes else edge.certSigner,
+                    ),
+                )
+            }
+
+            database.messageDao.rekeyThread(oldBytes, newBytes)
+            database.messageDao.rekeyFromPub(oldBytes, newBytes)
+            database.messageDao.rekeyToPub(oldBytes, newBytes)
         }
+    }
 
-        database.messageDao.rekeyFromPub(oldBytes, newBytes)
-        database.messageDao.rekeyToPub(oldBytes, newBytes)
+    /**
+     * Pending file format: CBOR array [certWireBytes, newSeed, newDbKey].
+     * Contains everything needed to resume rotation after a crash.
+     */
+    private fun buildPendingFile(
+        certWireBytes: ByteArray,
+        newSeed: ByteArray,
+        newDbKey: ByteArray,
+    ): ByteArray = Cbor.encode {
+        arrayHeader(3)
+        bytes(certWireBytes)
+        bytes(newSeed)
+        bytes(newDbKey)
+    }
+
+    private data class PendingData(
+        val cert: KeyRotationCertificate,
+        val newSeed: ByteArray?,
+        val newDbKey: ByteArray?,
+    )
+
+    private fun parsePendingFile(blob: ByteArray): PendingData? = runCatching {
+        // Try new format first: CBOR array [certBytes, seed, dbKey]
+        Cbor.decode(blob) {
+            val n = arrayHeader()
+            if (n == 3) {
+                val certBytes = bytes()
+                val seed = bytes()
+                val dbKey = bytes()
+                val cert = KeyRotationCertificate.fromWire(certBytes)
+                PendingData(cert, seed, dbKey)
+            } else {
+                null
+            }
+        }
+    }.getOrElse {
+        // Fall back to legacy format: bare cert wire bytes
+        runCatching {
+            PendingData(KeyRotationCertificate.fromWire(blob), null, null)
+        }.getOrNull()
     }
 
     private fun hkdfDeriveSubkey(seed: ByteArray, info: ByteArray): ByteArray {

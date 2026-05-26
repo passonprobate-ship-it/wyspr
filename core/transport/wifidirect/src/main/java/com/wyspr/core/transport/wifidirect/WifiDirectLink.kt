@@ -8,9 +8,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,11 +26,11 @@ class WifiDirectLink(
 ) : Link {
 
     private val sendLock = Mutex()
+    private val closeLock = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    private val _incoming = MutableSharedFlow<ByteArray>(
-        replay = 0,
-        extraBufferCapacity = 16,
+    private val _incoming = Channel<ByteArray>(
+        capacity = 16,
         onBufferOverflow = BufferOverflow.SUSPEND,
     )
 
@@ -60,11 +60,12 @@ class WifiDirectLink(
         }
     }
 
-    override fun incoming(): Flow<ByteArray> = _incoming.asSharedFlow()
+    override fun incoming(): Flow<ByteArray> = _incoming.receiveAsFlow()
 
-    override suspend fun close() {
+    override suspend fun close(): Unit = closeLock.withLock {
         if (closed) return
         closed = true
+        _incoming.close()
         withContext(Dispatchers.IO) {
             runCatching { socket.shutdownInput() }
             runCatching { socket.shutdownOutput() }
@@ -103,9 +104,13 @@ class WifiDirectLink(
                     if (!closed) Log.w(TAG, "read: payload error", t)
                     return
                 }
-                _incoming.emit(payload)
+                _incoming.send(payload)
             }
+        } catch (_: kotlinx.coroutines.channels.ClosedSendChannelException) {
+            // close() ran while we were mid-send; benign.
         } finally {
+            closed = true
+            runCatching { _incoming.close() }
             runCatching { socket.close() }
         }
     }

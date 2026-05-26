@@ -142,6 +142,9 @@ class TorLink(
         } catch (_: kotlinx.coroutines.channels.ClosedSendChannelException) {
             // close() ran while we were mid-send; benign.
         } finally {
+            // Mark the link as closed so send() rejects further writes
+            // instead of writing to a dead socket.
+            closed = true
             // Best-effort close — the suspending close() above might
             // have raced us to it; either way the socket ends up shut.
             runCatching { _incoming.close() }

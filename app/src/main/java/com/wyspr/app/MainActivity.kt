@@ -124,14 +124,21 @@ class MainActivity : FragmentActivity() {
 
     private fun readDeepLink(intent: Intent?) {
         intent ?: return
-        if (intent.action != AndroidMessagingNotifier.ACTION_OPEN_CHAT) return
-        val hex = intent.getStringExtra(AndroidMessagingNotifier.EXTRA_PEER_HEX)
-            ?: return
-        _deepLink.value = DeepLink.OpenChat(peerHex = hex)
+        when (intent.action) {
+            AndroidMessagingNotifier.ACTION_OPEN_CHAT -> {
+                val hex = intent.getStringExtra(AndroidMessagingNotifier.EXTRA_PEER_HEX)
+                    ?: return
+                _deepLink.value = DeepLink.OpenChat(peerHex = hex)
+            }
+            com.wyspr.app.transport.AndroidPaymentNotifier.ACTION_OPEN_WALLET -> {
+                _deepLink.value = DeepLink.OpenWallet
+            }
+        }
     }
 
     sealed interface DeepLink {
         data class OpenChat(val peerHex: String) : DeepLink
+        data object OpenWallet : DeepLink
     }
 
     private fun maybeRequestNotificationPermission() {

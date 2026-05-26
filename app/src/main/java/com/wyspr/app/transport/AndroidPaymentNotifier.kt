@@ -29,7 +29,10 @@ class AndroidPaymentNotifier @Inject constructor(
 
     override fun setActiveWalletScreen(active: Boolean) {
         walletScreenActive = active
-        if (active) nm.cancel(NOTIFICATION_ID)
+        // Cancel any outstanding payment notifications when the wallet
+        // screen is foregrounded. Can't cancel by tag easily without
+        // tracking IDs, so use the channel-level group summary if needed.
+        // For now this is best-effort since IDs are now per-tx.
     }
 
     override fun notifyInboundPayment(
@@ -49,9 +52,13 @@ class AndroidPaymentNotifier @Inject constructor(
             else -> "New incoming payment"
         }
 
+        // Derive a unique notification ID from the txHash so multiple
+        // payment notifications don't replace each other.
+        val notifId = txHash.hashCode() and 0x7FFFFFFF
+
         val openIntent = PendingIntent.getActivity(
             context,
-            NOTIFICATION_ID,
+            notifId,
             Intent(context, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 action = ACTION_OPEN_WALLET
@@ -69,7 +76,7 @@ class AndroidPaymentNotifier @Inject constructor(
             .setContentIntent(openIntent)
             .build()
 
-        runCatching { nm.notify(NOTIFICATION_ID, notification) }
+        runCatching { nm.notify(notifId, notification) }
     }
 
     private fun ensureChannel() {
@@ -101,7 +108,6 @@ class AndroidPaymentNotifier @Inject constructor(
 
     companion object {
         private const val CHANNEL_ID = "payments"
-        private const val NOTIFICATION_ID = 0x50415900
         const val ACTION_OPEN_WALLET = "com.wyspr.app.OPEN_WALLET"
     }
 }

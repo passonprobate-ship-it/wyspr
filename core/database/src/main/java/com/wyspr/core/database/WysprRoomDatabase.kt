@@ -109,7 +109,7 @@ import com.wyspr.core.database.entities.UserProfileEntity
         GroupMessageDeliveryEntity::class,
         KeyRotationEntity::class,
     ],
-    version = 22,
+    version = 23,
     exportSchema = true,
 )
 abstract class WysprRoomDatabase : RoomDatabase() {
@@ -510,6 +510,66 @@ internal val MIGRATION_21_22 = object : Migration(21, 22) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_key_rotation_newPub` ON `key_rotation`(`newPub`)"
+        )
+    }
+}
+
+/**
+ * v22 → v23: three structural hardening changes.
+ *
+ *  1. FK CASCADE on `message_reaction` → `message`. Recreate the table
+ *     with the FK constraint so reactions are cleaned up when a message
+ *     is deleted (disappearing messages, manual delete).
+ *  2. FK CASCADE on `group_message_delivery` → `group_message`. Same
+ *     orphan-row problem.
+ *  3. Index on `message(from_pub)` — rekey queries were doing full scans.
+ */
+internal val MIGRATION_22_23 = object : Migration(22, 23) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // 1. Recreate message_reaction with FK
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `message_reaction_new` (" +
+                "`msg_id` BLOB NOT NULL, " +
+                "`from_pub` BLOB NOT NULL, " +
+                "`emoji` TEXT NOT NULL, " +
+                "`created_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`msg_id`, `from_pub`), " +
+                "FOREIGN KEY(`msg_id`) REFERENCES `message`(`id`) " +
+                "ON UPDATE NO ACTION ON DELETE CASCADE)"
+        )
+        db.execSQL(
+            "INSERT OR IGNORE INTO `message_reaction_new` " +
+                "(msg_id, from_pub, emoji, created_at) " +
+                "SELECT msg_id, from_pub, emoji, created_at FROM `message_reaction`"
+        )
+        db.execSQL("DROP TABLE `message_reaction`")
+        db.execSQL("ALTER TABLE `message_reaction_new` RENAME TO `message_reaction`")
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_message_reaction_msg_id` " +
+                "ON `message_reaction`(`msg_id`)"
+        )
+
+        // 2. Recreate group_message_delivery with FK
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `group_message_delivery_new` (" +
+                "`msg_id` BLOB NOT NULL, " +
+                "`peer_pub` BLOB NOT NULL, " +
+                "`delivered_at` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`msg_id`, `peer_pub`), " +
+                "FOREIGN KEY(`msg_id`) REFERENCES `group_message`(`id`) " +
+                "ON UPDATE NO ACTION ON DELETE CASCADE)"
+        )
+        db.execSQL(
+            "INSERT OR IGNORE INTO `group_message_delivery_new` " +
+                "(msg_id, peer_pub, delivered_at) " +
+                "SELECT msg_id, peer_pub, delivered_at FROM `group_message_delivery`"
+        )
+        db.execSQL("DROP TABLE `group_message_delivery`")
+        db.execSQL("ALTER TABLE `group_message_delivery_new` RENAME TO `group_message_delivery`")
+
+        // 3. Index on message(from_pub) for rekey queries
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_message_from_pub` ON `message`(`from_pub`)"
         )
     }
 }

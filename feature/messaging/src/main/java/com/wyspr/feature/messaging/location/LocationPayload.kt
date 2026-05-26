@@ -29,7 +29,7 @@ object LocationPayload {
     private const val PREFIX = "wyspr:loc:"
 
     fun encode(lat: Double, lng: Double, accuracyMeters: Float): String =
-        "$PREFIX$lat,$lng,$accuracyMeters"
+        "$PREFIX${"%.6f".format(lat)},${"%.6f".format(lng)},${"%.1f".format(accuracyMeters)}"
 
     fun decode(body: String): Parsed? {
         if (!body.startsWith(PREFIX)) return null

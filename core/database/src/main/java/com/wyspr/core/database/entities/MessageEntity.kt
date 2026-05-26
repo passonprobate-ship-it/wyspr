@@ -36,6 +36,7 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["thread_pub", "created_at"]),
         Index(value = ["status"]),
+        Index(value = ["from_pub"]),
     ],
 )
 @Stable

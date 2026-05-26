@@ -2,10 +2,12 @@ package com.wyspr.core.database.entities
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.Index
 
 @Entity(
     tableName = "key_rotation",
     primaryKeys = ["oldPub", "newPub"],
+    indices = [Index(value = ["newPub"])],
 )
 data class KeyRotationEntity(
     @ColumnInfo(name = "oldPub") val oldPub: ByteArray,

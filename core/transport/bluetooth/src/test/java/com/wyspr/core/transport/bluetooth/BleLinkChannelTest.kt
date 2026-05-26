@@ -35,10 +35,13 @@ class BleLinkChannelTest {
     private val endpoint = PeerEndpoint(Transport.Kind.BluetoothLe, "AA:BB:CC:DD:EE:F0")
 
     private fun framed(payload: ByteArray): ByteArray {
-        val out = ByteArray(2 + payload.size)
-        out[0] = ((payload.size ushr 8) and 0xFF).toByte()
-        out[1] = (payload.size and 0xFF).toByte()
-        System.arraycopy(payload, 0, out, 2, payload.size)
+        val len = payload.size
+        val out = ByteArray(4 + len)
+        out[0] = ((len ushr 24) and 0xFF).toByte()
+        out[1] = ((len ushr 16) and 0xFF).toByte()
+        out[2] = ((len ushr 8) and 0xFF).toByte()
+        out[3] = (len and 0xFF).toByte()
+        System.arraycopy(payload, 0, out, 4, len)
         return out
     }
 
@@ -113,12 +116,14 @@ class BleLinkChannelTest {
         link.send(byteArrayOf(0xAA.toByte(), 0xBB.toByte()))
 
         val pushed = sink.receive()
-        // [len_hi=0, len_lo=2, 0xAA, 0xBB]
-        assertEquals(4, pushed.size)
+        // [0, 0, 0, 2, 0xAA, 0xBB] — u32 big-endian length header
+        assertEquals(6, pushed.size)
         assertEquals(0, pushed[0].toInt())
-        assertEquals(2, pushed[1].toInt())
-        assertEquals(0xAA.toByte(), pushed[2])
-        assertEquals(0xBB.toByte(), pushed[3])
+        assertEquals(0, pushed[1].toInt())
+        assertEquals(0, pushed[2].toInt())
+        assertEquals(2, pushed[3].toInt())
+        assertEquals(0xAA.toByte(), pushed[4])
+        assertEquals(0xBB.toByte(), pushed[5])
     }
 
     @Test

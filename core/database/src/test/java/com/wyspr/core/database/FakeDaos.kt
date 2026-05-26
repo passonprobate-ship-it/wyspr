@@ -34,15 +34,21 @@ class FakeTrustEdgeDao : TrustEdgeDao {
     }
 
     private val store = LinkedHashMap<EdgeKey, TrustEdgeEntity>()
+    private val changeCounter = MutableStateFlow(0)
 
     override suspend fun upsert(edge: TrustEdgeEntity) {
         store[EdgeKey(edge.fromPub, edge.toPub)] = edge
+        changeCounter.value++
     }
 
     override suspend fun all(): List<TrustEdgeEntity> = store.values.toList()
 
+    override fun allFlow(): Flow<List<TrustEdgeEntity>> =
+        changeCounter.map { store.values.toList() }
+
     override suspend fun delete(from: ByteArray, to: ByteArray) {
         store.remove(EdgeKey(from, to))
+        changeCounter.value++
     }
 
     override suspend fun byToPub(toPub: ByteArray): TrustEdgeEntity? =
@@ -241,10 +247,16 @@ class FakeMessageDao : MessageDao {
     private val store = LinkedHashMap<IdKey, MessageEntity>()
     private val changeCounter = MutableStateFlow(0)
 
-    override suspend fun upsert(message: MessageEntity) {
-        store[IdKey(message.id)] = message
-        changeCounter.value++
+    override suspend fun insertOrIgnore(message: MessageEntity) {
+        val key = IdKey(message.id)
+        if (key !in store) {
+            store[key] = message
+            changeCounter.value++
+        }
     }
+
+    @Suppress("DEPRECATION")
+    override suspend fun upsert(message: MessageEntity) = insertOrIgnore(message)
 
     override fun threadFlow(peerPub: ByteArray): Flow<List<MessageEntity>> =
         changeCounter.map {
@@ -406,6 +418,41 @@ class FakeMessageDao : MessageDao {
                     it.status == "received"
             }
             .map { it.id }
+
+    override suspend fun markSentIfPending(id: ByteArray) {
+        val key = IdKey(id)
+        store.computeIfPresent(key) { _, v ->
+            if (v.status == "pending") v.copy(status = "sent") else v
+        }
+        changeCounter.value++
+    }
+
+    override suspend fun rekeyThread(oldPub: ByteArray, newPub: ByteArray) {
+        val updated = store.entries.map { (k, v) ->
+            k to if (v.threadPub.contentEquals(oldPub)) v.copy(threadPub = newPub) else v
+        }
+        store.clear()
+        updated.forEach { (k, v) -> store[k] = v }
+        changeCounter.value++
+    }
+
+    override suspend fun rekeyFromPub(oldPub: ByteArray, newPub: ByteArray) {
+        val updated = store.entries.map { (k, v) ->
+            k to if (v.fromPub.contentEquals(oldPub)) v.copy(fromPub = newPub) else v
+        }
+        store.clear()
+        updated.forEach { (k, v) -> store[k] = v }
+        changeCounter.value++
+    }
+
+    override suspend fun rekeyToPub(oldPub: ByteArray, newPub: ByteArray) {
+        val updated = store.entries.map { (k, v) ->
+            k to if (v.toPub.contentEquals(oldPub)) v.copy(toPub = newPub) else v
+        }
+        store.clear()
+        updated.forEach { (k, v) -> store[k] = v }
+        changeCounter.value++
+    }
 
     fun clear() { store.clear(); changeCounter.value = 0 }
 

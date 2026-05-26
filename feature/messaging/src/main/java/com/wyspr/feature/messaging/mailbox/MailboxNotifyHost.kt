@@ -192,7 +192,10 @@ class MailboxNotifyHost @Inject constructor(
                 ownerPub = PublicKey(subscribe.ownerPub),
                 socket = socket,
             )
-            register(sub)
+            if (!register(sub)) {
+                Log.w(TAG, "subscriber rejected (cap reached); dropping connection")
+                return
+            }
             registered = sub
 
             Log.d(
@@ -237,11 +240,29 @@ class MailboxNotifyHost @Inject constructor(
         return true
     }
 
-    private fun register(sub: Subscriber) {
-        subscribers.compute(PeerKey(sub.ownerPub.bytes)) { _, existing ->
-            (existing ?: java.util.Collections.newSetFromMap(ConcurrentHashMap()))
-                .also { it.add(sub) }
+    private fun register(sub: Subscriber): Boolean {
+        // Global subscriber cap — resource exhaustion defence.
+        val totalCount = subscribers.values.sumOf { it.size }
+        if (totalCount >= MAX_SUBSCRIBERS_TOTAL) {
+            Log.w(TAG, "register: rejecting subscriber — total cap ($MAX_SUBSCRIBERS_TOTAL) reached")
+            return false
         }
+        subscribers.compute(PeerKey(sub.ownerPub.bytes)) { _, existing ->
+            val set = existing ?: java.util.Collections.newSetFromMap(ConcurrentHashMap())
+            // Per-owner cap — close the oldest connection for this owner
+            // before adding the new one so a single owner can't exhaust
+            // the global budget.
+            if (set.size >= MAX_SUBSCRIBERS_PER_OWNER) {
+                val oldest = set.firstOrNull()
+                if (oldest != null) {
+                    Log.d(TAG, "register: per-owner cap ($MAX_SUBSCRIBERS_PER_OWNER) reached, closing oldest")
+                    set.remove(oldest)
+                    oldest.close()
+                }
+            }
+            set.also { it.add(sub) }
+        }
+        return true
     }
 
     private fun deregister(sub: Subscriber) {
@@ -328,6 +349,12 @@ class MailboxNotifyHost @Inject constructor(
     private companion object {
         private const val TAG = "MailboxNotifyHost"
         private const val SUBSCRIBE_READ_TIMEOUT_MS: Int = 10_000
+
+        /** Maximum concurrent subscribers across all owners. */
+        private const val MAX_SUBSCRIBERS_TOTAL = 100
+        /** Maximum concurrent subscribers for a single owner. Oldest
+         *  is evicted when exceeded. */
+        private const val MAX_SUBSCRIBERS_PER_OWNER = 5
 
         private fun shortHex(bytes: ByteArray): String =
             bytes.take(4).joinToString("") { "%02x".format(it) }

@@ -11,6 +11,7 @@ import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
+import android.os.Build
 import com.wyspr.core.identity.CommunityId
 import com.wyspr.core.transport.Link
 import com.wyspr.core.transport.PeerEndpoint
@@ -22,10 +23,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -35,7 +38,7 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 
-private const val TCP_PORT = 9092
+private const val TCP_PORT = 9094
 private const val ACCEPT_BACKLOG = 50
 
 class WifiDirectTransport(private val context: Context) : Transport {
@@ -61,7 +64,7 @@ class WifiDirectTransport(private val context: Context) : Transport {
         val discovered: MutableSharedFlow<PeerEndpoint>,
         val serverSocket: ServerSocket,
         val acceptJob: Job,
-        val accepted: MutableSharedFlow<Link>,
+        val accepted: Channel<Link>,
     )
 
     val isWifiP2pReady: Boolean get() = manager != null
@@ -109,13 +112,17 @@ class WifiDirectTransport(private val context: Context) : Transport {
                 }
             }
         }
-        context.registerReceiver(receiver, IntentFilter(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION))
+        val peersFilter = IntentFilter(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
+        if (Build.VERSION.SDK_INT >= 34) {
+            context.registerReceiver(receiver, peersFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(receiver, peersFilter)
+        }
 
         val serverSocket = ServerSocket(TCP_PORT, ACCEPT_BACKLOG)
-        val accepted = MutableSharedFlow<Link>(
-            replay = 0,
-            extraBufferCapacity = 16,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        val accepted = Channel<Link>(
+            capacity = 8,
+            onBufferOverflow = BufferOverflow.SUSPEND,
         )
 
         val acceptJob = transportScope.launch {
@@ -127,10 +134,12 @@ class WifiDirectTransport(private val context: Context) : Transport {
                         PeerEndpoint(kind, socket.inetAddress?.hostAddress ?: "unknown"),
                         socket,
                     )
-                    accepted.tryEmit(link)
+                    accepted.send(link)
                 }
             } catch (_: IOException) {
                 // server socket closed — stop accepting
+            } catch (_: kotlinx.coroutines.channels.ClosedSendChannelException) {
+                // channel closed during stop — benign
             }
         }
 
@@ -157,6 +166,7 @@ class WifiDirectTransport(private val context: Context) : Transport {
         runCatching { m.clearServiceRequests(current.channel, null) }
         runCatching { context.unregisterReceiver(current.receiver) }
         current.acceptJob.cancel()
+        current.accepted.close()
         runCatching { current.serverSocket.close() }
     }
 
@@ -164,7 +174,7 @@ class WifiDirectTransport(private val context: Context) : Transport {
         session?.discovered?.asSharedFlow() ?: emptyFlow()
 
     override fun acceptedLinks(): Flow<Link> =
-        session?.accepted?.asSharedFlow() ?: emptyFlow()
+        session?.accepted?.receiveAsFlow() ?: emptyFlow()
 
     @SuppressLint("MissingPermission")
     override suspend fun connect(endpoint: PeerEndpoint): Link = withContext(Dispatchers.IO) {
@@ -190,14 +200,17 @@ class WifiDirectTransport(private val context: Context) : Transport {
             }
         }
 
-        context.registerReceiver(
-            connReceiver,
-            IntentFilter(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION),
-        )
+        val connFilter = IntentFilter(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+        if (Build.VERSION.SDK_INT >= 34) {
+            context.registerReceiver(connReceiver, connFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(connReceiver, connFilter)
+        }
 
         m.connect(s.channel, config, object : WifiP2pManager.ActionListener {
             override fun onSuccess() { /* wait for broadcast */ }
             override fun onFailure(reason: Int) {
+                runCatching { m.cancelConnect(s.channel, null) }
                 groupOwnerIp.completeExceptionally(
                     IOException("WiFi P2P connect failed: reason=$reason"),
                 )
@@ -208,6 +221,9 @@ class WifiDirectTransport(private val context: Context) : Transport {
             val addr = groupOwnerIp.await()
             val socket = Socket(addr, TCP_PORT)
             WifiDirectLink(endpoint, socket)
+        } catch (t: Throwable) {
+            runCatching { m.cancelConnect(s.channel, null) }
+            throw t
         } finally {
             runCatching { context.unregisterReceiver(connReceiver) }
         }

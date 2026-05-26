@@ -69,6 +69,13 @@ interface WysprDatabase {
 
     suspend fun rekey(newPassphrase: ByteArray)
 
+    /**
+     * Execute [body] inside a database transaction. All writes are
+     * committed atomically; if [body] throws, the transaction is
+     * rolled back.
+     */
+    suspend fun <T> runInTransaction(body: suspend () -> T): T
+
     /** Available after open(). */
     val isOpen: Boolean
 

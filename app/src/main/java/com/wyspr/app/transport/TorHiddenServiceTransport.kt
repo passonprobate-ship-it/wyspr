@@ -203,7 +203,11 @@ class TorHiddenServiceTransport(
         val socksPort = torBackend.socksPort.value
             ?: error("Tor SOCKS proxy not ready yet — peer dialing requires a finished bootstrap")
         val target = endpoint.opaqueAddress
-        val host = if (target.endsWith(".onion")) target else "$target.onion"
+        val bareAddress = if (target.endsWith(".onion")) target.removeSuffix(".onion") else target
+        require(ONION_BASE32_REGEX.matches(bareAddress)) {
+            "invalid HSv3 onion address: expected 56 base32 chars, got '${bareAddress.take(10)}…' (${bareAddress.length} chars)"
+        }
+        val host = "$bareAddress.onion"
         Log.d(TAG, "connect: dialing $host:${torBackend.hsTargetPort} via SOCKS :$socksPort")
         val socket: Socket = withContext(Dispatchers.IO) {
             Socks5.dial(
@@ -258,5 +262,6 @@ class TorHiddenServiceTransport(
         private const val TAG = "TorHsTransport"
         private const val BIND_RETRY_COUNT = 5
         private const val BIND_RETRY_BACKOFF_MS = 200L
+        private val ONION_BASE32_REGEX = Regex("^[a-z2-7]{56}$")
     }
 }

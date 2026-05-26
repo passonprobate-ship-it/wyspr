@@ -10,6 +10,20 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface MessageDao {
 
+    /**
+     * Insert a message, ignoring if a row with the same PK already exists.
+     * Named `insertOrIgnore` (not `upsert`) because IGNORE silently drops
+     * the insert on conflict — it does NOT update existing rows.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertOrIgnore(message: MessageEntity)
+
+    /**
+     * @deprecated Use [insertOrIgnore] — the name "upsert" is misleading
+     * since IGNORE does not update on conflict. Kept as an alias for
+     * backward compatibility with existing callers.
+     */
+    @Deprecated("Use insertOrIgnore()", ReplaceWith("insertOrIgnore(message)"))
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun upsert(message: MessageEntity)
 
@@ -21,16 +35,24 @@ interface MessageDao {
     @Query("SELECT * FROM message WHERE thread_pub = :peerPub ORDER BY created_at ASC")
     suspend fun threadSnapshot(peerPub: ByteArray): List<MessageEntity>
 
-    /** Most recent message in each thread; used by ConversationList. */
+    /**
+     * Most recent message in each thread; used by ConversationList.
+     *
+     * Uses a correlated subquery so the rowid picked is always the row
+     * with the largest created_at (tie-broken by rowid DESC). The old
+     * query selected MAX(rowid) and MAX(created_at) independently,
+     * which returned the wrong message when messages arrived out of
+     * order.
+     */
     @Query(
         """
         SELECT m.* FROM message m
-        INNER JOIN (
-            SELECT thread_pub, MAX(created_at) AS max_at, MAX(rowid) AS max_rowid
-            FROM message
-            GROUP BY thread_pub
-        ) latest
-        ON m.thread_pub = latest.thread_pub AND m.rowid = latest.max_rowid
+        WHERE m.rowid = (
+            SELECT m2.rowid FROM message m2
+            WHERE m2.thread_pub = m.thread_pub
+            ORDER BY m2.created_at DESC, m2.rowid DESC
+            LIMIT 1
+        )
         ORDER BY m.created_at DESC
         """,
     )
@@ -137,6 +159,14 @@ interface MessageDao {
 
     @Query("UPDATE message SET expires_at = :expiresAt WHERE id = :id")
     suspend fun setExpiresAt(id: ByteArray, expiresAt: Long?)
+
+    /**
+     * Atomically transition a message from "pending" to "sent". No-ops if
+     * the message is already in a later status, preventing a status
+     * regression when concurrent sync rounds race.
+     */
+    @Query("UPDATE message SET status = 'sent' WHERE id = :id AND status = 'pending'")
+    suspend fun markSentIfPending(id: ByteArray)
 
     @Query("UPDATE message SET thread_pub = :newPub WHERE thread_pub = :oldPub")
     suspend fun rekeyThread(oldPub: ByteArray, newPub: ByteArray)

@@ -2,6 +2,7 @@ package com.wyspr.app.di
 
 import android.content.Context
 import com.wyspr.core.transport.bluetooth.BleTransport
+import com.wyspr.core.transport.wifidirect.WifiDirectTransport
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -13,12 +14,13 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object TransportModule {
 
-    /**
-     * Single BLE transport for the whole app. Holds OS callbacks while
-     * active, so we keep one instance and let UI layers start/stop it.
-     */
     @Provides
     @Singleton
     fun provideBleTransport(@ApplicationContext context: Context): BleTransport =
         BleTransport(context)
+
+    @Provides
+    @Singleton
+    fun provideWifiDirectTransport(@ApplicationContext context: Context): WifiDirectTransport =
+        WifiDirectTransport(context)
 }

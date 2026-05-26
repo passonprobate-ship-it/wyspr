@@ -102,12 +102,27 @@ class GroupConversationViewModel @Inject constructor(
                         groupStore.activeMembers(id)
                     }
                     val contacts = withContext(Dispatchers.IO) { database.contactDao.all() }
-                    val nameByPub: Map<com.wyspr.core.identity.PeerKey, String> = contacts
+                    val nameByPub: MutableMap<com.wyspr.core.identity.PeerKey, String> = contacts
                         .mapNotNull { c ->
                             c.displayName?.takeIf { it.isNotBlank() }
                                 ?.let { com.wyspr.core.identity.PeerKey(c.peerPub) to it }
                         }
-                        .toMap()
+                        .toMap(HashMap())
+                    // Resolve rotated member names: after key rotation,
+                    // messages carry the OLD fromPub but the contact row
+                    // has the NEW pub. Load rotation certs and add reverse
+                    // mappings so oldPub gets the same display name.
+                    withContext(Dispatchers.IO) {
+                        val rotations = database.keyRotationDao.all()
+                        for (rot in rotations) {
+                            val newKey = com.wyspr.core.identity.PeerKey(rot.newPub)
+                            val oldKey = com.wyspr.core.identity.PeerKey(rot.oldPub)
+                            val nameForNew = nameByPub[newKey]
+                            if (nameForNew != null && oldKey !in nameByPub) {
+                                nameByPub[oldKey] = nameForNew
+                            }
+                        }
+                    }
                     _state.value = UiState.Ready(
                         groupId = id,
                         groupName = name,

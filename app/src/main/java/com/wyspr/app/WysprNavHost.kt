@@ -66,14 +66,24 @@ fun WysprNavHost(
     // the activity the link was consumed so a rotation doesn't
     // re-trigger.
     LaunchedEffect(pendingDeepLink) {
-        if (pendingDeepLink is MainActivity.DeepLink.OpenChat) {
-            // Deep-links open the conversation directly as a full-screen
-            // route (covers the bottom nav), matching WhatsApp-style
-            // notification-tap navigation. Back lands on the Chats tab.
-            navController.navigate("${Routes.Conversation}/${pendingDeepLink.peerHex}") {
-                launchSingleTop = true
+        when (pendingDeepLink) {
+            is MainActivity.DeepLink.OpenChat -> {
+                val hex = pendingDeepLink.peerHex
+                // Validate: must be exactly 64 hex chars (32-byte pubkey).
+                if (hex.matches(Regex("^[0-9a-fA-F]{64}$"))) {
+                    navController.navigate("${Routes.Conversation}/$hex") {
+                        launchSingleTop = true
+                    }
+                }
+                onDeepLinkConsumed()
             }
-            onDeepLinkConsumed()
+            is MainActivity.DeepLink.OpenWallet -> {
+                navController.navigate(Routes.Monero) {
+                    launchSingleTop = true
+                }
+                onDeepLinkConsumed()
+            }
+            null -> { /* nothing pending */ }
         }
     }
     val biometricPrompt: suspend () -> Boolean = remember(activity, unlocker) {

@@ -2,6 +2,7 @@ package com.wyspr.core.database
 
 import android.content.Context
 import androidx.room.Room
+import androidx.room.withTransaction
 import com.wyspr.core.crypto.KeystoreManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -109,6 +110,7 @@ class WysprDatabaseImpl(
                     MIGRATION_19_20,
                     MIGRATION_20_21,
                     MIGRATION_21_22,
+                    MIGRATION_22_23,
                 )
                 .fallbackToDestructiveMigrationFrom(1, 2, 3, 4)
                 .build()
@@ -116,6 +118,13 @@ class WysprDatabaseImpl(
             // Touch the DB to force open + key check now, not on first
             // DAO call. If the passphrase is wrong (e.g. keystore was
             // rotated externally), this throws here, not silently later.
+            // TODO: cipher_memory_security is set AFTER the DB is opened.
+            // Ideally this would run as a post-key SQL hook inside
+            // SupportOpenHelperFactory, but the current SQLCipher
+            // SupportFactory API doesn't expose a postKeySql hook.
+            // A Room RoomDatabase.Callback.onOpen() fires too late
+            // (after Room's schema validation). The current placement
+            // is the best available — it runs before any DAO query.
             val db = built.openHelper.writableDatabase
             db.execSQL("PRAGMA cipher_memory_security = ON")
 
@@ -160,6 +169,11 @@ class WysprDatabaseImpl(
                 oldKey.fill(0)
             }
         }
+    }
+
+    override suspend fun <T> runInTransaction(body: suspend () -> T): T {
+        val db = requireOpen()
+        return db.withTransaction { body() }
     }
 
     override suspend fun close() = openLock.withLock {

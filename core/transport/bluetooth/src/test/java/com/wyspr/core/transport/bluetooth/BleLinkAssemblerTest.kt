@@ -13,10 +13,13 @@ import kotlin.test.assertFailsWith
 class BleLinkAssemblerTest {
 
     private fun frame(payload: ByteArray): ByteArray {
-        val out = ByteArray(2 + payload.size)
-        out[0] = ((payload.size ushr 8) and 0xFF).toByte()
-        out[1] = (payload.size and 0xFF).toByte()
-        System.arraycopy(payload, 0, out, 2, payload.size)
+        val len = payload.size
+        val out = ByteArray(4 + len)
+        out[0] = ((len ushr 24) and 0xFF).toByte()
+        out[1] = ((len ushr 16) and 0xFF).toByte()
+        out[2] = ((len ushr 8) and 0xFF).toByte()
+        out[3] = (len and 0xFF).toByte()
+        System.arraycopy(payload, 0, out, 4, len)
         return out
     }
 
@@ -34,10 +37,10 @@ class BleLinkAssemblerTest {
         val a = BleLinkAssembler()
         val payload = ByteArray(50) { it.toByte() }
         val framed = frame(payload)
-        // Header alone — no full frame yet.
-        assertEquals(0, a.feed(framed.copyOfRange(0, 2)).size)
+        // Header alone (4 bytes) — no full frame yet.
+        assertEquals(0, a.feed(framed.copyOfRange(0, 4)).size)
         // Partial payload — still no full frame.
-        assertEquals(0, a.feed(framed.copyOfRange(2, 25)).size)
+        assertEquals(0, a.feed(framed.copyOfRange(4, 25)).size)
         // Rest of payload — yields one frame.
         val out = a.feed(framed.copyOfRange(25, framed.size))
         assertEquals(1, out.size)
@@ -59,10 +62,13 @@ class BleLinkAssemblerTest {
     @Test
     fun feed_rejectsFrameLargerThanMaxFrameBytes() {
         val a = BleLinkAssembler()
-        val hi = (((BleLink.MAX_FRAME_BYTES + 1) ushr 8) and 0xFF).toByte()
-        val lo = ((BleLink.MAX_FRAME_BYTES + 1) and 0xFF).toByte()
+        val oversize = BleLink.MAX_FRAME_BYTES + 1
+        val b0 = ((oversize ushr 24) and 0xFF).toByte()
+        val b1 = ((oversize ushr 16) and 0xFF).toByte()
+        val b2 = ((oversize ushr 8) and 0xFF).toByte()
+        val b3 = (oversize and 0xFF).toByte()
         assertFailsWith<IllegalArgumentException> {
-            a.feed(byteArrayOf(hi, lo))
+            a.feed(byteArrayOf(b0, b1, b2, b3))
         }
     }
 

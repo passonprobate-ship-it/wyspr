@@ -322,41 +322,51 @@ class MessageSyncService @Inject constructor(
                     if (sessionResult.engineResult.receivedCount > 0) {
                         postInboundNotification(sessionResult.peerPub)
                     }
-                    val revocationsReceived = try {
-                        withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
-                            val graph = trustGraphService.snapshot()
-                            runRevocationSyncRound(
-                                link = link,
-                                database = database,
-                                communityId = communityId.bytes,
-                                trustGraph = graph,
-                                sodium = sodium,
-                            )
-                        } ?: 0
-                    } catch (ce: kotlinx.coroutines.CancellationException) {
-                        throw ce
-                    } catch (t: Throwable) {
-                        android.util.Log.w(
-                            "MessageSyncService",
-                            "Revocation round failed after messaging succeeded: " +
-                                "${t.javaClass.simpleName}",
-                        )
+                    // Skip post-engine revocation/rotation sync when the
+                    // pre-engine variant in openSessionAndSync already
+                    // completed successfully — running both on the same
+                    // link doubles the protocol traffic for no gain.
+                    val revocationsReceived = if (sessionResult.preEngineSyncDone) {
+                        Log.d(TAG_SYNC, "runOnce: skipping post-engine rev/rot sync (pre-engine succeeded)")
                         0
-                    }
-                    try {
-                        withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
-                            val graph = trustGraphService.snapshot()
-                            runKeyRotationSyncRound(
-                                link = link,
-                                database = database,
-                                communityId = communityId.bytes,
-                                trustGraph = graph,
-                                sodium = sodium,
+                    } else {
+                        val rev = try {
+                            withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
+                                val graph = trustGraphService.snapshot()
+                                runRevocationSyncRound(
+                                    link = link,
+                                    database = database,
+                                    communityId = communityId.bytes,
+                                    trustGraph = graph,
+                                    sodium = sodium,
+                                )
+                            } ?: 0
+                        } catch (ce: kotlinx.coroutines.CancellationException) {
+                            throw ce
+                        } catch (t: Throwable) {
+                            android.util.Log.w(
+                                "MessageSyncService",
+                                "Revocation round failed after messaging succeeded: " +
+                                    "${t.javaClass.simpleName}",
                             )
+                            0
                         }
-                    } catch (ce: kotlinx.coroutines.CancellationException) {
-                        throw ce
-                    } catch (_: Throwable) { }
+                        try {
+                            withTimeoutOrNull(POST_ENGINE_SYNC_TIMEOUT_MS) {
+                                val graph = trustGraphService.snapshot()
+                                runKeyRotationSyncRound(
+                                    link = link,
+                                    database = database,
+                                    communityId = communityId.bytes,
+                                    trustGraph = graph,
+                                    sodium = sodium,
+                                )
+                            }
+                        } catch (ce: kotlinx.coroutines.CancellationException) {
+                            throw ce
+                        } catch (_: Throwable) { }
+                        rev
+                    }
                     val winRole = if (preferInitiator) MessageSyncEngine.HandshakeRole.Initiator
                         else MessageSyncEngine.HandshakeRole.Responder
                     val cachedThisRound = maybeCacheTorSession(
@@ -447,16 +457,22 @@ class MessageSyncService @Inject constructor(
             val link = transports.bleDiscoverAndConnect()
             LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
         }
+        val wifiDirectDeferred = raceScope.async {
+            delay(Random.nextLong(0, DIAL_JITTER_MS))
+            val link = transports.wifiDirectDiscoverAndConnect()
+            LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
+        }
         val torDialDeferred = raceScope.async {
             delay(Random.nextLong(0, DIAL_JITTER_MS))
             val link = transports.dialFirstKnownOnion(ownPubBytes)
                 ?: awaitCancellation()
             LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
         }
-        val deferreds = listOf(bleConnectDeferred, torDialDeferred)
+        val deferreds = listOf(bleConnectDeferred, wifiDirectDeferred, torDialDeferred)
         try {
             val outcome = kotlinx.coroutines.selects.select<LinkOutcome> {
                 bleConnectDeferred.onAwait { it }
+                wifiDirectDeferred.onAwait { it }
                 torDialDeferred.onAwait { it }
             }
             for (d in deferreds) {
@@ -501,6 +517,11 @@ class MessageSyncService @Inject constructor(
             val link = transports.bleDiscoverAndConnect()
             LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
         }
+        val wifiDirectDeferred = raceScope.async {
+            delay(Random.nextLong(0, DIAL_JITTER_MS))
+            val link = transports.wifiDirectDiscoverAndConnect()
+            LinkOutcome(link, MessageSyncEngine.HandshakeRole.Initiator)
+        }
         val torDialDeferred = raceScope.async {
             delay(Random.nextLong(0, DIAL_JITTER_MS))
             val link = transports.dialFirstKnownOnion(ownPubBytes)
@@ -511,10 +532,11 @@ class MessageSyncService @Inject constructor(
             val link = transports.acceptedLinks().first()
             LinkOutcome(link, MessageSyncEngine.HandshakeRole.Responder)
         }
-        val deferreds = listOf(bleConnectDeferred, torDialDeferred, acceptDeferred)
+        val deferreds = listOf(bleConnectDeferred, wifiDirectDeferred, torDialDeferred, acceptDeferred)
         try {
             val outcome = kotlinx.coroutines.selects.select<LinkOutcome> {
                 bleConnectDeferred.onAwait { it }
+                wifiDirectDeferred.onAwait { it }
                 torDialDeferred.onAwait { it }
                 acceptDeferred.onAwait { it }
             }
@@ -542,6 +564,11 @@ class MessageSyncService @Inject constructor(
         val peerPub: PublicKey,
         val noise: NoiseSession,
         val engineResult: MessageSyncEngine.Result,
+        /** True when pre-engine revocation/rotation sync completed
+         *  successfully in [openSessionAndSync]. When true, the caller
+         *  can skip the post-engine revocation/rotation sync to avoid
+         *  double work on the same link. */
+        val preEngineSyncDone: Boolean = false,
     )
 
     /**
@@ -660,6 +687,8 @@ class MessageSyncService @Inject constructor(
                 return null
             }
 
+            val preEngineSyncOk = revResult.isSuccess && rotResult.isSuccess
+
             val engine = buildEngine(
                 role = role,
                 noise = noise,
@@ -667,7 +696,12 @@ class MessageSyncService @Inject constructor(
                 peerPub = peerPub,
                 ownPub = ownPub,
             )
-            val result = SessionResult(peerPub = peerPub, noise = noise, engineResult = engine.run())
+            val result = SessionResult(
+                peerPub = peerPub,
+                noise = noise,
+                engineResult = engine.run(),
+                preEngineSyncDone = preEngineSyncOk,
+            )
             callerOwnsNoise = true
             return result
         } finally {
@@ -760,15 +794,23 @@ class MessageSyncService @Inject constructor(
         communityId: CommunityId,
         ownPub: PublicKey,
     ): Result? {
+        // Recompute role from fresh pubkey comparison rather than using
+        // cached.role — after key rotation the cached role may be wrong
+        // because the pubkey ordering can flip.
+        val freshRole = if (compareLex(ownPub.bytes, cached.peerPub.bytes) < 0) {
+            MessageSyncEngine.HandshakeRole.Initiator
+        } else {
+            MessageSyncEngine.HandshakeRole.Responder
+        }
         Log.d(
             TAG_SYNC,
-            "tryCachedRound: peer=${shortHex(cached.peerPub.bytes)} role=${cached.role} " +
-                "age=${(System.currentTimeMillis() - cached.acquiredAtMs) / 1000}s",
+            "tryCachedRound: peer=${shortHex(cached.peerPub.bytes)} role=$freshRole " +
+                "(cached=${cached.role}) age=${(System.currentTimeMillis() - cached.acquiredAtMs) / 1000}s",
         )
         return try {
             val engineResult = withTimeoutOrNull(SESSION_TIMEOUT_MS) {
                 buildEngine(
-                    role = cached.role,
+                    role = freshRole,
                     noise = cached.noise,
                     link = cached.link,
                     peerPub = cached.peerPub,

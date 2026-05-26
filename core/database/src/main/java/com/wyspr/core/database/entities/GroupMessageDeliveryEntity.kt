@@ -2,10 +2,17 @@ package com.wyspr.core.database.entities
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.ForeignKey
 
 @Entity(
     tableName = "group_message_delivery",
     primaryKeys = ["msg_id", "peer_pub"],
+    foreignKeys = [ForeignKey(
+        entity = GroupMessageEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["msg_id"],
+        onDelete = ForeignKey.CASCADE,
+    )],
 )
 data class GroupMessageDeliveryEntity(
     @ColumnInfo("msg_id") val msgId: ByteArray,

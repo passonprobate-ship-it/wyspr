@@ -1,4 +1,4 @@
-# Keystone hardening ProGuard / R8 rules
+# Wyspr hardening ProGuard / R8 rules
 #
 # Strip all Log.d / Log.v / Log.i calls in release builds.
 # Log.w and Log.e are kept — those are guarded against payload leakage

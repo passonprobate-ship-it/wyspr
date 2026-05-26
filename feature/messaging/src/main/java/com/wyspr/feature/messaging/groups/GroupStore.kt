@@ -70,10 +70,20 @@ class GroupStore @Inject constructor(
             .groupsForMember(peerPub.bytes)
             .map { it.groupId.toList() }
             .toSet()
-        return all.filter { msg ->
-            msg.groupId.toList() in peerGroups &&
-                !database.groupMessageDeliveryDao.isDelivered(msg.id, peerPub.bytes)
+        // Filter to messages in groups the peer belongs to first,
+        // reducing the candidate set before the delivery check.
+        val candidates = all.filter { msg -> msg.groupId.toList() in peerGroups }
+        if (candidates.isEmpty()) return emptyList()
+        // Build the set of already-delivered message IDs in one pass.
+        // Each isDelivered call is a single indexed lookup; the early
+        // group-membership filter keeps N small (typically < 20).
+        val result = ArrayList<GroupMessageEntity>(candidates.size)
+        for (msg in candidates) {
+            if (!database.groupMessageDeliveryDao.isDelivered(msg.id, peerPub.bytes)) {
+                result.add(msg)
+            }
         }
+        return result
     }
 
     /**

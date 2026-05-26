@@ -23,11 +23,15 @@ class RevocationSyncRepository(
 ) {
 
     /**
-     * All revocation (issuerPub, targetPub) pairs stored in the database.
-     * Used to build the HaveSet message.
+     * Revocation (issuerPub, targetPub) pairs stored in the database
+     * that belong to this repository's community. Used to build the
+     * HaveSet message. Filters by [communityId] to prevent cross-
+     * community data leakage during sync.
      */
     suspend fun haveSet(database: WysprDatabase): List<Pair<ByteArray, ByteArray>> =
-        database.revocationDao.all().map { it.issuerPub to it.targetPub }
+        database.revocationDao.all()
+            .filter { it.communityId.contentEquals(communityId) }
+            .map { it.issuerPub to it.targetPub }
 
     /**
      * Returns the subset of [theirSet] that this device does NOT already
@@ -50,9 +54,9 @@ class RevocationSyncRepository(
         database: WysprDatabase,
         keys: List<Pair<ByteArray, ByteArray>>,
     ): List<ByteArray> {
-        val indexed = database.revocationDao.all().associateBy {
-            RevocationKey(it.issuerPub, it.targetPub)
-        }
+        val indexed = database.revocationDao.all()
+            .filter { it.communityId.contentEquals(communityId) }
+            .associateBy { RevocationKey(it.issuerPub, it.targetPub) }
         return keys.mapNotNull { (issuer, target) ->
             val entity = indexed[RevocationKey(issuer, target)] ?: return@mapNotNull null
             rebuildWireBytes(entity)  // null for legacy rows w/o stored community

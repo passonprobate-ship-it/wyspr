@@ -90,6 +90,7 @@ class NoiseSessionImpl(
         return if (payloadLen == 0) null else payloadBuf.copyOf(payloadLen)
     }
 
+    @Synchronized
     override fun encrypt(plaintext: ByteArray): ByteArray {
         check(_state == NoiseSession.State.Transport) { "Noise not in transport mode" }
         val cs = sendCipher ?: error("send cipher not initialised")
@@ -112,6 +113,7 @@ class NoiseSessionImpl(
         return bos.toByteArray()
     }
 
+    @Synchronized
     override fun decrypt(ciphertext: ByteArray): ByteArray {
         check(_state == NoiseSession.State.Transport) { "Noise not in transport mode" }
         val cs = receiveCipher ?: error("receive cipher not initialised")
@@ -143,6 +145,7 @@ class NoiseSessionImpl(
         get() = cachedRemoteStatic?.copyOf()
             ?: error("remote static not available until session reaches Transport")
 
+    @Synchronized
     override fun close() {
         runCatching { handshake?.destroy() }
         runCatching { sendCipher?.destroy() }
@@ -152,6 +155,7 @@ class NoiseSessionImpl(
         receiveCipher = null
         cachedHash?.fill(0)
         cachedHash = null
+        cachedRemoteStatic?.fill(0)
         cachedRemoteStatic = null
         _state = NoiseSession.State.Closed
     }
@@ -178,6 +182,13 @@ class NoiseSessionImpl(
     companion object {
         private const val NOISE_MAX_MESSAGE = 65535
         private const val NOISE_MAX_PLAINTEXT = NOISE_MAX_MESSAGE - 16
+        // NOTE: The magic bytes could theoretically collide with the first
+        // 4 bytes of a non-chunked encrypted payload (~1/2^32 chance).
+        // This is acceptable because: (1) the probability is negligible,
+        // (2) a false positive would cause a decryption failure (AEAD tag
+        // mismatch) rather than silent data corruption, and (3) fixing it
+        // would require a wire-format change (e.g. a length-prefix or
+        // explicit framing header outside the ciphertext).
         private val CHUNK_MAGIC = byteArrayOf(0xFF.toByte(), 0x57, 0x43, 0x48)
 
         private fun startsWithChunkMagic(data: ByteArray): Boolean {

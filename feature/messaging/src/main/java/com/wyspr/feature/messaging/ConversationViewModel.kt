@@ -144,6 +144,7 @@ class ConversationViewModel @Inject constructor(
     @Volatile private var peerPub: ByteArray? = null
     @Volatile private var effectivePeerPub: ByteArray? = null
     @Volatile private var autoSyncJob: Job? = null
+    @Volatile private var bindJob: Job? = null
 
     /**
      * Sprint 3 mailbox push-notify driver. Started on bind(); torn
@@ -155,13 +156,16 @@ class ConversationViewModel @Inject constructor(
     @Volatile private var mailboxNotifyJob: Job? = null
 
     fun bind(peer: PublicKey) {
+        // Cancel the previous collector so a re-bind doesn't leak a
+        // stale coroutine streaming the old peer's thread.
+        bindJob?.cancel()
         peerPub = peer.bytes
         notifier.clearForPeer(peer.bytes)
         notifier.setActivePeer(peer.bytes)
         startAutoSync()
         startMailboxNotify()
 
-        viewModelScope.launch {
+        bindJob = viewModelScope.launch {
             val resolved = withContext(Dispatchers.IO) {
                 if (!database.isOpen) database.open()
                 ownPub = keystore.loadOrCreateIdentityKey().publicKey
@@ -252,7 +256,13 @@ class ConversationViewModel @Inject constructor(
         }
     }
 
-    fun revokePeer(onResult: (Boolean) -> Unit) {
+    fun revokePeer(onResult: (Boolean) -> Unit = { ok ->
+        if (ok) {
+            android.util.Log.d("ConversationVM", "revokePeer: succeeded")
+        } else {
+            android.util.Log.w("ConversationVM", "revokePeer: failed")
+        }
+    }) {
         val peer = effectivePeerPub ?: peerPub ?: run { onResult(false); return }
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
@@ -351,6 +361,7 @@ class ConversationViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        bindJob?.cancel()
         autoSyncJob?.cancel()
         mailboxNotifyJob?.cancel()
         // Re-enable notifications for this peer — the user is no
@@ -465,12 +476,19 @@ class ConversationViewModel @Inject constructor(
 
 
     private suspend fun resolveLatestPub(pub: ByteArray): ByteArray {
+        val visited = mutableSetOf(java.nio.ByteBuffer.wrap(pub))
         var current = pub
         var depth = 0
         while (depth < 10) {
             val certs = database.keyRotationDao.byOldPub(current)
             if (certs.isEmpty()) return current
             current = certs.first().newPub
+            val key = java.nio.ByteBuffer.wrap(current)
+            if (!visited.add(key)) {
+                // Cycle detected — return what we have to avoid infinite loop.
+                android.util.Log.w("ConversationVM", "resolveLatestPub: cycle detected at depth $depth")
+                return current
+            }
             depth++
         }
         return current

@@ -171,10 +171,17 @@ class MessageStore @Inject constructor(
         return database.messageDao.idsWithStatus(ids, STATUS_READ)
     }
 
-    /** Sprint 2 — push a [MessageEntity] over a Noise link. */
+    /** Sprint 2 — push a [MessageEntity] over a Noise link.
+     *  Only transitions from 'pending' to 'sent' — avoids regressing
+     *  from 'delivered' or 'read' if multiple sync rounds ack the
+     *  same message. */
     suspend fun markSent(id: ByteArray) {
         ensureOpen()
-        database.messageDao.updateStatus(id, STATUS_SENT)
+        database.messageDao.bulkTransitionStatus(
+            ids = listOf(id),
+            fromStatus = STATUS_PENDING,
+            newStatus = STATUS_SENT,
+        )
     }
 
     /** Sprint 2 — peer ACKed. */
@@ -198,9 +205,15 @@ class MessageStore @Inject constructor(
             applyReaction(envelope.fromPub.bytes, reactionDecoded, envelope.createdAt)
         }
 
+        // Inbound disappear-setting messages are ignored — only the
+        // local user controls their own disappearing timer via the UI.
+        // A remote peer sending wyspr:disappear:N could otherwise
+        // reduce the timer to weaken message retention unilaterally.
         val disappearDecoded = DisappearPayload.decode(envelope.body)
         if (disappearDecoded != null) {
-            applyDisappearSetting(envelope.fromPub.bytes, disappearDecoded)
+            android.util.Log.w("MessageStore",
+                "Ignoring inbound disappear-setting from peer " +
+                    "(value=${disappearDecoded}s) — only local user controls timer")
         }
 
         val disappearAfter = database.contactDao.byPub(envelope.fromPub.bytes)?.disappearAfter

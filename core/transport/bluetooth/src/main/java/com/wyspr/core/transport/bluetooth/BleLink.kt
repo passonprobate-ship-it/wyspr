@@ -2,6 +2,7 @@ package com.wyspr.core.transport.bluetooth
 
 import com.wyspr.core.transport.Link
 import com.wyspr.core.transport.PeerEndpoint
+import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
@@ -23,7 +24,7 @@ import kotlinx.coroutines.sync.withLock
  *
  * Framing — PROTOCOLS.md §1:
  *
- *     [ frame_len: u16 (big-endian) ][ payload: bytes ]
+ *     [ frame_len: u32 (big-endian) ][ payload: bytes ]
  *
  * Each [send] writes a single length-prefixed frame; the chunker splits
  * it into MTU-sized fragments at the byte-pump layer (see
@@ -133,7 +134,7 @@ internal class BleLink(
     }
 
     override suspend fun send(frame: ByteArray) {
-        require(!closed) { "link is closed" }
+        if (closed) throw IOException("link is closed")
         require(frame.size <= MAX_FRAME_BYTES) {
             "frame ${frame.size} > MAX_FRAME_BYTES $MAX_FRAME_BYTES"
         }

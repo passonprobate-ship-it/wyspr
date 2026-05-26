@@ -189,6 +189,8 @@ internal sealed interface MessageSyncFrame {
                     require(outerLen in 2..16) {
                         "Push frame must be 2..16 elements"
                     }
+                    // Track cumulative decoded size to abort before OOM.
+                    var totalDecodedBytes = 0L
                     val count = arrayHeader()
                     require(count in 0..MAX_BATCH) {
                         "Push count $count out of range"
@@ -196,6 +198,10 @@ internal sealed interface MessageSyncFrame {
                     val envelopes = ArrayList<MessageEnvelope>(count)
                     repeat(count) {
                         val envBytes = bytes()
+                        totalDecodedBytes += envBytes.size
+                        require(totalDecodedBytes <= MAX_PUSH_BYTES) {
+                            "Push frame exceeds $MAX_PUSH_BYTES total bytes"
+                        }
                         envelopes.add(MessageEnvelope.fromWire(envBytes))
                     }
                     val groupEnvelopes: List<GroupMessageEnvelope> = if (outerLen >= 3) {
@@ -206,6 +212,10 @@ internal sealed interface MessageSyncFrame {
                         ArrayList<GroupMessageEnvelope>(groupCount).also { list ->
                             repeat(groupCount) {
                                 val envBytes = bytes()
+                                totalDecodedBytes += envBytes.size
+                                require(totalDecodedBytes <= MAX_PUSH_BYTES) {
+                                    "Push frame exceeds $MAX_PUSH_BYTES total bytes"
+                                }
                                 list.add(GroupMessageEnvelope.fromWire(envBytes))
                             }
                         }
@@ -220,6 +230,10 @@ internal sealed interface MessageSyncFrame {
                         ArrayList<GroupMembership>(certCount).also { list ->
                             repeat(certCount) {
                                 val certBytes = bytes()
+                                totalDecodedBytes += certBytes.size
+                                require(totalDecodedBytes <= MAX_PUSH_BYTES) {
+                                    "Push frame exceeds $MAX_PUSH_BYTES total bytes"
+                                }
                                 list.add(GroupMembership.fromWire(certBytes))
                             }
                         }
@@ -234,6 +248,10 @@ internal sealed interface MessageSyncFrame {
                         ArrayList<MailboxBinding>(bindCount).also { list ->
                             repeat(bindCount) {
                                 val certBytes = bytes()
+                                totalDecodedBytes += certBytes.size
+                                require(totalDecodedBytes <= MAX_PUSH_BYTES) {
+                                    "Push frame exceeds $MAX_PUSH_BYTES total bytes"
+                                }
                                 list.add(MailboxBinding.fromWire(certBytes))
                             }
                         }
@@ -248,6 +266,10 @@ internal sealed interface MessageSyncFrame {
                         ArrayList<MailboxEnvelope>(mxCount).also { list ->
                             repeat(mxCount) {
                                 val envBytes = bytes()
+                                totalDecodedBytes += envBytes.size
+                                require(totalDecodedBytes <= MAX_PUSH_BYTES) {
+                                    "Push frame exceeds $MAX_PUSH_BYTES total bytes"
+                                }
                                 list.add(MailboxEnvelope.fromWire(envBytes))
                             }
                         }
@@ -319,6 +341,9 @@ internal sealed interface MessageSyncFrame {
         }
 
         /** Hard cap to defend against a hostile peer claiming a huge array. */
-        const val MAX_BATCH = 1_000
+        const val MAX_BATCH = 100
+        /** Total decoded bytes ceiling for a single Push frame. Abort
+         *  decoding if the cumulative payload exceeds this to prevent OOM. */
+        const val MAX_PUSH_BYTES = 16 * 1024 * 1024
     }
 }

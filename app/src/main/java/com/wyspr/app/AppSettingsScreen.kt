@@ -198,8 +198,9 @@ fun AppSettingsScreen(
                 },
             )
 
-            SectionHeader("Support")
-            DonateRow()
+            // TODO: uncomment when a real XMR donation address is available.
+            // SectionHeader("Support")
+            // DonateRow()
 
             SectionHeader("Identity management")
             LinkRow(

@@ -277,20 +277,25 @@ class EmbeddedTorBackend(
         }
     }
 
-    private fun startWatchdog(r: TorRuntime) {
+    private fun startWatchdog(r: TorRuntime, retryCount: Int = 0) {
         watchdogJob?.cancel()
         watchdogJob = watchdogScope.launch {
             delay(WATCHDOG_TIMEOUT_MS)
             val current = _state.value
             if (current is TorBackend.State.Ready) return@launch
             val pct = (current as? TorBackend.State.Bootstrapping)?.percent ?: -1
-            Log.w(TAG, "Tor watchdog: bootstrap stalled at $pct% after ${WATCHDOG_TIMEOUT_MS / 1000}s — restarting daemon")
+            if (retryCount >= MAX_WATCHDOG_RETRIES) {
+                Log.w(TAG, "Tor watchdog: bootstrap stalled at $pct% — exhausted $MAX_WATCHDOG_RETRIES retries, giving up")
+                _state.value = TorBackend.State.Failed("Bootstrap stalled after $MAX_WATCHDOG_RETRIES retries")
+                return@launch
+            }
+            Log.w(TAG, "Tor watchdog: bootstrap stalled at $pct% after ${WATCHDOG_TIMEOUT_MS / 1000}s — restarting daemon (retry ${retryCount + 1}/$MAX_WATCHDOG_RETRIES)")
             _state.value = TorBackend.State.Bootstrapping(percent = 0)
             try {
                 r.stopDaemonAsync()
                 delay(1_000)
                 r.startDaemonAsync()
-                startWatchdog(r)
+                startWatchdog(r, retryCount + 1)
             } catch (t: Throwable) {
                 Log.w(TAG, "Tor watchdog: restart failed", t)
                 _state.value = TorBackend.State.Failed("Bootstrap stalled; restart failed: ${t.message}")
@@ -337,6 +342,7 @@ class EmbeddedTorBackend(
     private companion object {
         private const val TAG = "EmbeddedTorBackend"
         private const val WATCHDOG_TIMEOUT_MS = 120_000L
+        private const val MAX_WATCHDOG_RETRIES = 3
         // Namespaces this subkey distinctly from the SQLCipher DB key
         // and any future keystore-derived subkeys. See KeystoreManager
         // HKDF info convention in PROTOCOLS.md §5.

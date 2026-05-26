@@ -81,7 +81,7 @@ data class PeerEndpoint(
  * A live duplex channel. Caller wraps it in [com.wyspr.core.crypto.NoiseSession]
  * before exchanging anything meaningful. Frames are length-prefixed:
  *
- *     [ frame_len: u16 ][ payload: bytes ]   (max 16384)
+ *     [ frame_len: u32 big-endian ][ payload: bytes ]   (max 262144)
  */
 interface Link {
     val endpoint: PeerEndpoint

@@ -9,7 +9,7 @@ import com.wyspr.core.database.entities.KeyRotationEntity
 @Dao
 interface KeyRotationDao {
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun upsert(rotation: KeyRotationEntity)
 
     @Query("SELECT * FROM key_rotation")

@@ -9,6 +9,7 @@ import com.wyspr.core.transport.SyncTransportFacade
 import com.wyspr.core.transport.TorBackend
 import com.wyspr.core.transport.Transport
 import com.wyspr.core.transport.bluetooth.BleTransport
+import com.wyspr.core.transport.wifidirect.WifiDirectTransport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
@@ -39,6 +40,7 @@ import kotlinx.coroutines.flow.onEach
 class TransportSelector(
     private val torTransport: TorHiddenServiceTransport,
     private val bleTransport: BleTransport,
+    private val wifiDirectTransport: WifiDirectTransport,
     private val torBackend: TorBackend,
     private val database: WysprDatabase,
 ) : SyncTransportFacade {
@@ -62,6 +64,8 @@ class TransportSelector(
             .onFailure { Log.w(TAG, "Tor transport start failed: ${it::class.simpleName}: ${it.message}") }
         runCatching { bleTransport.start(communityId) }
             .onFailure { Log.w(TAG, "BLE transport start failed: ${it::class.simpleName}: ${it.message}") }
+        runCatching { wifiDirectTransport.start(communityId) }
+            .onFailure { Log.w(TAG, "WiFi Direct transport start failed: ${it::class.simpleName}: ${it.message}") }
     }
 
     override suspend fun stopAll() {
@@ -76,18 +80,19 @@ class TransportSelector(
         // consumes them via [acceptedLinks]. The BLE radio is the
         // expensive one and continues to start/stop per round.
         runCatching { bleTransport.stop() }
+        runCatching { wifiDirectTransport.stop() }
     }
 
     fun discoveredPeers(): Flow<PeerEndpoint> =
-        merge(torTransport.discovered(), bleTransport.discovered())
+        merge(torTransport.discovered(), bleTransport.discovered(), wifiDirectTransport.discovered())
 
     /**
      * Inbound links from either radio. Responder-side sync collects
      * `.first()` here; whichever transport delivered the peer wins.
      */
     override fun acceptedLinks(): Flow<Link> =
-        merge(torTransport.acceptedLinks(), bleTransport.acceptedLinks())
-            .onEach { Log.d(TAG, "acceptedLinks: inbound link arrived") }
+        merge(torTransport.acceptedLinks(), bleTransport.acceptedLinks(), wifiDirectTransport.acceptedLinks())
+            .onEach { Log.d(TAG, "acceptedLinks: inbound link arrived (${it.endpoint.kind})") }
 
     /**
      * Drop any inbound Links sitting in the Tor accept channel from
@@ -131,6 +136,23 @@ class TransportSelector(
         }
     }
 
+    override suspend fun wifiDirectDiscoverAndConnect(): Link {
+        if (!wifiDirectTransport.isWifiP2pReady) {
+            Log.d(TAG, "wifiDirectDiscoverAndConnect: WiFi Direct not available, parking branch")
+            awaitCancellation()
+        }
+        val endpoint = wifiDirectTransport.discovered().first()
+        Log.d(TAG, "wifiDirectDiscoverAndConnect: discovered ${endpoint.opaqueAddress}, dialing")
+        return try {
+            wifiDirectTransport.connect(endpoint).also {
+                Log.d(TAG, "wifiDirectDiscoverAndConnect: dialed link to ${endpoint.opaqueAddress}")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "wifiDirectDiscoverAndConnect: connect to ${endpoint.opaqueAddress} failed: ${t::class.simpleName}: ${t.message}")
+            throw t
+        }
+    }
+
     /**
      * Lowercase 56-char `.onion` for the edge that involves both
      * [ownPub] and [peerPub], regardless of direction, or null if
@@ -145,6 +167,12 @@ class TransportSelector(
      * Every paired peer's `.onion` that we currently know about.
      * Returns the empty list before Sprint-3 edges land or before
      * the user has paired with anyone.
+     *
+     * TODO: Push this filter into SQL (e.g. a DAO query that selects
+     *  peerOnion WHERE fromPub = :pub OR toPub = :pub AND peerOnion
+     *  IS NOT NULL) to avoid loading all trust edges into memory on
+     *  devices with large trust graphs. The DAO file is owned by
+     *  another module; coordinate with that owner.
      */
     suspend fun knownPeerOnions(ownPub: ByteArray): List<String> {
         if (!database.isOpen) database.open()

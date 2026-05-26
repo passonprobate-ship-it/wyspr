@@ -3,6 +3,7 @@ package com.wyspr.core.database
 import com.wyspr.core.database.dao.AccountDao
 import com.wyspr.core.database.dao.AddressBookDao
 import com.wyspr.core.database.dao.GroupMessageDeliveryDao
+import com.wyspr.core.database.dao.KeyRotationDao
 import com.wyspr.core.database.dao.ReactionDao
 import com.wyspr.core.database.dao.CommunityMembershipDao
 import com.wyspr.core.database.dao.ContactDao
@@ -90,6 +91,12 @@ class FakeDatabase : WysprDatabase {
         get() = TODO("ReactionDao not faked")
     override val groupMessageDeliveryDao: GroupMessageDeliveryDao
         get() = TODO("GroupMessageDeliveryDao not faked")
+    override val keyRotationDao: KeyRotationDao
+        get() = TODO("KeyRotationDao not faked")
+
+    override suspend fun rekey(newPassphrase: ByteArray) { /* no-op in fake */ }
+
+    override suspend fun <T> runInTransaction(body: suspend () -> T): T = body()
 
     override suspend fun open() {
         open = true

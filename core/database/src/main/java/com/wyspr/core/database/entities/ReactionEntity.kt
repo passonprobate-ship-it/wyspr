@@ -3,10 +3,17 @@ package com.wyspr.core.database.entities
 import androidx.compose.runtime.Stable
 import androidx.room.ColumnInfo
 import androidx.room.Entity
+import androidx.room.ForeignKey
 
 @Entity(
     tableName = "message_reaction",
     primaryKeys = ["msg_id", "from_pub"],
+    foreignKeys = [ForeignKey(
+        entity = MessageEntity::class,
+        parentColumns = ["id"],
+        childColumns = ["msg_id"],
+        onDelete = ForeignKey.CASCADE,
+    )],
 )
 @Stable
 data class ReactionEntity(

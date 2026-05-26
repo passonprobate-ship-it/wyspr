@@ -63,6 +63,14 @@ interface SyncTransportFacade {
     suspend fun bleDiscoverAndConnect(): Link
 
     /**
+     * Suspend until a WiFi Direct peer is discovered AND a Link to it
+     * is established via P2P group formation + TCP connect. Parks
+     * indefinitely (via [awaitCancellation]) when WiFi Direct hardware
+     * is unavailable, so the race naturally picks another branch.
+     */
+    suspend fun wifiDirectDiscoverAndConnect(): Link
+
+    /**
      * Try to dial any paired peer's `.onion` over Tor and return the
      * first circuit that connects. Returns null if Tor isn't bootstrapped
      * yet, no edge involving [ownPub] carries a peerOnion, or every dial

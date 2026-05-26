@@ -23,16 +23,22 @@ interface GroupMessageDao {
     /**
      * Most recent message per group — fed into the conversation list
      * alongside the 1:1 thread feed.
+     *
+     * Uses a correlated subquery so the rowid picked is always the row
+     * with the largest created_at (tie-broken by rowid DESC). The old
+     * query selected MAX(rowid) and MAX(created_at) independently,
+     * which returned the wrong message when messages arrived out of
+     * order.
      */
     @Query(
         """
         SELECT m.* FROM group_message m
-        INNER JOIN (
-            SELECT group_id, MAX(created_at) AS max_at, MAX(rowid) AS max_rowid
-            FROM group_message
-            GROUP BY group_id
-        ) latest
-        ON m.group_id = latest.group_id AND m.rowid = latest.max_rowid
+        WHERE m.rowid = (
+            SELECT m2.rowid FROM group_message m2
+            WHERE m2.group_id = m.group_id
+            ORDER BY m2.created_at DESC, m2.rowid DESC
+            LIMIT 1
+        )
         ORDER BY m.created_at DESC
         """,
     )

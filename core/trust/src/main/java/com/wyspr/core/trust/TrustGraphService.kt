@@ -1,5 +1,6 @@
 package com.wyspr.core.trust
 
+import android.util.Log
 import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.KeyRotationEntity
@@ -11,6 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+private const val TAG = "TrustGraphService"
 
 /**
  * App-level orchestrator that hydrates a [TrustGraph] from the
@@ -174,7 +177,13 @@ class TrustGraphService(
         to = PublicKey(toPub),
         vouchLevel = runCatching {
             InvitationCertificate.VouchLevel.valueOf(vouchLevel)
-        }.getOrDefault(InvitationCertificate.VouchLevel.PROVISIONAL),
+        }.getOrElse {
+            Log.w(TAG, "Unknown VouchLevel '$vouchLevel' in trust edge " +
+                "${fromPub.take(6).joinToString("") { "%02x".format(it) }}→" +
+                "${toPub.take(6).joinToString("") { "%02x".format(it) }}; " +
+                "defaulting to PROVISIONAL. Data may be corrupted.")
+            InvitationCertificate.VouchLevel.PROVISIONAL
+        },
         establishedAt = establishedAt,
         certBlob = certBlob,
         certSigner = PublicKey(certSigner),

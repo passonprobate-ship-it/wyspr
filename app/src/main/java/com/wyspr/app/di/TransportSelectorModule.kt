@@ -6,6 +6,7 @@ import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.transport.SyncTransportFacade
 import com.wyspr.core.transport.TorBackend
 import com.wyspr.core.transport.bluetooth.BleTransport
+import com.wyspr.core.transport.wifidirect.WifiDirectTransport
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -20,9 +21,10 @@ object TransportSelectorModule {
     fun provideTransportSelector(
         torTransport: TorHiddenServiceTransport,
         bleTransport: BleTransport,
+        wifiDirectTransport: WifiDirectTransport,
         torBackend: TorBackend,
         database: WysprDatabase,
-    ): TransportSelector = TransportSelector(torTransport, bleTransport, torBackend, database)
+    ): TransportSelector = TransportSelector(torTransport, bleTransport, wifiDirectTransport, torBackend, database)
 
     /**
      * `feature:messaging` (and future `feature:marketplace` sync) inject

@@ -56,6 +56,8 @@ data class KeyRotationCertificate(
         const val VERSION = 1
         const val SIG_LENGTH = 64
         const val ONION_LENGTH = 56
+        /** Certs older than 30 days are rejected to limit the window for compromised keys. */
+        const val MAX_CERT_AGE_SECONDS = 30L * 86400L
 
         fun issue(
             keystore: KeystoreManager,
@@ -138,6 +140,7 @@ fun KeyRotationCertificate.verify(
     if (signature.size != Sign.BYTES) return false
     if (issuedAt < 0) return false
     if (issuedAt > nowSeconds + maxFutureSkewSeconds) return false
+    if (nowSeconds - issuedAt > KeyRotationCertificate.MAX_CERT_AGE_SECONDS) return false
     val signed = signedBytes()
     return sodium.cryptoSignVerifyDetached(signature, signed, signed.size, oldPub.bytes)
 }

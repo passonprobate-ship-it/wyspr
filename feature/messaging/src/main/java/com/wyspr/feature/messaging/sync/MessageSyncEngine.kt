@@ -132,7 +132,7 @@ internal class MessageSyncEngine(
     private suspend fun sendOwnReadFrame() {
         val pendingReads = store.pendingReadAckFor(peerPub)
         sendFrame(MessageSyncFrame.Read(pendingReads.map { it.id }))
-        val ackFrame = receiveFrame() ?: return
+        val ackFrame = receiveFrame("Read/Ack") ?: return
         val ack = (ackFrame as? MessageSyncFrame.Ack)
             ?: error("expected Ack of Read, got ${ackFrame::class.simpleName}")
         val ackedIdSet = ack.ids.map { it.toList() }.toSet()
@@ -146,7 +146,7 @@ internal class MessageSyncEngine(
 
     /** Await peer's Read frame, apply it, then send our Ack. */
     private suspend fun awaitPeerReadFrame() {
-        val peerReadFrame = receiveFrame() ?: return
+        val peerReadFrame = receiveFrame("Read/Await") ?: return
         val peerRead = (peerReadFrame as? MessageSyncFrame.Read)
             ?: error("expected Read, got ${peerReadFrame::class.simpleName}")
         val accepted = store.applyPeerReadReceipts(peerRead.ids)
@@ -209,7 +209,7 @@ internal class MessageSyncEngine(
                 paymentAddresses = paymentAddresses,
             ),
         )
-        val frame = receiveFrame() ?: return 0
+        val frame = receiveFrame("Push/Ack-response") ?: return 0
         val ack = (frame as? MessageSyncFrame.Ack)
             ?: error("expected Ack, got ${frame::class.simpleName}")
         // Mark the acknowledged subset as sent. Same liberal semantics
@@ -286,7 +286,7 @@ internal class MessageSyncEngine(
     }
 
     private suspend fun awaitPushAndAck(): Int {
-        val frame = receiveFrame() ?: return 0
+        val frame = receiveFrame("Push/Ack") ?: return 0
         val push = (frame as? MessageSyncFrame.Push)
             ?: error("expected Push, got ${frame::class.simpleName}")
         val totallyEmpty = push.envelopes.isEmpty() &&
@@ -301,6 +301,14 @@ internal class MessageSyncEngine(
         }
         val accepted = ArrayList<ByteArray>(push.envelopes.size + push.groupEnvelopes.size)
         val received = nowSeconds()
+
+        // Timestamp bounds for inbound envelope validation. Reject
+        // envelopes with createdAt more than 1 hour in the future or
+        // more than 1 year in the past — defence against a malicious
+        // peer using timestamp 0 or Long.MAX_VALUE to manipulate
+        // ordering or cursor arithmetic.
+        val maxCreatedAt = received + TIMESTAMP_FUTURE_TOLERANCE_S
+        val minCreatedAt = received - TIMESTAMP_PAST_TOLERANCE_S
 
         // Ingest membership certs FIRST so the membership-check on the
         // group envelopes below sees the freshly-arrived members.
@@ -361,6 +369,10 @@ internal class MessageSyncEngine(
                 Log.w(TAG, "envelope ${env.id.take(4)}…: signature verify failed; dropping")
                 continue
             }
+            if (env.createdAt < minCreatedAt || env.createdAt > maxCreatedAt) {
+                Log.w(TAG, "envelope ${env.id.take(4)}…: createdAt ${env.createdAt} out of bounds [$minCreatedAt, $maxCreatedAt]; dropping")
+                continue
+            }
             store.ingest(env, receivedAtSeconds = received)
             accepted.add(env.id)
         }
@@ -372,6 +384,10 @@ internal class MessageSyncEngine(
             if (!env.fromPub.bytes.contentEquals(peerPub.bytes)) continue
             if (!env.verifyGroup(sodium)) {
                 Log.w(TAG, "group envelope ${env.id.take(4)}…: signature verify failed; dropping")
+                continue
+            }
+            if (env.createdAt < minCreatedAt || env.createdAt > maxCreatedAt) {
+                Log.w(TAG, "group envelope ${env.id.take(4)}…: createdAt ${env.createdAt} out of bounds; dropping")
                 continue
             }
             val ok = groupStore.ingestGroup(env, receivedAtSeconds = received)
@@ -488,10 +504,12 @@ internal class MessageSyncEngine(
         }
         val ingestedIds = ingestPulledEnvelopes(resp.envelopes)
         sendMailboxFrame(MailboxFrame.Ack(ingestedIds))
-        // Advance the cursor to the max `createdAt` actually accepted
-        // so the next round won't refetch them. We only advance from
-        // ingested envelopes — a host that serves bogus rows we drop
-        // doesn't get to bump the cursor past good rows we still need.
+        // Advance the cursor to (maxCreatedAt - 1) so the next round's
+        // `created_at > sinceCursor` query re-fetches rows at the same
+        // timestamp. This avoids skipping envelopes that share a
+        // `createdAt` with the last ingested one. The dedup in
+        // `ingestPulledEnvelopes` (MessageStore.ingest is idempotent on
+        // id) handles the overlap cheaply.
         val newHighWater = resp.envelopes.asSequence()
             .filter { env -> ingestedIds.any { it.contentEquals(env.id) } }
             .maxOfOrNull { it.createdAt }
@@ -499,7 +517,7 @@ internal class MessageSyncEngine(
             database.mailboxPullCursorDao.upsert(
                 MailboxPullCursorEntity(
                     mailboxPub = peerPub.bytes,
-                    sinceCursor = newHighWater,
+                    sinceCursor = newHighWater - 1,
                 ),
             )
         }
@@ -601,18 +619,18 @@ internal class MessageSyncEngine(
         Log.d(TAG, "sendFrame: ${frame::class.simpleName} link.send returned")
     }
 
-    private suspend fun receiveFrame(): MessageSyncFrame? {
-        Log.d(TAG, "receiveFrame: awaiting (timeout=${frameTimeoutMs}ms)")
+    private suspend fun receiveFrame(phase: String = "unknown"): MessageSyncFrame? {
+        Log.d(TAG, "receiveFrame[$phase]: awaiting (timeout=${frameTimeoutMs}ms)")
         val ciphertext = withTimeoutOrNull(frameTimeoutMs) {
             link.incoming().firstOrNull()
         } ?: run {
-            Log.w(TAG, "receiveFrame: timeout / channel closed")
+            Log.w(TAG, "receiveFrame[$phase]: timeout / channel closed — returning null")
             return null
         }
-        Log.d(TAG, "receiveFrame: got ciphertext (${ciphertext.size} bytes), decrypting")
+        Log.d(TAG, "receiveFrame[$phase]: got ciphertext (${ciphertext.size} bytes), decrypting")
         val plaintext = noise.decrypt(ciphertext)
         val frame = MessageSyncFrame.fromWire(plaintext)
-        Log.d(TAG, "receiveFrame: decoded ${frame::class.simpleName}")
+        Log.d(TAG, "receiveFrame[$phase]: decoded ${frame::class.simpleName}")
         return frame
     }
 
@@ -629,6 +647,10 @@ internal class MessageSyncEngine(
     companion object {
         /** 30s/frame budget — generous for slow BLE, tight against hostile stall. */
         const val DEFAULT_FRAME_TIMEOUT_MS: Long = 30_000L
+        /** Reject envelopes with createdAt more than 1 hour in the future. */
+        private const val TIMESTAMP_FUTURE_TOLERANCE_S: Long = 3_600L
+        /** Reject envelopes with createdAt more than 1 year in the past. */
+        private const val TIMESTAMP_PAST_TOLERANCE_S: Long = 365L * 86_400L
         private const val TAG = "SyncEngine"
     }
 }

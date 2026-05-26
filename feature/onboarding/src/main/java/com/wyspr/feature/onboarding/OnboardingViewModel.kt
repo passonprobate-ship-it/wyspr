@@ -490,9 +490,11 @@ class OnboardingViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         cancelHandshake()
-        kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-            runCatching { bleTransport.stop() }
-        }
+        // Fire-and-forget — do NOT use runBlocking here; it blocks the
+        // main thread for 1-5s while BLE tears down, risking an ANR.
+        kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob()
+        ).launch { runCatching { bleTransport.stop() } }
     }
 
     enum class Role { Inviter, Invitee }

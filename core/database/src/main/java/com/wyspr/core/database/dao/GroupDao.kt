@@ -35,6 +35,14 @@ interface GroupDao {
     @Query("UPDATE group_entity SET local_nickname = :nickname WHERE group_id = :groupId")
     suspend fun setNickname(groupId: ByteArray, nickname: String?)
 
+    /**
+     * Update only wire-sourced fields (name, description) from a sync
+     * round. Preserves the local-only [local_nickname] — unlike [upsert]
+     * whose REPLACE deletes the row first, losing local state.
+     */
+    @Query("UPDATE group_entity SET name = :name WHERE group_id = :id")
+    suspend fun updateFromSync(id: ByteArray, name: String)
+
     @Query("DELETE FROM group_entity WHERE group_id = :groupId")
     suspend fun delete(groupId: ByteArray)
 }

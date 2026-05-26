@@ -19,6 +19,9 @@ internal object ShareApkSite {
     ): String {
         val sizeMb = "%.1f".format(apkSizeBytes / (1024.0 * 1024.0))
         val sha256Pretty = apkSha256.chunked(8).joinToString(" ")
+        // HTML-escape versionName to prevent injection if it ever
+        // contains user-controllable or build-system-sourced chars.
+        val safeVersionName = versionName.htmlEscape()
         return """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -161,7 +164,7 @@ internal object ShareApkSite {
   <h2>What you're about to install</h2>
   <div class="panel">
     <div style="font-size:13px; color: var(--muted);">Version</div>
-    <div class="mono">$versionName ($sizeMb MB)</div>
+    <div class="mono">$safeVersionName ($sizeMb MB)</div>
     <div style="height: 12px;"></div>
     <div style="font-size:13px; color: var(--muted);">SHA-256 (verify with the person who invited you)</div>
     <div class="mono">$sha256Pretty</div>
@@ -182,5 +185,16 @@ internal object ShareApkSite {
 </body>
 </html>
 """.trimIndent()
+    }
+
+    private fun String.htmlEscape(): String = buildString(length) {
+        for (ch in this@htmlEscape) when (ch) {
+            '&' -> append("&amp;")
+            '<' -> append("&lt;")
+            '>' -> append("&gt;")
+            '"' -> append("&quot;")
+            '\'' -> append("&#x27;")
+            else -> append(ch)
+        }
     }
 }

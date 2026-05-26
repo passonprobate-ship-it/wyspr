@@ -44,6 +44,27 @@ data class MessageEnvelope(
 
     fun signedBytes(): ByteArray = encodeSignedFields(id, fromPub, toPub, createdAt, body)
 
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is MessageEnvelope) return false
+        return id.contentEquals(other.id) &&
+            fromPub.bytes.contentEquals(other.fromPub.bytes) &&
+            toPub.bytes.contentEquals(other.toPub.bytes) &&
+            createdAt == other.createdAt &&
+            body == other.body &&
+            signature.contentEquals(other.signature)
+    }
+
+    override fun hashCode(): Int {
+        var r = id.contentHashCode()
+        r = 31 * r + fromPub.bytes.contentHashCode()
+        r = 31 * r + toPub.bytes.contentHashCode()
+        r = 31 * r + createdAt.hashCode()
+        r = 31 * r + body.hashCode()
+        r = 31 * r + signature.contentHashCode()
+        return r
+    }
+
     /**
      * Full wire form including the signature. Mirrors [signedBytes]
      * but with one extra `bytes(signature)` element — 6-element array

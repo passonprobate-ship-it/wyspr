@@ -83,10 +83,11 @@ class ProfileFetcher @Inject constructor(
                 }
 
                 val body = if (contentLength != null) {
-                    val buf = CharArray(contentLength)
+                    val capped = contentLength.coerceAtMost(MAX_BODY_NO_CL)
+                    val buf = CharArray(capped)
                     var read = 0
-                    while (read < contentLength) {
-                        val n = reader.read(buf, read, contentLength - read)
+                    while (read < capped) {
+                        val n = reader.read(buf, read, capped - read)
                         if (n == -1) break
                         read += n
                     }

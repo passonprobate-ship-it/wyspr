@@ -1,22 +1,17 @@
 package com.wyspr.app
 
 import android.app.Application
-import android.util.Log
-import com.wyspr.app.profile.ProfileHttpServer
-import com.wyspr.core.transport.TorBackend
 import com.wyspr.feature.messaging.mailbox.MailboxNotifyHost
 import dagger.hilt.android.HiltAndroidApp
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltAndroidApp
 class WysprApplication : Application() {
 
-    @Inject lateinit var torBackend: TorBackend
-    @Inject lateinit var profileHttpServer: ProfileHttpServer
+    // torBackend and profileHttpServer used to be @Inject fields here,
+    // but they were unused — both are started lazily from MainActivity's
+    // biometric-gated LaunchedEffect. Removing them avoids forcing eager
+    // Hilt construction at Application.onCreate time.
 
     /**
      * Eager-instantiated so its init {} block runs at app start and
@@ -28,8 +23,6 @@ class WysprApplication : Application() {
      * unavailable.
      */
     @Inject lateinit var mailboxNotifyHost: MailboxNotifyHost
-
-    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()

@@ -122,9 +122,11 @@ class PeerVersionChecker @Inject constructor(
                 anySuccess = true
                 return
             }
+            // Hoist outside the loop — loadOrCreateIdentityKey() is
+            // deterministic but expensive (touches the hardware keystore).
+            val ownPub = keystore.loadOrCreateIdentityKey().publicKey
             val results = mutableListOf<PeerUpdate>()
             for ((onion, edge) in onions) {
-                val ownPub = keystore.loadOrCreateIdentityKey().publicKey
                 val peerPub = if (edge.fromPub.contentEquals(ownPub)) edge.toPub else edge.fromPub
                 if (peerPub.toList() in dismissed) continue
                 val info = probeOnce(socksPort, onion)

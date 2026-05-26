@@ -66,8 +66,8 @@ class TrustGraphImpl(
 
     private val lock = ReentrantReadWriteLock()
 
-    /** Root pubkey bytes, content-equality keyed. */
-    private val rootKeys: Set<ByteBuffer> = roots.mapTo(HashSet()) { it.bytes.wrap() }
+    /** Root pubkey bytes, content-equality keyed. Mutable so key rotation can transfer root status. */
+    private val rootKeys: MutableSet<ByteBuffer> = roots.mapTo(HashSet()) { it.bytes.wrap() }
 
     /** outgoing[from-bytes] -> list of edges leaving `from`. */
     private val outgoing: MutableMap<ByteBuffer, MutableList<TrustEdge>> = HashMap()
@@ -148,6 +148,11 @@ class TrustGraphImpl(
         val oldKey = cert.oldPub.bytes.wrap()
         val newKey = cert.newPub.bytes.wrap()
         val newOnion = cert.newOnion?.let { String(it, Charsets.US_ASCII) }
+
+        // Transfer root status to the new key before retiring the old one
+        if (oldKey in rootKeys) {
+            rootKeys.add(newKey)
+        }
 
         // Rekey all edges referencing the old pubkey
         val toRekey = mutableListOf<Pair<ByteBuffer, TrustEdge>>()
@@ -273,7 +278,7 @@ class TrustGraphImpl(
         return out.toList()
     }
 
-    private fun ByteArray.wrap(): ByteBuffer = ByteBuffer.wrap(this).asReadOnlyBuffer()
+    private fun ByteArray.wrap(): ByteBuffer = ByteBuffer.wrap(this.copyOf()).asReadOnlyBuffer()
 
     private data class EdgeKey(val from: ByteBuffer, val to: ByteBuffer)
 }

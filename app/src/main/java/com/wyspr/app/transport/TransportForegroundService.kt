@@ -54,6 +54,14 @@ class TransportForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        // Reset the ref count when the service is (re)created. A stale
+        // count from a previous incarnation would prevent the service
+        // from stopping itself when the last client releases.
+        refCount.set(0)
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {

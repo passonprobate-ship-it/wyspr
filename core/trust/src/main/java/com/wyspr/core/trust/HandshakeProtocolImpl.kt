@@ -72,6 +72,12 @@ class HandshakeProtocolImpl(
      */
     data class MintedQr(
         val qr: HandshakeQr,
+        /**
+         * Currently unused — Noise XX generates its own ephemeral
+         * keypair internally. Retained for potential future use
+         * (e.g. an X3DH-style pre-key exchange). Callers must still
+         * call [zeroize] to clear this secret from memory.
+         */
         val ephemeralSecret: ByteArray,
     ) {
         fun zeroize() { ephemeralSecret.fill(0) }
@@ -194,8 +200,10 @@ private class RealSession(
     override val state: StateFlow<HandshakeSession.State> = _state.asStateFlow()
 
     private var cancelled = false
+    private var completed = false
 
     override suspend fun run(): HandshakeSession.Outcome {
+        check(!completed) { "HandshakeSession.run() called after session already completed" }
         if (cancelled) return abort(HandshakeSession.AbortReason.UserCancelled)
 
         // Quarantine gate (SECURITY-MODEL.md §3.3). After a previous
@@ -205,10 +213,11 @@ private class RealSession(
         // deadline is harmless because isQuarantined checks "until >
         // now".
         database.open()
+        runCatching { database.handshakeQuarantineDao.sweepExpired(clock()) }
         val isQ = database.handshakeQuarantineDao.isQuarantined(peerQr.identityPub.bytes, clock())
         if (isQ) {
-            Log.w(TAG_HS, "open: peer quarantined but allowing retry (cooldown=$QUARANTINE_SECONDS s)")
-            runCatching { database.handshakeQuarantineDao.sweepExpired(clock()) }
+            Log.w(TAG_HS, "open: peer quarantined — refusing handshake (cooldown=$QUARANTINE_SECONDS s)")
+            return abort(HandshakeSession.AbortReason.PeerQuarantined)
         }
 
         // Inviter-side authorization gate. Consult the local trust
@@ -433,6 +442,7 @@ private class RealSession(
 
             persistTrustEdge(edge)
             _state.value = HandshakeSession.State.Committed
+            completed = true
             return HandshakeSession.Outcome.Committed(edge)
         } catch (t: Throwable) {
             // AEADBadTagException extends BadPaddingException; either way
@@ -472,6 +482,7 @@ private class RealSession(
     }
 
     private suspend fun abort(reason: HandshakeSession.AbortReason): HandshakeSession.Outcome.Aborted {
+        completed = true
         _state.value = HandshakeSession.State.Aborted
         // SECURITY-MODEL.md §3.3 — record the abort so the peer can't
         // immediately re-attempt and grind QR mints. Skip for
@@ -532,6 +543,6 @@ private class RealSession(
         const val ACK_OK: Byte = 0x01
         const val CLOCK_SKEW_SECONDS = 60L
         /** Post-abort cooldown. SECURITY-MODEL.md §3.3 spec is 24h. */
-        const val QUARANTINE_SECONDS = 60L
+        const val QUARANTINE_SECONDS = 86_400L
     }
 }

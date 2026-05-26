@@ -119,7 +119,9 @@ object Cbor {
             val head = readByte()
             val majorType = (head ushr 5) and 0x7
             require(majorType == MT_BSTR) { "Expected byte string, got major type $majorType" }
-            val len = readLength(head and 0x1F).toInt()
+            val lenLong = readLength(head and 0x1F)
+            require(lenLong in 0..Int.MAX_VALUE.toLong()) { "CBOR byte string length exceeds Int range: $lenLong" }
+            val len = lenLong.toInt()
             require(len >= 0 && pos + len <= input.size) { "byte string overruns input" }
             val slice = input.copyOfRange(pos, pos + len)
             pos += len

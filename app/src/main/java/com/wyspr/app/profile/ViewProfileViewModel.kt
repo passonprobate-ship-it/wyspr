@@ -2,6 +2,7 @@ package com.wyspr.app.profile
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.wyspr.core.crypto.KeystoreManager
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.identity.PublicKey
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -17,6 +18,7 @@ import kotlinx.coroutines.withContext
 class ViewProfileViewModel @Inject constructor(
     private val database: WysprDatabase,
     private val fetcher: ProfileFetcher,
+    private val keystore: KeystoreManager,
 ) : ViewModel() {
 
     sealed interface UiState {
@@ -66,10 +68,11 @@ class ViewProfileViewModel @Inject constructor(
     fun retry(peer: PublicKey) = start(peer)
 
     private suspend fun resolvePeerOnion(peer: PublicKey): String? {
-        val edges = database.trustEdgeDao.all()
-        val edge = edges.firstOrNull { e ->
-            e.fromPub.contentEquals(peer.bytes) || e.toPub.contentEquals(peer.bytes)
-        } ?: return null
-        return edge.peerOnion?.takeIf { it.isNotBlank() }
+        // Use the dedicated endpoint-aware query that resolves the onion
+        // regardless of which side issued the cert, instead of scanning
+        // all edges and risking a stale firstOrNull match.
+        val ownPub = keystore.loadOrCreateIdentityKey().publicKey
+        return database.trustEdgeDao.peerOnionForEndpoints(ownPub, peer.bytes)
+            ?.takeIf { it.isNotBlank() }
     }
 }

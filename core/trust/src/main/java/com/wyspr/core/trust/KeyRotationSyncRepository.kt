@@ -5,6 +5,7 @@ import com.wyspr.core.crypto.Cbor
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.KeyRotationEntity
 import com.wyspr.core.identity.PublicKey
+import java.nio.ByteBuffer
 
 class KeyRotationSyncRepository(
     private val communityId: ByteArray,
@@ -79,8 +80,8 @@ class KeyRotationSyncRepository(
         for (cert in stored) {
             val key = RotationKey(cert.oldPub.bytes, cert.newPub.bytes)
             if (key in applied) continue
-            accepted += tryChainApply(database, cert, trustGraph)
-            applied.add(key)
+            val chainAccepted = tryChainApply(database, cert, trustGraph, applied)
+            accepted += chainAccepted
         }
 
         return accepted
@@ -134,18 +135,24 @@ class KeyRotationSyncRepository(
         database: WysprDatabase,
         cert: KeyRotationCertificate,
         trustGraph: TrustGraph?,
+        applied: MutableSet<RotationKey>,
     ): Int {
         val chain = buildChainToTrusted(database, cert.oldPub.bytes, trustGraph)
             ?: return 0
 
         var accepted = 0
         for (entity in chain) {
+            val chainKey = RotationKey(entity.oldPub, entity.newPub)
+            if (chainKey in applied) continue
             val chainCert = entityToCert(entity)
             if (applyIfTrusted(database, chainCert, trustGraph)) {
+                applied.add(chainKey)
                 accepted++
             }
         }
-        if (applyIfTrusted(database, cert, trustGraph)) {
+        val certKey = RotationKey(cert.oldPub.bytes, cert.newPub.bytes)
+        if (certKey !in applied && applyIfTrusted(database, cert, trustGraph)) {
+            applied.add(certKey)
             accepted++
         }
         return accepted
@@ -158,7 +165,7 @@ class KeyRotationSyncRepository(
     ): List<KeyRotationEntity>? {
         val chain = ArrayDeque<KeyRotationEntity>()
         var currentPub = unknownPub
-        val visited = mutableSetOf(RotationKey(unknownPub, ByteArray(0)))
+        val visited = mutableSetOf(ByteBuffer.wrap(unknownPub.copyOf()).asReadOnlyBuffer())
         var depth = 0
 
         while (depth < MAX_CHAIN_DEPTH) {
@@ -169,8 +176,8 @@ class KeyRotationSyncRepository(
                 it.communityId.contentEquals(communityId)
             } ?: return null
 
-            val key = RotationKey(predecessor.oldPub, predecessor.newPub)
-            if (!visited.add(key)) return null
+            val oldPubKey = ByteBuffer.wrap(predecessor.oldPub.copyOf()).asReadOnlyBuffer()
+            if (!visited.add(oldPubKey)) return null  // cycle detected
 
             chain.addFirst(predecessor)
 
@@ -208,33 +215,35 @@ class KeyRotationSyncRepository(
         val oldBytes = cert.oldPub.bytes
         val newBytes = cert.newPub.bytes
 
-        val edges = database.trustEdgeDao.all()
-        for (edge in edges) {
-            val fromMatch = edge.fromPub.contentEquals(oldBytes)
-            val toMatch = edge.toPub.contentEquals(oldBytes)
-            val signerMatch = edge.certSigner?.let { it.contentEquals(oldBytes) } == true
-            if (!fromMatch && !toMatch && !signerMatch) continue
+        database.runInTransaction {
+            val edges = database.trustEdgeDao.all()
+            for (edge in edges) {
+                val fromMatch = edge.fromPub.contentEquals(oldBytes)
+                val toMatch = edge.toPub.contentEquals(oldBytes)
+                val signerMatch = edge.certSigner?.let { it.contentEquals(oldBytes) } == true
+                if (!fromMatch && !toMatch && !signerMatch) continue
 
-            database.trustEdgeDao.delete(edge.fromPub, edge.toPub)
-            database.trustEdgeDao.upsert(
-                edge.copy(
-                    fromPub = if (fromMatch) newBytes else edge.fromPub,
-                    toPub = if (toMatch) newBytes else edge.toPub,
-                    certSigner = if (signerMatch) newBytes else edge.certSigner,
-                    peerOnion = if (fromMatch || toMatch) newOnion ?: edge.peerOnion else edge.peerOnion,
+                database.trustEdgeDao.delete(edge.fromPub, edge.toPub)
+                database.trustEdgeDao.upsert(
+                    edge.copy(
+                        fromPub = if (fromMatch) newBytes else edge.fromPub,
+                        toPub = if (toMatch) newBytes else edge.toPub,
+                        certSigner = if (signerMatch) newBytes else edge.certSigner,
+                        peerOnion = if (fromMatch || toMatch) newOnion ?: edge.peerOnion else edge.peerOnion,
+                    )
                 )
-            )
-        }
+            }
 
-        val contact = database.contactDao.byPub(oldBytes)
-        if (contact != null) {
-            database.contactDao.clear(oldBytes)
-            database.contactDao.upsert(contact.copy(peerPub = newBytes))
-        }
+            val contact = database.contactDao.byPub(oldBytes)
+            if (contact != null) {
+                database.contactDao.clear(oldBytes)
+                database.contactDao.upsert(contact.copy(peerPub = newBytes))
+            }
 
-        database.messageDao.rekeyThread(oldBytes, newBytes)
-        database.messageDao.rekeyFromPub(oldBytes, newBytes)
-        database.messageDao.rekeyToPub(oldBytes, newBytes)
+            database.messageDao.rekeyThread(oldBytes, newBytes)
+            database.messageDao.rekeyFromPub(oldBytes, newBytes)
+            database.messageDao.rekeyToPub(oldBytes, newBytes)
+        }
     }
 
     private fun rebuildWireBytes(entity: KeyRotationEntity): ByteArray {

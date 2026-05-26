@@ -23,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -57,6 +58,8 @@ class ProfileHttpServer @Inject constructor(
     private val apkSizeBytes: Long by lazy { apkFile.length() }
 
     private val lock = Mutex()
+    /** Cap concurrent connections to prevent resource exhaustion. */
+    private val connectionSemaphore = Semaphore(10)
     @Volatile private var server: ServerSocket? = null
     @Volatile private var scope: CoroutineScope? = null
     @Volatile private var acceptJob: Job? = null
@@ -110,7 +113,14 @@ class ProfileHttpServer @Inject constructor(
                 if (!s.isClosed) Log.w(TAG, "accept failed", t)
                 return
             }
-            scope?.launch { handleClient(client) }
+            scope?.launch {
+                connectionSemaphore.acquire()
+                try {
+                    handleClient(client)
+                } finally {
+                    connectionSemaphore.release()
+                }
+            }
         }
     }
 
@@ -284,6 +294,11 @@ class ProfileHttpServer @Inject constructor(
             .map { it.trim() }
             .filter { it.isNotEmpty() }
             .filter { it.startsWith("http://") || it.startsWith("https://") }
+            .filter { url ->
+                // Validate URL structure — reject anything that can't
+                // be parsed as a proper URI.
+                runCatching { java.net.URI(url) }.isSuccess
+            }
         return buildString {
             append("<!doctype html>\n")
             append("<html lang=\"en\"><head>\n")

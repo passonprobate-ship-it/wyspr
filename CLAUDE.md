@@ -6,7 +6,14 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Wyspr has no server component)
-- **Status**: 2026-05-25 — **v0.9.6 (build 27).** Monero wallet
+- **Status**: 2026-05-25 — **v0.9.7 (build 28).** WiFi Direct
+  transport fully wired into the sync stack. `WifiDirectTransport`
+  (DNS-SD discovery, P2P group formation, TCP port 9094, u32
+  framing) now races alongside BLE and Tor in `MessageSyncService`.
+  DI via Hilt, `SyncTransportFacade` interface extended. Hardware
+  verification pending.
+
+  Earlier (2026-05-25): **v0.9.6 (build 27).** Monero wallet
   **hardware-verified** — Molly SDK native library loads, Tor
   bootstraps in ~2s, wallet opens from encrypted disk, RPC calls
   flow through Tor SOCKS to Rino community node. XMR/USD price
@@ -216,10 +223,11 @@ Gradle heap is `1536m`. If KSP/Hilt OOMs, bump `org.gradle.jvmargs` to
   matches BleLink so a Noise session is wire-format-portable
 - `app/.../transport/Socks5.kt` — minimal RFC 1928 DOMAINNAME dialer
   used for `.onion` resolution through the local Tor proxy
-- `app/.../transport/TransportSelector.kt` — façade over BLE+Tor;
-  implements `core.transport.SyncTransportFacade`; provides
-  `bleDiscoverAndConnect` + `dialFirstKnownOnion(ownPub)` +
-  merged `acceptedLinks` for the messaging sync race
+- `app/.../transport/TransportSelector.kt` — façade over BLE+WiFi
+  Direct+Tor; implements `core.transport.SyncTransportFacade`;
+  provides `bleDiscoverAndConnect` + `wifiDirectDiscoverAndConnect` +
+  `dialFirstKnownOnion(ownPub)` + merged `acceptedLinks` for the
+  messaging sync race
 - `core/transport/api/.../SyncTransportFacade.kt` — bridge interface
   so `feature:messaging` can inject the selector without depending
   on `:app`
@@ -656,6 +664,34 @@ Settings with copy-to-clipboard.
 
 New files: `PaymentNotifier.kt`, `AndroidPaymentNotifier.kt`.
 
+### 2026-05-25 — v0.9.7: WiFi Direct transport wired into sync stack
+
+**WiFi Direct fully integrated.** The `WifiDirectTransport` module
+(DNS-SD service discovery, WifiP2pManager P2P group formation, TCP
+connect on port 9094, `WifiDirectLink` with u32 length-prefixed
+framing matching BLE/Tor) was already code-complete but never wired
+into the transport selector or sync service.
+
+**Changes:**
+- `TransportModule` — new `provideWifiDirectTransport()` Hilt singleton
+- `TransportSelectorModule` — passes `WifiDirectTransport` to selector
+- `TransportSelector` — WiFi Direct wired into `startAll()`, `stopAll()`,
+  `discoveredPeers()`, `acceptedLinks()`; new
+  `wifiDirectDiscoverAndConnect()` (parks via `awaitCancellation()` when
+  hardware unavailable, same pattern as BLE)
+- `SyncTransportFacade` — `wifiDirectDiscoverAndConnect()` added to
+  the interface
+- `MessageSyncService` — WiFi Direct added as third racing leg in both
+  `dialOnly()` and `raceBoth()`, alongside BLE and Tor
+
+The transport race is now BLE vs WiFi Direct vs Tor — whichever
+connects first wins, losers are cancelled. Permissions already
+merged from the `:core:transport:wifidirect` manifest; app manifest
+already overrides `wifi.direct` hardware feature to `required="false"`.
+
+Hardware verification pending — needs two-device test with WiFi Direct
+enabled, BLE off, confirming P2P group forms and messages sync.
+
 ### 2026-05-25 — v0.9.6: Monero wallet hardware-verified + wallet UI polish
 
 **Monero wallet hardware-verified.** First real-device confirmation that
@@ -687,7 +723,9 @@ exposed via `MoneroWalletService.nodeLabel`.
 - **Vault** feature (encrypted personal-record store) — empty module.
 - **Marketplace over BLE** — wallet exists but doesn't yet sync over
   a real Link.
-- **WiFi Direct `connect()`** — discovery only today.
+- **WiFi Direct hardware verification** — transport is fully wired
+  (discovery, connect, accept, TCP framing) and races alongside BLE
+  and Tor in the sync service, but not yet tested on real devices.
 - **Reticulum/LoRa** — `:core:transport:reticulum` is a stub; no
   Kotlin binding exists yet.
 - **CI** — no pipeline yet. Reproducible-build flags + a banned-deps
@@ -700,13 +738,13 @@ exposed via `MoneroWalletService.nodeLabel`.
 
 ## Memory / Plan State
 
-v0.9.6 is the current build (2026-05-25, build 27). Monero wallet
-hardware-verified — Molly SDK loads, Tor connects, node syncs,
-wallet opens from encrypted disk. XMR/USD price and node status
-LED on wallet screen. Payment notifications wired up and ready.
-Key rotation hardware-verified. Both BLE and Tor-only messaging
-hardware-verified. Next priorities: test a real XMR send/receive
-transaction, then CI, then F-Droid submission.
+v0.9.7 is the current build (2026-05-25, build 28). WiFi Direct
+transport fully wired into sync stack — races alongside BLE and Tor
+in MessageSyncService. Monero wallet hardware-verified. Payment
+notifications wired. Key rotation hardware-verified. Both BLE and
+Tor-only messaging hardware-verified. Next priorities: WiFi Direct
+hardware verification, test a real XMR send/receive transaction,
+then CI, then F-Droid submission.
 
 Auto-memory references:
 - [[wyspr-messaging-works]] — 22-build journey, all fixes

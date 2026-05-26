@@ -343,6 +343,7 @@ class AndroidKeystoreManager(
         } finally {
             seed.fill(0)
             secretKey.fill(0)
+            publicKey.fill(0)
         }
     }
 
@@ -355,12 +356,12 @@ class AndroidKeystoreManager(
         val seed = loadOrCreateSeed()
         val edPub = ByteArray(Sign.PUBLICKEYBYTES)
         val edSec = ByteArray(Sign.SECRETKEYBYTES)
+        val xPub = ByteArray(X25519_KEY_BYTES)
+        val xSec = ByteArray(X25519_KEY_BYTES)
         try {
             require(sodium.cryptoSignSeedKeypair(edPub, edSec, seed)) {
                 "libsodium cryptoSignSeedKeypair failed"
             }
-            val xPub = ByteArray(X25519_KEY_BYTES)
-            val xSec = ByteArray(X25519_KEY_BYTES)
             require(sodium.convertPublicKeyEd25519ToCurve25519(xPub, edPub)) {
                 "Ed25519 -> X25519 public conversion failed"
             }
@@ -368,9 +369,14 @@ class AndroidKeystoreManager(
                 "Ed25519 -> X25519 secret conversion failed"
             }
             return xPub to xSec
+        } catch (t: Throwable) {
+            xPub.fill(0)
+            xSec.fill(0)
+            throw t
         } finally {
             seed.fill(0)
             edSec.fill(0)
+            edPub.fill(0)
         }
     }
 
@@ -483,28 +489,33 @@ class AndroidKeystoreManager(
     private fun loadOrCreateSeed(): ByteArray {
         ensureWrappingKey()
         val file = seedFile
-        return if (file.exists()) {
+        if (file.exists()) {
             try {
-                unwrapSeed(file.readBytes())
+                return unwrapSeed(file.readBytes())
             } catch (t: Throwable) {
-                android.util.Log.w("KeystoreMgr", "unwrapSeed failed, deleting stale seed and creating fresh", t)
+                android.util.Log.w("KeystoreMgr", "unwrapSeed failed, deleting stale seed and retrying once", t)
                 file.delete()
-                return loadOrCreateSeed()
+                // Retry exactly once — if the wrapping key is permanently
+                // invalid, fall through to fresh-seed creation below.
+                if (file.exists()) {
+                    // delete failed; unrecoverable
+                    throw IllegalStateException("Cannot delete corrupt seed file", t)
+                }
+                // Fall through to create a fresh seed below.
             }
-        } else {
-            val fresh = ByteArray(SEED_BYTES).also { SecureRandom().nextBytes(it) }
-            try {
-                val blob = wrapSeed(fresh)
-                file.parentFile?.mkdirs()
-                file.writeBytes(blob)
-                file.setReadable(false, false)
-                file.setReadable(true, true)
-                file.setWritable(false, false)
-                file.setWritable(true, true)
-                fresh.copyOf()
-            } finally {
-                fresh.fill(0)
-            }
+        }
+        val fresh = ByteArray(SEED_BYTES).also { SecureRandom().nextBytes(it) }
+        try {
+            val blob = wrapSeed(fresh)
+            file.parentFile?.mkdirs()
+            file.writeBytes(blob)
+            file.setReadable(false, false)
+            file.setReadable(true, true)
+            file.setWritable(false, false)
+            file.setWritable(true, true)
+            return fresh.copyOf()
+        } finally {
+            fresh.fill(0)
         }
     }
 
