@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -14,11 +15,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import com.wyspr.core.ui.components.WysprPanel
 import com.wyspr.feature.monero.MoneroWalletService.TxHistoryEntry
 import com.wyspr.feature.monero.MoneroWalletService.WalletState
@@ -43,6 +48,7 @@ fun MoneroWalletScreen(
     state: WalletState,
     seedBackupAcknowledged: Boolean,
     xmrUsdRate: Double? = null,
+    nodeLabel: String = "",
     onRetry: () -> Unit,
     onRevealSeed: () -> Unit,
     onRestoreWallet: () -> Unit,
@@ -71,6 +77,7 @@ fun MoneroWalletScreen(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        NodeStatusRow(state = state, nodeLabel = nodeLabel)
         if (!seedBackupAcknowledged && state is WalletState.Ready) {
             SeedBackupBanner(onRevealSeed = onRevealSeed)
         }
@@ -96,6 +103,32 @@ fun MoneroWalletScreen(
             onRestoreWallet = onRestoreWallet,
             onSweepWallet = onSweepWallet,
             onSendToAddress = onSendToAddress,
+        )
+    }
+}
+
+@Composable
+private fun NodeStatusRow(state: WalletState, nodeLabel: String) {
+    val (color, label) = when (state) {
+        WalletState.Idle -> Color(0xFF9E9E9E) to "Idle"
+        WalletState.Binding -> Color(0xFFFFA726) to "Connecting…"
+        is WalletState.Ready -> Color(0xFF66BB6A) to "Connected"
+        is WalletState.Failed -> Color(0xFFEF5350) to "Disconnected"
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(color),
+        )
+        Text(
+            text = if (nodeLabel.isNotEmpty()) "$label — $nodeLabel" else label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

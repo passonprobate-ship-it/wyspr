@@ -36,6 +36,7 @@ fun MoneroWalletRoot(
         state = state,
         seedBackupAcknowledged = seedBackupAcknowledged,
         xmrUsdRate = xmrUsdRate,
+        nodeLabel = viewModel.nodeLabel,
         onRetry = { viewModel.retry() },
         onRevealSeed = onRevealSeed,
         onRestoreWallet = onRestoreWallet,

@@ -107,6 +107,7 @@ class MoneroWalletService @Inject constructor(
      * the user pick or supply a custom node URL.
      */
     private val currentNode: MoneroNode = MoneroNodeRegistry.defaults.first()
+    val nodeLabel: String get() = currentNode.label
 
     private val _walletState = MutableStateFlow<WalletState>(WalletState.Idle)
     val walletState: StateFlow<WalletState> = _walletState.asStateFlow()
