@@ -6,7 +6,22 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Wyspr has no server component)
-- **Status**: 2026-05-25 — **v0.9.7 (build 28).** WiFi Direct
+- **Status**: 2026-06-14 — **v0.9.8 (build 29).** Coordination
+  feature (events/scheduling). New `feature:coordination` module:
+  any Full-trust community member creates events (title, description,
+  location, start/end time); others RSVP (going/maybe/declined).
+  `EventEnvelope` (12-field signed CBOR, creator-only LWW) and
+  `RsvpEnvelope` (7-field signed CBOR, composite key) sync via
+  anti-entropy (tags `0x40`–`0x45`) on a `CoordinationSyncRound`
+  that piggybacks existing Noise sessions in `MessageSyncService`,
+  after the key-rotation round. DB schema v24 (`coordination_event`
+  + `coordination_rsvp`). UI under Settings → Coordination → Events.
+  **Build-verified** (clean `:app:assembleDebug`, coordination
+  classes confirmed in APK DEX, 2026-06-14). Hardware verification
+  pending. NOTE: v0.9.8 was committed (`1fb604b`) without a version
+  bump; the 28→29 / 0.9.7→0.9.8 stamp was applied 2026-06-14.
+
+  Earlier (2026-05-25): **v0.9.7 (build 28).** WiFi Direct
   transport fully wired into the sync stack. `WifiDirectTransport`
   (DNS-SD discovery, P2P group formation, TCP port 9094, u32
   framing) now races alongside BLE and Tor in `MessageSyncService`.
@@ -664,6 +679,43 @@ Settings with copy-to-clipboard.
 
 New files: `PaymentNotifier.kt`, `AndroidPaymentNotifier.kt`.
 
+### 2026-05-25 — v0.9.8: Coordination feature (events/scheduling)
+
+**New `feature:coordination` module.** Any Full-trust community
+member can create events; other members RSVP. Events and RSVPs are
+signed CBOR envelopes synced via anti-entropy, piggybacking the
+existing Noise sessions in `MessageSyncService`.
+
+- `EventEnvelope` — 12-field signed CBOR, creator-only
+  last-writer-wins.
+- `RsvpEnvelope` — 7-field signed CBOR, composite key
+  `(eventId, responderPub)`, statuses going/maybe/declined.
+- `CoordinationSyncRound` — HaveSet/Want/Push on tags `0x40`–`0x45`;
+  runs after `runKeyRotationSyncRound` on every link, both sync
+  sites in `MessageSyncService`.
+- `CoordinationSyncRepository` — verifies community, signature, and
+  creator trust level on ingest.
+- DB schema v24: `coordination_event` + `coordination_rsvp` tables
+  (`CoordinationEventDao`, `CoordinationRsvpDao`).
+- `Cbor.Reader.uintOrNull()` added for nullable unsigned ints.
+- UI: `EventListScreen` (upcoming/past tabs), `EventDetailScreen`
+  (RSVPs + actions), `CreateEventScreen`; reachable via
+  Settings → Coordination → Events.
+
+New module: `feature/coordination/`. New files: `EventEnvelope.kt`,
+`RsvpEnvelope.kt`, `CoordinationSyncMessage.kt`,
+`CoordinationSyncRepository.kt`, `CoordinationSyncRound.kt`,
+`CoordinationEventEntity.kt`, `CoordinationRsvpEntity.kt`,
+`CoordinationEventDao.kt`, `CoordinationRsvpDao.kt`, `CoordinationRoot.kt`,
+`EventListViewModel.kt`, `EventDetailViewModel.kt`,
+`CreateEventViewModel.kt`, plus the three screens.
+
+Committed as `1fb604b` without a version bump; the build was stamped
+28→29 / 0.9.7→0.9.8 and verified clean on 2026-06-14 (coordination
+classes confirmed present in the APK DEX). Hardware verification
+owed — create an event on one device, confirm the event and a
+returning RSVP sync to the other on the next round.
+
 ### 2026-05-25 — v0.9.7: WiFi Direct transport wired into sync stack
 
 **WiFi Direct fully integrated.** The `WifiDirectTransport` module
@@ -726,11 +778,15 @@ exposed via `MoneroWalletService.nodeLabel`.
 - **WiFi Direct hardware verification** — transport is fully wired
   (discovery, connect, accept, TCP framing) and races alongside BLE
   and Tor in the sync service, but not yet tested on real devices.
+- **Coordination hardware verification** — events/RSVP module is
+  built and build-verified (v0.9.8) but never device-tested. Owed:
+  create an event on one phone, confirm it + a returning RSVP sync
+  to the other on the next round.
 - **Reticulum/LoRa** — `:core:transport:reticulum` is a stub; no
   Kotlin binding exists yet.
 - **CI** — no pipeline yet. Reproducible-build flags + a banned-deps
   grep are the smallest viable CI.
-- **Coordination, Directory** features — not started.
+- **Directory** feature — not started.
 - **Layer-2 / Layer-3 peer-update** — automatic discovery via BLE
   trust channel (L2) and K-quorum APK verification (L3).
 - **F-Droid submission** — metadata is ready (`metadata/com.wyspr.yml`,
@@ -738,13 +794,18 @@ exposed via `MoneroWalletService.nodeLabel`.
 
 ## Memory / Plan State
 
-v0.9.7 is the current build (2026-05-25, build 28). WiFi Direct
-transport fully wired into sync stack — races alongside BLE and Tor
-in MessageSyncService. Monero wallet hardware-verified. Payment
-notifications wired. Key rotation hardware-verified. Both BLE and
-Tor-only messaging hardware-verified. Next priorities: WiFi Direct
-hardware verification, test a real XMR send/receive transaction,
-then CI, then F-Droid submission.
+v0.9.8 is the current build (build 29, stamped 2026-06-14).
+Coordination feature (events/scheduling) added in `feature:coordination`
+— signed event/RSVP CBOR envelopes synced via anti-entropy
+(`CoordinationSyncRound`) on existing Noise sessions; DB schema v24;
+UI under Settings → Coordination. Build-verified clean; hardware
+verification owed. WiFi Direct transport fully wired (v0.9.7) but
+also not yet device-tested. Monero wallet hardware-verified (connect
++ sync; no real send/receive yet). Payment notifications wired. Key
+rotation hardware-verified. Both BLE and Tor-only messaging
+hardware-verified. Next priorities: hardware-verify WiFi Direct and
+coordination, test a real XMR send/receive transaction, then CI,
+then F-Droid submission.
 
 Auto-memory references:
 - [[wyspr-messaging-works]] — 22-build journey, all fixes

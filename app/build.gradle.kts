@@ -34,8 +34,8 @@ android {
         applicationId = "com.wyspr"
         minSdk = 26
         targetSdk = 34
-        versionCode = 28
-        versionName = "0.9.7"
+        versionCode = 29
+        versionName = "0.9.8"
     }
 
     signingConfigs {
