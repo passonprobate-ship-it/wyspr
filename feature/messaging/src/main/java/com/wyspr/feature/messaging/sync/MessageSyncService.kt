@@ -9,6 +9,7 @@ import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.identity.CommunityId
 import com.wyspr.core.identity.PublicKey
 import com.wyspr.core.transport.Link
+import com.wyspr.core.transport.CoordinationNotifier
 import com.wyspr.core.transport.MessagingNotifier
 import com.wyspr.core.transport.SyncTransportFacade
 import com.wyspr.core.transport.Transport
@@ -81,6 +82,7 @@ class MessageSyncService @Inject constructor(
     private val groupStore: com.wyspr.feature.messaging.groups.GroupStore,
     private val transportLifecycle: TransportLifecycle,
     private val notifier: MessagingNotifier,
+    private val coordinationNotifier: CoordinationNotifier,
     private val trustGraphService: TrustGraphService,
     private val mailboxBindingService: com.wyspr.feature.messaging.mailbox.MailboxBindingService,
     private val mailboxHost: com.wyspr.feature.messaging.mailbox.MailboxHost,
@@ -373,6 +375,7 @@ class MessageSyncService @Inject constructor(
                                     database = database,
                                     communityId = communityId.bytes,
                                     sodium = sodium,
+                                    notifier = coordinationNotifier,
                                 )
                             }
                         } catch (ce: kotlinx.coroutines.CancellationException) {
@@ -694,6 +697,7 @@ class MessageSyncService @Inject constructor(
                     database = database,
                     communityId = communityId.bytes,
                     sodium = sodium,
+                    notifier = coordinationNotifier,
                 )
             }.onFailure { t ->
                 if (t is kotlinx.coroutines.CancellationException) throw t
@@ -889,6 +893,7 @@ class MessageSyncService @Inject constructor(
                         database = database,
                         communityId = communityId.bytes,
                         sodium = sodium,
+                        notifier = coordinationNotifier,
                     )
                 }
             } catch (ce: kotlinx.coroutines.CancellationException) {

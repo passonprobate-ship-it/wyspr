@@ -8,6 +8,18 @@ import com.wyspr.feature.coordination.EventEnvelope
 import com.wyspr.feature.coordination.RsvpEnvelope
 import com.wyspr.feature.coordination.verify
 
+private fun ByteArray.hex8(): String = take(4).joinToString("") { "%02x".format(it) }
+
+/**
+ * Outcome of ingesting one event envelope. Carries enough detail for
+ * the sync round to log *why* an envelope was dropped and to fire a
+ * notification only for genuinely new events.
+ */
+sealed interface EventIngestResult {
+    data class Accepted(val id: ByteArray, val title: String, val isNew: Boolean) : EventIngestResult
+    data class Rejected(val reason: String) : EventIngestResult
+}
+
 class CoordinationSyncRepository(private val communityId: ByteArray) {
 
     // ── Events ──────────────────────────────────────────────────────────
@@ -44,15 +56,22 @@ class CoordinationSyncRepository(private val communityId: ByteArray) {
         database: WysprDatabase,
         wireEvent: ByteArray,
         sodium: LazySodiumAndroid,
-    ): Boolean {
-        val env = runCatching { EventEnvelope.fromWire(wireEvent) }.getOrNull() ?: return false
-        if (!env.communityId.contentEquals(communityId)) return false
-        if (!env.verify(sodium)) return false
+    ): EventIngestResult {
+        val env = runCatching { EventEnvelope.fromWire(wireEvent) }.getOrNull()
+            ?: return EventIngestResult.Rejected("malformed wire bytes")
+        if (!env.communityId.contentEquals(communityId)) {
+            return EventIngestResult.Rejected("community mismatch (mine=${communityId.hex8()} env=${env.communityId.hex8()})")
+        }
+        if (!env.verify(sodium)) return EventIngestResult.Rejected("signature verify failed")
 
         val existing = database.coordinationEventDao.byId(env.id)
         if (existing != null) {
-            if (!existing.creatorPub.contentEquals(env.creatorPub)) return false
-            if (existing.createdAt >= env.createdAt) return false
+            if (!existing.creatorPub.contentEquals(env.creatorPub)) {
+                return EventIngestResult.Rejected("creator mismatch on existing event")
+            }
+            if (existing.createdAt >= env.createdAt) {
+                return EventIngestResult.Rejected("stale (existing.createdAt=${existing.createdAt} >= env=${env.createdAt})")
+            }
             val updated = database.coordinationEventDao.updateIfNewer(
                 id = env.id,
                 title = env.titleString,
@@ -64,7 +83,11 @@ class CoordinationSyncRepository(private val communityId: ByteArray) {
                 status = env.status,
                 signature = env.signature,
             )
-            return updated > 0
+            return if (updated > 0) {
+                EventIngestResult.Accepted(env.id, env.titleString, isNew = false)
+            } else {
+                EventIngestResult.Rejected("updateIfNewer no-op")
+            }
         }
 
         database.coordinationEventDao.insert(
@@ -82,7 +105,7 @@ class CoordinationSyncRepository(private val communityId: ByteArray) {
                 signature = env.signature,
             )
         )
-        return true
+        return EventIngestResult.Accepted(env.id, env.titleString, isNew = true)
     }
 
     // ── RSVPs ───────────────────────────────────────────────────────────

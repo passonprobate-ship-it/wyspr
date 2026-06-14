@@ -84,6 +84,15 @@ fun WysprNavHost(
                 }
                 onDeepLinkConsumed()
             }
+            is MainActivity.DeepLink.OpenEvent -> {
+                val hex = pendingDeepLink.eventIdHex
+                if (hex.matches(Regex("^[0-9a-fA-F]{2,128}$")) && hex.length % 2 == 0) {
+                    navController.navigate("${Routes.Events}?eventId=$hex") {
+                        launchSingleTop = true
+                    }
+                }
+                onDeepLinkConsumed()
+            }
             null -> { /* nothing pending */ }
         }
     }
@@ -194,8 +203,20 @@ fun WysprNavHost(
         composable(Routes.MailboxScan) {
             ScanMailboxQrScreen(onBack = { navController.popBackStack() })
         }
-        composable(Routes.Events) {
-            CoordinationRoot(onBack = { navController.popBackStack() })
+        composable(
+            route = "${Routes.Events}?eventId={eventId}",
+            arguments = listOf(
+                navArgument("eventId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { entry ->
+            CoordinationRoot(
+                onBack = { navController.popBackStack() },
+                initialEventIdHex = entry.arguments?.getString("eventId"),
+            )
         }
         composable(Routes.ShareApp) {
             ShareApkScreen(

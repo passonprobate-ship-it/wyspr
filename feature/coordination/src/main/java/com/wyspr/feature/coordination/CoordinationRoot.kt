@@ -15,8 +15,17 @@ import com.wyspr.feature.coordination.screens.EventListScreen
 @Composable
 fun CoordinationRoot(
     onBack: () -> Unit,
+    initialEventIdHex: String? = null,
 ) {
     val navController = rememberNavController()
+
+    // Deep-link from an event notification: jump straight to the
+    // event's detail screen (pushed on top of the list, so Back
+    // lands on the Events list as usual).
+    LaunchedEffect(initialEventIdHex) {
+        val csv = initialEventIdHex?.hexToEventCsv() ?: return@LaunchedEffect
+        navController.navigate("detail/$csv")
+    }
 
     NavHost(navController = navController, startDestination = "list") {
         composable("list") {
@@ -65,4 +74,19 @@ fun CoordinationRoot(
             )
         }
     }
+}
+
+/**
+ * Converts a hex event id (from a notification deep-link) into the
+ * signed-decimal CSV the inner `detail/{eventIdCsv}` route expects.
+ * Returns null on malformed input.
+ */
+private fun String.hexToEventCsv(): String? {
+    if (isEmpty() || length % 2 != 0) return null
+    val bytes = ByteArray(length / 2)
+    for (i in bytes.indices) {
+        val v = substring(i * 2, i * 2 + 2).toIntOrNull(16) ?: return null
+        bytes[i] = v.toByte()
+    }
+    return bytes.joinToString(",") { it.toString() }
 }

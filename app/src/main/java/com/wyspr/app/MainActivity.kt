@@ -133,12 +133,19 @@ class MainActivity : FragmentActivity() {
             com.wyspr.app.transport.AndroidPaymentNotifier.ACTION_OPEN_WALLET -> {
                 _deepLink.value = DeepLink.OpenWallet
             }
+            com.wyspr.app.transport.AndroidCoordinationNotifier.ACTION_OPEN_EVENT -> {
+                val hex = intent.getStringExtra(
+                    com.wyspr.app.transport.AndroidCoordinationNotifier.EXTRA_EVENT_ID_HEX,
+                ) ?: return
+                _deepLink.value = DeepLink.OpenEvent(eventIdHex = hex)
+            }
         }
     }
 
     sealed interface DeepLink {
         data class OpenChat(val peerHex: String) : DeepLink
         data object OpenWallet : DeepLink
+        data class OpenEvent(val eventIdHex: String) : DeepLink
     }
 
     private fun maybeRequestNotificationPermission() {

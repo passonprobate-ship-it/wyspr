@@ -4,11 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.wyspr.core.database.WysprDatabase
 import com.wyspr.core.database.entities.CoordinationEventEntity
+import com.wyspr.core.transport.SyncTrigger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -16,6 +19,7 @@ import javax.inject.Inject
 @HiltViewModel
 class EventListViewModel @Inject constructor(
     private val database: WysprDatabase,
+    private val syncTrigger: SyncTrigger,
 ) : ViewModel() {
 
     private val _upcoming = MutableStateFlow<List<CoordinationEventEntity>>(emptyList())
@@ -46,6 +50,22 @@ class EventListViewModel @Inject constructor(
                 database.coordinationEventDao.pastOrCancelledForCommunity(communityId, now)
                     .collect { _past.value = it }
             }
+            // Coordination envelopes ride on the message-sync round, which
+            // otherwise only runs from the chat screens. Drive a periodic
+            // sync while the Events screen is open so a user waiting here
+            // actually receives newly-shared events and RSVPs.
+            launch {
+                delay(INITIAL_SYNC_DELAY_MS)
+                while (isActive) {
+                    syncTrigger.requestSync()
+                    delay(AUTO_SYNC_INTERVAL_MS)
+                }
+            }
         }
+    }
+
+    companion object {
+        private const val INITIAL_SYNC_DELAY_MS = 1_000L
+        private const val AUTO_SYNC_INTERVAL_MS = 8_000L
     }
 }
