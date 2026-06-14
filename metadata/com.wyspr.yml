@@ -38,7 +38,21 @@ Builds:
       - io.matthewnelson.kmp-tor:resource-exec-tor:408.13.2
       - io.matthewnelson.kmp-tor:resource-noexec-tor:408.13.2
 
+  - versionName: 0.9.9
+    versionCode: 30
+    commit: v0.9.9
+    subdir: app
+    gradle:
+      - yes
+    # Same prebuilt-artifact deviation as 0.9.1: Tor and libsodium
+    # native libs arrive as pre-built AARs (kmp-tor, lazysodium-android);
+    # versions unchanged from the 0.9.1 entry.
+    prebuilds:
+      - com.goterl:lazysodium-android:5.1.0
+      - io.matthewnelson.kmp-tor:resource-exec-tor:408.13.2
+      - io.matthewnelson.kmp-tor:resource-noexec-tor:408.13.2
+
 AutoUpdateMode: Version
 UpdateCheckMode: Tags
-CurrentVersion: 0.9.1
-CurrentVersionCode: 22
+CurrentVersion: 0.9.9
+CurrentVersionCode: 30
