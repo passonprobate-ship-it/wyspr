@@ -6,8 +6,9 @@
 - **Min SDK**: 26 (Android 8.0 — Keystore + StrongBox availability cutoff)
 - **Target SDK**: 34
 - **Port**: 5034 (daemon registration only — Wyspr has no server component)
-- **Status**: 2026-06-14 — **v0.9.8 (build 29).** Coordination
-  feature (events/scheduling). New `feature:coordination` module:
+- **Status**: 2026-06-14 — **v0.9.9 (build 30).** Coordination
+  feature (events/scheduling) — **hardware-verified.** New
+  `feature:coordination` module:
   any Full-trust community member creates events (title, description,
   location, start/end time); others RSVP (going/maybe/declined).
   `EventEnvelope` (12-field signed CBOR, creator-only LWW) and
@@ -16,10 +17,28 @@
   that piggybacks existing Noise sessions in `MessageSyncService`,
   after the key-rotation round. DB schema v24 (`coordination_event`
   + `coordination_rsvp`). UI under Settings → Coordination → Events.
-  **Build-verified** (clean `:app:assembleDebug`, coordination
-  classes confirmed in APK DEX, 2026-06-14). Hardware verification
-  pending. NOTE: v0.9.8 was committed (`1fb604b`) without a version
-  bump; the 28→29 / 0.9.7→0.9.8 stamp was applied 2026-06-14.
+  **HARDWARE-VERIFIED 2026-06-14** (S23 + A02s, over Tor): events and
+  RSVPs (going/maybe/declined) sync both directions and render in the
+  UI; `CoordSync` diagnostic logging confirmed the full HaveSet/Want/
+  Push exchange + ingest. Two fixes shipped during verification
+  (v0.9.9 / build 30, branch `android`):
+  (1) **Root-cause fix — Events screen now drives sync.** Coordination
+  rode on `MessageSyncService.runOnce()`, but that only runs from chat
+  ViewModels, so an event never synced while a user sat on the Events
+  screen. Added `SyncTrigger` (core:transport:api) ←
+  `MessageSyncTrigger` (feature:messaging, in-flight-guarded wrapper of
+  `runOnce`) ← injected into `EventListViewModel`'s 8s loop. See
+  [[keystone_sync_only_on_messaging_screens]].
+  (2) **Event-received notifications + deep-link.** `CoordinationNotifier`
+  (core:transport:api) ← `AndroidCoordinationNotifier` (:app), channel
+  `events_v2` @ IMPORTANCE_HIGH (heads-up + sound; legacy `events`
+  channel deleted), fires only on `isNew` ingest, deep-links via
+  `ACTION_OPEN_EVENT` → `MainActivity` → `WysprNavHost`
+  `events?eventId=<hex>` → `CoordinationRoot` event detail. Chat
+  notifications already existed (`AndroidMessagingNotifier`).
+  NOTE: v0.9.8 was committed (`1fb604b`) without a version bump; the
+  28→29 / 0.9.7→0.9.8 stamp was applied 2026-06-14. v0.9.9 (build 30)
+  stamps the hardware verification + the two fixes above.
 
   Earlier (2026-05-25): **v0.9.7 (build 28).** WiFi Direct
   transport fully wired into the sync stack. `WifiDirectTransport`
@@ -778,10 +797,10 @@ exposed via `MoneroWalletService.nodeLabel`.
 - **WiFi Direct hardware verification** — transport is fully wired
   (discovery, connect, accept, TCP framing) and races alongside BLE
   and Tor in the sync service, but not yet tested on real devices.
-- **Coordination hardware verification** — events/RSVP module is
-  built and build-verified (v0.9.8) but never device-tested. Owed:
-  create an event on one phone, confirm it + a returning RSVP sync
-  to the other on the next round.
+- ~~**Coordination hardware verification**~~ — DONE 2026-06-14.
+  Events + RSVPs sync both directions on S23 + A02s over Tor; the
+  Events-screen-drives-sync fix + heads-up notifications landed during
+  the test (uncommitted on branch `android`). See the v0.9.8 status entry.
 - **Reticulum/LoRa** — `:core:transport:reticulum` is a stub; no
   Kotlin binding exists yet.
 - **CI** — no pipeline yet. Reproducible-build flags + a banned-deps
